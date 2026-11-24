@@ -108,9 +108,14 @@ pub struct Espece {
 impl Espece {
     /// Nom complet d'un individu (« Requin-marteau albinos »).
     pub fn nom_variante(&self, variante: usize) -> String {
+        let nom = crate::i18n::tr(self.nom);
         match self.variantes.get(variante).map(|v| v.nom) {
-            Some(n) if !n.is_empty() => format!("{} {n}", self.nom),
-            _ => self.nom.to_string(),
+            // Anglais : l'adjectif avant le nom (« Albino Hammerhead shark »).
+            Some(n) if !n.is_empty() && crate::i18n::anglais() => {
+                format!("{} {nom}", crate::i18n::tr(n))
+            }
+            Some(n) if !n.is_empty() => format!("{nom} {n}"),
+            _ => nom.to_string(),
         }
     }
 }

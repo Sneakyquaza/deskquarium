@@ -61,7 +61,7 @@ impl Ecloserie {
                 .collect();
         }
         ui.horizontal(|ui| {
-            for (editeur, nom) in [(false, "Boutique"), (true, "Modifier le décor")] {
+            for (editeur, nom) in [(false, tr("Boutique")), (true, tr("Modifier le décor"))] {
                 if ui
                     .selectable_label(
                         self.decor.editeur == editeur,
@@ -119,27 +119,24 @@ impl Ecloserie {
                                     // Titre sur deux lignes de haut : les boutons restent alignés.
                                     ui.allocate_ui(Vec2::new(ui.available_width(), 34.0), |ui| {
                                         ui.set_min_height(34.0);
-                                        ui.label(RichText::new(o.nom).font(titre(13.0)));
+                                        ui.label(RichText::new(tr(o.nom)).font(titre(13.0)));
                                     });
                                 });
                                 let anim = match o.anim {
                                     Anim::Aucune => "",
-                                    Anim::Bulles => "Animé : bulles",
-                                    Anim::Geyser => "Animé : jets de bulles",
-                                    Anim::Ondule => "Animé : ondule et luit",
-                                    Anim::Lueur => "Animé : luit",
+                                    Anim::Bulles => tr("Animé : bulles"),
+                                    Anim::Geyser => tr("Animé : jets de bulles"),
+                                    Anim::Ondule => tr("Animé : ondule et luit"),
+                                    Anim::Lueur => tr("Animé : luit"),
                                 };
                                 ui.label(
-                                    RichText::new(if anim.is_empty() { "Immobile" } else { anim })
+                                    RichText::new(if anim.is_empty() { tr("Immobile") } else { anim })
                                         .color(BRUME)
                                         .size(14.0),
                                 );
                                 let n = p.nb_achetes(o.cle);
                                 ui.label(
-                                    RichText::new(format!(
-                                        "Possédés {n}/{MAX_EXEMPLAIRES} · posés {}",
-                                        n - p.nb_libres(o.cle)
-                                    ))
+                                    RichText::new(trf("Possédés {}/{} · posés {}", &[&n.to_string(), &MAX_EXEMPLAIRES.to_string(), &(n - p.nb_libres(o.cle)).to_string()]))
                                     .color(ECUME)
                                     .size(14.0),
                                 );
@@ -147,9 +144,9 @@ impl Ecloserie {
                                 let plein = n >= MAX_EXEMPLAIRES;
                                 let assez = p.argent >= prix && !plein;
                                 let texte = if plein {
-                                    "Complet".to_string()
+                                    tr("Complet").to_string()
                                 } else {
-                                    format!("Acheter · {}", court(prix))
+                                    trf("Acheter · {}", &[&(court(prix)).to_string()])
                                 };
                                 let b = egui::Button::new(
                                     RichText::new(texte)
@@ -182,9 +179,12 @@ impl Ecloserie {
                 // Posé tout de suite sur l'écran principal, à un endroit libre.
                 let x = 0.2 + 0.6 * ((p.decor_pose.len() * 37) % 100) as f32 / 100.0;
                 let _ = p.poser_objet(cle, 0, x);
-                let nom = crate::decor::objet(cle).map_or("", |o| o.nom);
+                let nom = crate::decor::objet(cle).map_or("", |o| tr(o.nom));
                 self.info = Some((
-                    format!("{nom} posé dans l'aquarium (Modifier le décor pour le placer)."),
+                    trf(
+                        "{} posé dans l'aquarium (Modifier le décor pour le placer).",
+                        &[nom],
+                    ),
                     ui.input(|i| i.time),
                 ));
             }
@@ -255,9 +255,9 @@ impl Ecloserie {
         let n_ecrans = self.disposition.as_ref().map_or(1, |d| d.0.ecrans.len());
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(format!(
+                RichText::new(trf(
                     "Décor : {}",
-                    crate::decor::THEMES[p.reglages.theme as usize]
+                    &[tr(crate::decor::THEMES[p.reglages.theme as usize])],
                 ))
                 .font(titre(13.0)),
             );
@@ -265,9 +265,9 @@ impl Ecloserie {
                 ui.add_space(12.0);
                 for i in 0..n_ecrans {
                     let nom = if i == 0 {
-                        "Écran 1 (principal)".to_string()
+                        tr("Écran 1 (principal)").to_string()
                     } else {
-                        format!("Écran {}", i + 1)
+                        trf("Écran {}", &[&(i + 1).to_string()])
                     };
                     if ui
                         .selectable_label(self.decor.ecran == i, RichText::new(nom).size(14.0))
@@ -389,9 +389,9 @@ impl Ecloserie {
             }
             rep.on_hover_text(
                 crate::decor::objet(&pose.objet)
-                    .map_or("", |o| o.nom)
+                    .map_or("", |o| tr(o.nom))
                     .to_string()
-                    + " · glisser pour déplacer, clic droit pour retirer",
+                    + tr(" · glisser pour déplacer, clic droit pour retirer"),
             );
         }
         if let Some((i, x)) = deplacer {
@@ -403,7 +403,7 @@ impl Ecloserie {
             if ui
                 .add_enabled(
                     choisi.is_some(),
-                    egui::Button::new(RichText::new("Retourner").font(titre(13.0))),
+                    egui::Button::new(RichText::new(tr("Retourner")).font(titre(13.0))),
                 )
                 .clicked()
             {
@@ -414,7 +414,7 @@ impl Ecloserie {
             if ui
                 .add_enabled(
                     choisi.is_some(),
-                    egui::Button::new(RichText::new("Retirer").font(titre(13.0))),
+                    egui::Button::new(RichText::new(tr("Retirer")).font(titre(13.0))),
                 )
                 .clicked()
             {
@@ -423,7 +423,7 @@ impl Ecloserie {
             if ui
                 .add_enabled(
                     !p.decor_pose.is_empty(),
-                    egui::Button::new(RichText::new("Tout retirer").font(titre(13.0))),
+                    egui::Button::new(RichText::new(tr("Tout retirer")).font(titre(13.0))),
                 )
                 .clicked()
             {
@@ -437,7 +437,7 @@ impl Ecloserie {
         }
         ui.add_space(6.0);
         ui.label(
-            RichText::new("Objets à poser (achetés dans la Boutique) :")
+            RichText::new(tr("Objets à poser (achetés dans la Boutique) :"))
                 .color(BRUME)
                 .size(14.0),
         );
@@ -455,11 +455,11 @@ impl Ecloserie {
                             self.decor.icones[i].id(),
                             taille_icone(img, 48.0),
                         )),
-                        RichText::new(format!("{} ×{libres}", o.nom)).size(13.0),
+                        RichText::new(format!("{} ×{libres}", tr(o.nom))).size(13.0),
                     );
                     if ui
                         .add(b)
-                        .on_hover_text("Poser au milieu de cet écran")
+                        .on_hover_text(tr("Poser au milieu de cet écran"))
                         .clicked()
                     {
                         poser = Some(o.cle);
@@ -475,9 +475,9 @@ impl Ecloserie {
         }
         if !p.decor_achete.values().any(|&n| n > 0) {
             ui.label(
-                RichText::new(
+                RichText::new(tr(
                     "Aucun objet acheté pour l'instant : la Boutique en propose dès 150.",
-                )
+                ))
                 .color(BRUME)
                 .size(14.0),
             );

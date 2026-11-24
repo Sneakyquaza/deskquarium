@@ -112,11 +112,21 @@ pub fn lancer(o: Options) -> Result<(), String> {
     } else {
         sauve::charger(&dossier)
     };
+    // Langue : AQUARIUM_LANGUE (captures) l'impose, sinon celle choisie, sinon celle de Windows.
+    if std::env::var_os("AQUARIUM_LANGUE").is_some() {
+        partie.reglages.langue = Some(crate::i18n::langue_systeme());
+    }
+    crate::i18n::regler(
+        partie
+            .reglages
+            .langue
+            .unwrap_or_else(crate::i18n::langue_systeme),
+    );
     let gain = partie.gains_hors_ligne(sauve::maintenant());
     // Sur le fond : seulement les gains (la petite police n'a que majuscules et chiffres).
     let mut message_fond = None;
     if gain >= 1.0 {
-        let m = format!("Pendant ton absence : +{}", court(gain));
+        let m = crate::i18n::trf("Pendant ton absence : +{}", &[&court(gain)]);
         message_fond = Some(m.clone());
         message = Some(match message {
             Some(avant) => format!("{avant} {m}"),
@@ -249,7 +259,10 @@ impl Appli {
         }
         self.partie.horodatage = sauve::maintenant();
         if let Err(e) = sauve::ecrire(&self.dossier, &self.partie) {
-            self.ecloserie.bandeau = Some(format!("Sauvegarde impossible : {e}"));
+            self.ecloserie.bandeau = Some(crate::i18n::trf(
+                "Sauvegarde impossible : {}",
+                &[&e.to_string()],
+            ));
         }
         self.sauve_le = Instant::now();
     }
@@ -317,7 +330,10 @@ impl Appli {
             if dispo != self.maj_annoncee {
                 if let Some(s) = &self.systeme {
                     s.infobulle(&match &dispo {
-                        Some(v) => format!("Aquarium : mise à jour v{v} disponible"),
+                        Some(v) => crate::i18n::trf(
+                            "Aquarium : mise à jour v{} disponible",
+                            &[&v.to_string()],
+                        ),
                         None => String::new(),
                     });
                 }
@@ -572,7 +588,7 @@ impl Appli {
                         shiny: v.contains("shiny"),
                         modif: crate::jeu::Modif::TOUS
                             .into_iter()
-                            .find(|m| v.contains(&m.nom().to_lowercase())),
+                            .find(|m| v.contains(&m.nom_fr().to_lowercase())),
                     };
                     self.ecloserie.forcer_forme(&mut self.partie, forme);
                 }
@@ -654,6 +670,13 @@ fn ecloserie_id() -> ViewportId {
 impl eframe::App for Appli {
     fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // Langue choisie (sinon celle de Windows) : appliquée tout de suite partout.
+        crate::i18n::regler(
+            self.partie
+                .reglages
+                .langue
+                .unwrap_or_else(crate::i18n::langue_systeme),
+        );
         #[cfg(windows)]
         if !self.fenetre && self.systeme.is_none() {
             let r = &self.partie.reglages;
@@ -846,7 +869,7 @@ impl eframe::App for Appli {
         if self.ecloserie_ouverte {
             let mut fermer = false;
             let builder = ViewportBuilder::default()
-                .with_title("Écloserie")
+                .with_title(crate::i18n::tr("Écloserie"))
                 .with_app_id("aquarium-ecloserie")
                 .with_inner_size([960.0, 720.0])
                 .with_min_inner_size([640.0, 520.0])

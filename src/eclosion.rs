@@ -1437,17 +1437,17 @@ impl Eclosion {
             let mut lignes: Vec<(String, Rgb)> = Vec::new();
             if v > 0.25 {
                 if self.shiny {
-                    lignes.push(("SHINY !".into(), [0xff, 0xb8, 0xe8]));
+                    lignes.push((crate::i18n::tr("SHINY !").into(), [0xff, 0xb8, 0xe8]));
                 }
                 if let Some(m) = self.modif {
                     lignes.push((m.nom().to_uppercase(), m.couleur()));
                 }
             }
             if self.dore {
-                lignes.push(("ŒUF DORÉ !".into(), [0xff, 0xdc, 0x60]));
+                lignes.push((crate::i18n::tr("ŒUF DORÉ !").into(), [0xff, 0xdc, 0x60]));
             }
             if self.pitie {
-                lignes.push(("GARANTI !".into(), [0xa8, 0xf0, 0xff]));
+                lignes.push((crate::i18n::tr("GARANTI !").into(), [0xa8, 0xf0, 0xff]));
             }
             for (j, (l, c)) in lignes.iter().enumerate() {
                 // Sur sa propre plaque sombre, sous le bandeau.

@@ -13,6 +13,7 @@ mod eclosion;
 mod ecrans;
 mod especes;
 mod fond;
+mod i18n;
 mod jeu;
 mod journal;
 mod maj;
@@ -66,6 +67,8 @@ fn main() {
 }
 
 fn lancer() -> Result<(), String> {
+    // Captures et outils : langue du système (AQUARIUM_LANGUE=en pour l'anglais).
+    i18n::regler(i18n::langue_systeme());
     let args: Vec<String> = std::env::args().skip(1).collect();
     let valeur = |nom: &str| -> Option<String> {
         args.iter()
@@ -134,7 +137,7 @@ fn lancer() -> Result<(), String> {
             shiny: fo.contains("shiny"),
             modif: jeu::Modif::TOUS
                 .into_iter()
-                .find(|m| fo.contains(&m.nom().to_lowercase())),
+                .find(|m| fo.contains(&m.nom_fr().to_lowercase())),
         };
         return capture::eclosion(&PathBuf::from(f), oeuf, &cle, forme, a("--dore"));
     }

@@ -125,7 +125,10 @@ impl Systeme {
                 }
                 Err(e) => {
                     crate::journal::ecrire(&format!("incrustation impossible : {e}"));
-                    erreur = Some(format!("{e} L'aquarium passe en mode fenêtre."));
+                    erreur = Some(crate::i18n::trf(
+                        "{} L'aquarium passe en mode fenêtre.",
+                        &[&e.to_string()],
+                    ));
                 }
             }
         }
@@ -315,9 +318,10 @@ fn incruster(hwnd: HWND, methode: u8) -> Result<HWND, String> {
     unsafe {
         let progman = FindWindowW(large("Progman").as_ptr(), null());
         if progman.is_null() {
-            return Err(
-                "Bureau Windows introuvable (Progman). L'Explorateur est-il lancé ?".into(),
-            );
+            return Err(crate::i18n::tr(
+                "Bureau Windows introuvable (Progman). L'Explorateur est-il lancé ?",
+            )
+            .into());
         }
         let mut res = 0usize;
         SendMessageTimeoutW(progman, 0x052C, 0xD, 0x1, SMTO_NORMAL, 1000, &mut res);
@@ -390,8 +394,9 @@ fn incruster(hwnd: HWND, methode: u8) -> Result<HWND, String> {
              (ancien parent {ancien:?})"
         ));
         if GetParent(hwnd) != parent {
-            return Err(format!(
-                "Rattachement au bureau refusé (SetParent, erreur {e_parent})."
+            return Err(crate::i18n::trf(
+                "Rattachement au bureau refusé (SetParent, erreur {}).",
+                &[&e_parent.to_string()],
             ));
         }
         // Sous les icônes : juste après SHELLDLL_DefView dans l'ordre des enfants de Progman.
@@ -903,8 +908,9 @@ pub fn demarrage(actif: bool) -> Result<(), String> {
             null_mut(),
         );
         if r != 0 {
-            return Err(format!(
-                "Démarrage avec Windows : registre inaccessible ({r})."
+            return Err(crate::i18n::trf(
+                "Démarrage avec Windows : registre inaccessible ({}).",
+                &[&r.to_string()],
             ));
         }
         let nom = large("Aquarium");
@@ -929,7 +935,10 @@ pub fn demarrage(actif: bool) -> Result<(), String> {
         };
         RegCloseKey(cle);
         if r != 0 {
-            return Err(format!("Démarrage avec Windows : écriture refusée ({r})."));
+            return Err(crate::i18n::trf(
+                "Démarrage avec Windows : écriture refusée ({}).",
+                &[&r.to_string()],
+            ));
         }
     }
     Ok(())
@@ -988,7 +997,7 @@ fn ajouter_icone(h: HWND) {
 fn remplir_infobulle(nid: &mut NOTIFYICONDATAW) {
     let t = INFOBULLE.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let t = if t.is_empty() {
-        "Aquarium : clic pour l'Écloserie".to_string()
+        crate::i18n::tr("Aquarium : clic pour l'Écloserie").to_string()
     } else {
         t
     };
@@ -1002,47 +1011,72 @@ fn remplir_infobulle(nid: &mut NOTIFYICONDATAW) {
 fn menu(h: HWND) {
     unsafe {
         let m = CreatePopupMenu();
-        AppendMenuW(m, MF_STRING, 1, large("Ouvrir l'Écloserie").as_ptr());
+        AppendMenuW(
+            m,
+            MF_STRING,
+            1,
+            large(crate::i18n::tr("Ouvrir l'Écloserie")).as_ptr(),
+        );
         let pause = if EN_PAUSE.load(Ordering::Relaxed) {
             MF_CHECKED
         } else {
             0
         };
-        AppendMenuW(m, MF_STRING | pause, 2, large("Pause").as_ptr());
+        AppendMenuW(
+            m,
+            MF_STRING | pause,
+            2,
+            large(crate::i18n::tr("Pause")).as_ptr(),
+        );
         let abysses = if ABYSSES.load(Ordering::Relaxed) {
             MF_CHECKED
         } else {
             0
         };
-        AppendMenuW(m, MF_STRING | abysses, 8, large("Mode Abysses").as_ptr());
+        AppendMenuW(
+            m,
+            MF_STRING | abysses,
+            8,
+            large(crate::i18n::tr("Mode Abysses")).as_ptr(),
+        );
         AppendMenuW(m, MF_SEPARATOR, 0, null());
         let fenetre = if MODE_FENETRE.load(Ordering::Relaxed) {
             MF_CHECKED
         } else {
             0
         };
-        AppendMenuW(m, MF_STRING | fenetre, 4, large("Mode fenêtre").as_ptr());
+        AppendMenuW(
+            m,
+            MF_STRING | fenetre,
+            4,
+            large(crate::i18n::tr("Mode fenêtre")).as_ptr(),
+        );
         AppendMenuW(
             m,
             MF_STRING,
             5,
-            large("Autre méthode d'incrustation").as_ptr(),
+            large(crate::i18n::tr("Autre méthode d'incrustation")).as_ptr(),
         );
         AppendMenuW(
             m,
             MF_STRING,
             7,
-            large("Test d'incrustation (couleurs)").as_ptr(),
+            large(crate::i18n::tr("Test d'incrustation (couleurs)")).as_ptr(),
         );
-        AppendMenuW(m, MF_STRING, 6, large("Ouvrir le journal").as_ptr());
+        AppendMenuW(
+            m,
+            MF_STRING,
+            6,
+            large(crate::i18n::tr("Ouvrir le journal")).as_ptr(),
+        );
         AppendMenuW(
             m,
             MF_STRING,
             9,
-            large("Rechercher une mise à jour").as_ptr(),
+            large(crate::i18n::tr("Rechercher une mise à jour")).as_ptr(),
         );
         AppendMenuW(m, MF_SEPARATOR, 0, null());
-        AppendMenuW(m, MF_STRING, 3, large("Quitter").as_ptr());
+        AppendMenuW(m, MF_STRING, 3, large(crate::i18n::tr("Quitter")).as_ptr());
         let mut pt = POINT { x: 0, y: 0 };
         GetCursorPos(&mut pt);
         // Sans premier plan, le menu ne se ferme pas quand on clique ailleurs.

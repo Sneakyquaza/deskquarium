@@ -62,8 +62,9 @@ pub fn charger(d: &Path) -> (Partie, Option<String>) {
         Err(e) => match lire(&f.with_extension("bak")) {
             Ok(p) => (
                 p,
-                Some(format!(
-                    "Sauvegarde abîmée ({e}) : copie de secours reprise."
+                Some(crate::i18n::trf(
+                    "Sauvegarde abîmée ({}) : copie de secours reprise.",
+                    &[&e.to_string()],
                 )),
             ),
             Err(_) => {
@@ -71,9 +72,9 @@ pub fn charger(d: &Path) -> (Partie, Option<String>) {
                 let _ = std::fs::copy(&f, &cote);
                 (
                     Partie::nouvelle(maintenant(), maintenant() ^ 0x5eed),
-                    Some(format!(
+                    Some(crate::i18n::trf(
                         "Sauvegarde illisible, mise de côté dans {} ; nouvelle partie.",
-                        cote.display()
+                        &[&cote.display().to_string()],
                     )),
                 )
             }

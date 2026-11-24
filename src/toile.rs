@@ -379,6 +379,25 @@ mod tests {
                 .map(|r| r.nom().to_string()),
         );
         noms.extend(crate::jeu::Modif::TOUS.iter().map(|m| m.nom().to_string()));
+        // v0.11 : aussi en anglais (noms, variantes, annonces du fond d'écran).
+        crate::i18n::regler(crate::i18n::Langue::En);
+        for e in crate::especes::catalogue() {
+            for v in 0..e.variantes.len() {
+                noms.push(e.nom_variante(v));
+            }
+        }
+        noms.extend(
+            crate::jeu::Rarete::TOUTES
+                .iter()
+                .map(|r| r.nom().to_uppercase()),
+        );
+        noms.extend(
+            crate::jeu::Modif::TOUS
+                .iter()
+                .map(|m| m.nom().to_uppercase()),
+        );
+        noms.push(crate::i18n::trf("Pendant ton absence : +{}", &["1.5 k"]));
+        crate::i18n::regler(crate::i18n::Langue::Fr);
         for n in noms {
             for c in police(&n) {
                 assert_ne!(glyphe(c), glyphe('\u{1}'), "glyphe manquant : {c} ({n})");

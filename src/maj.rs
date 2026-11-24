@@ -166,11 +166,11 @@ impl Maj {
         let res = self
             .exe
             .clone()
-            .ok_or_else(|| "Emplacement de l'appli introuvable".to_string())
+            .ok_or_else(|| crate::i18n::tr("Emplacement de l'appli introuvable").to_string())
             .and_then(|exe| {
-                remplacer(&exe, &nouveau)
-                    .map(|()| exe)
-                    .map_err(|_| "Fichier de l'appli verrouillé : rien n'a été changé".into())
+                remplacer(&exe, &nouveau).map(|()| exe).map_err(|_| {
+                    crate::i18n::tr("Fichier de l'appli verrouillé : rien n'a été changé").into()
+                })
             });
         match res {
             Ok(exe) => Some(exe),
@@ -242,14 +242,19 @@ fn obtenir(agent: &ureq::Agent, url: &str) -> Result<ureq::Response, String> {
             )
             .call()
             .map_err(|e| match e {
-                ureq::Error::Status(403 | 429, _) => {
-                    "GitHub limite les demandes pour l'instant : réessaie dans une heure"
-                        .to_string()
+                ureq::Error::Status(403 | 429, _) => crate::i18n::tr(
+                    "GitHub limite les demandes pour l'instant : réessaie dans une heure",
+                )
+                .to_string(),
+                ureq::Error::Status(404, _) => {
+                    crate::i18n::tr("Aucune version publiée pour l'instant").to_string()
                 }
-                ureq::Error::Status(404, _) => "Aucune version publiée pour l'instant".to_string(),
-                ureq::Error::Status(code, _) => format!("Réponse de GitHub : erreur {code}"),
+                ureq::Error::Status(code, _) => {
+                    crate::i18n::trf("Réponse de GitHub : erreur {}", &[&code.to_string()])
+                }
                 ureq::Error::Transport(_) => {
-                    "GitHub injoignable : vérifie la connexion à Internet".to_string()
+                    crate::i18n::tr("GitHub injoignable : vérifie la connexion à Internet")
+                        .to_string()
                 }
             })?;
         if (300..400).contains(&rep.status()) {
@@ -270,7 +275,7 @@ fn lire_release() -> Result<Annonce, String> {
     rep.into_reader()
         .take(1 << 20)
         .read_to_end(&mut d)
-        .map_err(|_| "Réponse de GitHub interrompue".to_string())?;
+        .map_err(|_| crate::i18n::tr("Réponse de GitHub interrompue").to_string())?;
     annonce_depuis_json(&d)
 }
 
@@ -292,8 +297,8 @@ struct Fichier {
 
 /// Release GitHub (JSON de `releases/latest`) → annonce : `aquarium.exe` et son `.sha256`.
 pub fn annonce_depuis_json(d: &[u8]) -> Result<Annonce, String> {
-    let r: Release =
-        serde_json::from_slice(d).map_err(|_| "Réponse de GitHub illisible".to_string())?;
+    let r: Release = serde_json::from_slice(d)
+        .map_err(|_| crate::i18n::tr("Réponse de GitHub illisible").to_string())?;
     let trouver = |nom: &str| r.assets.iter().find(|a| a.name == nom);
     let (Some(exe), Some(sha)) = (trouver(NOM_EXE), trouver(&format!("{NOM_EXE}.sha256"))) else {
         return Err("La dernière version ne contient pas l'exécutable Windows".into());
@@ -326,7 +331,7 @@ fn lire_empreinte(agent: &ureq::Agent, url: &str) -> Result<String, String> {
         .into_reader()
         .take(4096)
         .read_to_string(&mut t)
-        .map_err(|_| "Téléchargement interrompu : réessaie".to_string())?;
+        .map_err(|_| crate::i18n::tr("Téléchargement interrompu : réessaie").to_string())?;
     empreinte_depuis_texte(&t)
 }
 
@@ -365,7 +370,10 @@ fn ecrire_verifie(
     mut progres: impl FnMut(u64),
 ) -> Result<(), String> {
     let mut f = std::fs::File::create(dest).map_err(|_| {
-        format!("Dossier de l'appli protégé : télécharge la nouvelle version sur {PAGE_RELEASES}")
+        crate::i18n::trf(
+            "Dossier de l'appli protégé : télécharge la nouvelle version sur {}",
+            &[PAGE_RELEASES],
+        )
     })?;
     let mut lecteur = lecteur.take(taille + 1);
     let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
@@ -374,13 +382,14 @@ fn ecrire_verifie(
     loop {
         let n = lecteur
             .read(&mut tampon)
-            .map_err(|_| "Téléchargement interrompu : réessaie".to_string())?;
+            .map_err(|_| crate::i18n::tr("Téléchargement interrompu : réessaie").to_string())?;
         if n == 0 {
             break;
         }
         ctx.update(&tampon[..n]);
         f.write_all(&tampon[..n]).map_err(|_| {
-            "Écriture impossible (disque plein ?) : rien n'a été changé".to_string()
+            crate::i18n::tr("Écriture impossible (disque plein ?) : rien n'a été changé")
+                .to_string()
         })?;
         faits += n as u64;
         progres(faits);
@@ -389,7 +398,7 @@ fn ecrire_verifie(
         return Err("Fichier reçu abîmé (empreinte différente) : rien n'a été changé".into());
     }
     f.sync_all()
-        .map_err(|_| "Écriture impossible : rien n'a été changé".to_string())
+        .map_err(|_| crate::i18n::tr("Écriture impossible : rien n'a été changé").to_string())
 }
 
 /// `exe` → `exe.ancien`, `nouveau` → `exe` (Windows permet de renommer l'exe en cours).

@@ -44,6 +44,11 @@ impl Rarete {
     }
 
     pub fn nom(self) -> &'static str {
+        crate::i18n::tr(self.nom_fr())
+    }
+
+    /// Nom français (clé de traduction).
+    pub fn nom_fr(self) -> &'static str {
         [
             "Commun",
             "Peu commun",
@@ -250,6 +255,11 @@ impl Modif {
     }
 
     pub fn nom(self) -> &'static str {
+        crate::i18n::tr(self.nom_fr())
+    }
+
+    /// Nom français (clé de traduction, et `--forme galaxie` des captures).
+    pub fn nom_fr(self) -> &'static str {
         [
             "Doré",
             "Diamant",
@@ -337,9 +347,9 @@ pub const NB_INDEX: usize = Modif::TOUS.len() + 2;
 
 pub fn nom_index(k: usize) -> &'static str {
     match k {
-        0 => "Normal",
+        0 => crate::i18n::tr("Normal"),
         k if k <= Modif::TOUS.len() => Modif::TOUS[k - 1].nom(),
-        _ => "Shiny",
+        _ => crate::i18n::tr("Shiny"),
     }
 }
 
@@ -478,6 +488,8 @@ pub struct Reglages {
     /// un shiny si `auto_shiny`.
     pub auto_rarete: u8,
     pub auto_shiny: bool,
+    /// v0.11 : langue de l'interface ; None = pas encore choisie (celle de Windows).
+    pub langue: Option<crate::i18n::Langue>,
 }
 
 impl Default for Reglages {
@@ -499,6 +511,7 @@ impl Default for Reglages {
             muet: false,
             auto_rarete: Rarete::Legendaire as u8,
             auto_shiny: true,
+            langue: None,
         }
     }
 }
@@ -1061,14 +1074,24 @@ pub fn court(v: f64) -> String {
     if v < 0.0 {
         return format!("-{}", court(-v));
     }
+    // Anglais : point décimal et suffixes courts (k, M, B, T, Qa…).
+    let en = crate::i18n::anglais();
+    let virgule = |s: &str| {
+        if en {
+            s.to_string()
+        } else {
+            s.replace('.', ",")
+        }
+    };
     if v < 10.0 {
         let s = format!("{:.1}", (v * 10.0).floor() / 10.0);
-        return s.trim_end_matches(".0").replace('.', ",");
+        return virgule(s.trim_end_matches(".0"));
     }
     if v < 1000.0 {
         return format!("{}", v.floor() as u64);
     }
     const SUFFIXES: [&str; 9] = ["k", "M", "Md", "Bn", "Bd", "Tn", "Td", "Qn", "Qd"];
+    const SUFFIXES_EN: [&str; 9] = ["k", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc"];
     let mut e = (v.log10().floor() as i32).max(3);
     // Arrondi à 3 chiffres significatifs, en gardant le palier si l'arrondi déborde (999,96 k → 1 M).
     let mut m = v / 10f64.powi(e);
@@ -1080,10 +1103,7 @@ pub fn court(v: f64) -> String {
     let palier = (e / 3) as usize;
     if palier > SUFFIXES.len() {
         let s = format!("{m:.2}");
-        let s = s
-            .trim_end_matches('0')
-            .trim_end_matches('.')
-            .replace('.', ",");
+        let s = virgule(s.trim_end_matches('0').trim_end_matches('.'));
         return format!("{s}e{e}");
     }
     let chiffres = m * 10f64.powi(e - 3 * palier as i32);
@@ -1094,7 +1114,8 @@ pub fn court(v: f64) -> String {
     } else {
         s
     };
-    format!("{} {}", s.replace('.', ","), SUFFIXES[palier - 1])
+    let suffixe = if en { SUFFIXES_EN } else { SUFFIXES }[palier - 1];
+    format!("{} {suffixe}", virgule(&s))
 }
 
 fn trunc(v: f64, decimales: usize) -> f64 {
@@ -1105,14 +1126,24 @@ fn trunc(v: f64, decimales: usize) -> f64 {
 /// Durée lisible : « 3 min 20 s », « 2 h 05 », « 1 j 4 h ».
 pub fn duree(s: f64) -> String {
     let s = s.max(0.0) as u64;
+    let en = crate::i18n::anglais();
     if s < 60 {
         format!("{s} s")
     } else if s < 3600 {
         format!("{} min {:02} s", s / 60, s % 60)
     } else if s < 86_400 {
-        format!("{} h {:02}", s / 3600, s / 60 % 60)
+        if en {
+            format!("{} h {:02} min", s / 3600, s / 60 % 60)
+        } else {
+            format!("{} h {:02}", s / 3600, s / 60 % 60)
+        }
     } else {
-        format!("{} j {} h", s / 86_400, s / 3600 % 24)
+        format!(
+            "{} {} {} h",
+            s / 86_400,
+            if en { "d" } else { "j" },
+            s / 3600 % 24
+        )
     }
 }
 

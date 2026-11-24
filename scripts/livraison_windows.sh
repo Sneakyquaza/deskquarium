@@ -8,7 +8,7 @@ cargo build --release --target x86_64-pc-windows-gnu
 L=out/livraison
 mkdir -p "$L"
 cp target/x86_64-pc-windows-gnu/release/aquarium.exe "$L/"
-cp livraison/LISEZMOI.txt "$L/"
+cp livraison/LISEZMOI.txt livraison/README.txt "$L/"
 {
   echo "AQUARIUM - licences"
   echo
@@ -39,7 +39,7 @@ python3 -I - "$L" "aquarium_windows_$VERSION.zip" <<'PY'
 import sys, zipfile, pathlib
 d = pathlib.Path(sys.argv[1])
 with zipfile.ZipFile(d / sys.argv[2], "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
-    for n in ["aquarium.exe", "LISEZMOI.txt", "LICENCES.txt"]:
+    for n in ["aquarium.exe", "LISEZMOI.txt", "README.txt", "LICENCES.txt"]:
         data = (d / n).read_bytes()
         if n.endswith(".txt") and b"\r\n" not in data:
             data = data.replace(b"\n", b"\r\n")

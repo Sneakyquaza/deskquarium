@@ -3,6 +3,7 @@
 //! Pixelify Sans pour le texte), images pixel art agrandies en entier au plus proche.
 
 use crate::especes::{de_rarete, Espece};
+use crate::i18n::{tr, trf};
 use crate::jeu::{
     court, duree, nom_index, Forme, Modif, Partie, Poisson, Rarete, Refus, BONUS_INDEX, CAPACITE,
     MULT_SHINY, NB_INDEX, OEUFS,
@@ -166,6 +167,8 @@ pub struct Ecloserie {
     lot: u32,
     auto_arret: Option<String>,
     revele_le: Option<f64>,
+    /// Langue choisie au premier lancement (appliquée à la partie après l'en-tête).
+    langue_choisie: Option<crate::i18n::Langue>,
 }
 
 impl Ecloserie {
@@ -194,6 +197,7 @@ impl Ecloserie {
             lot: 1,
             auto_arret: None,
             revele_le: None,
+            langue_choisie: None,
         }
     }
 
@@ -245,16 +249,17 @@ impl Ecloserie {
             Err(Refus::Indisponible) => {
                 self.auto = false;
                 self.info = Some((
-                    "Cet œuf exceptionnel n'est pas là en ce moment.".into(),
+                    tr("Cet œuf exceptionnel n'est pas là en ce moment.").into(),
                     maintenant,
                 ))
             }
             Err(Refus::PasAssez) => {
                 if self.auto {
                     self.auto = false;
-                    self.auto_arret = Some("Ouverture auto arrêtée : plus assez d'argent.".into());
+                    self.auto_arret =
+                        Some(tr("Ouverture auto arrêtée : plus assez d'argent.").into());
                 }
-                self.info = Some(("Pas assez d'argent pour ces œufs.".into(), maintenant))
+                self.info = Some((tr("Pas assez d'argent pour ces œufs.").into(), maintenant))
             }
             Err(_) => {}
         }
@@ -315,6 +320,9 @@ impl Ecloserie {
                     .inner_margin(Margin::symmetric(18, 12)),
             )
             .show(ui, |ui| self.entete(ui, p));
+        if let Some(l) = self.langue_choisie.take() {
+            p.reglages.langue = Some(l);
+        }
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
@@ -346,20 +354,26 @@ impl Ecloserie {
             ui.label(RichText::new(court(p.argent)).font(titre(30.0)).color(OR));
             ui.add_space(6.0);
             ui.label(
-                RichText::new(format!("+{} par seconde", court(p.revenu_par_s())))
-                    .font(titre(14.0))
-                    .color(BRUME),
+                RichText::new(trf(
+                    "+{} par seconde",
+                    &[&(court(p.revenu_par_s())).to_string()],
+                ))
+                .font(titre(14.0))
+                .color(BRUME),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    RichText::new(format!("{} / {CAPACITE} dans l'aquarium", p.nb_actifs()))
-                        .font(titre(13.0))
-                        .color(BRUME),
+                    RichText::new(trf(
+                        "{} / {} dans l'aquarium",
+                        &[&p.nb_actifs().to_string(), &CAPACITE.to_string()],
+                    ))
+                    .font(titre(13.0))
+                    .color(BRUME),
                 );
                 // Mise à jour disponible : pastille discrète qui mène aux Réglages.
                 if let Some(v) = self.maj.as_ref().and_then(|m| m.disponible()) {
                     let b = egui::Button::new(
-                        RichText::new(format!("Mise à jour v{v}"))
+                        RichText::new(trf("Mise à jour v{}", &[&v.to_string()]))
                             .font(titre(12.0))
                             .color(ENCRE),
                     )
@@ -370,6 +384,26 @@ impl Ecloserie {
                 }
             });
         });
+        // Premier lancement : choix de la langue (proposée : celle de Windows).
+        if p.reglages.langue.is_none() {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("Langue · Language")
+                        .color(OR)
+                        .font(titre(14.0)),
+                );
+                for (l, nom) in [
+                    (crate::i18n::Langue::Fr, "Français"),
+                    (crate::i18n::Langue::En, "English"),
+                ] {
+                    if ui.button(nom).clicked() {
+                        crate::i18n::regler(l);
+                        self.langue_choisie = Some(l);
+                    }
+                }
+            });
+        }
         if let Some(b) = self.bandeau.clone() {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
@@ -382,11 +416,11 @@ impl Ecloserie {
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             for (o, nom) in [
-                (Onglet::Oeufs, "Œufs"),
-                (Onglet::Aquarium, "Mon aquarium"),
-                (Onglet::Poissodex, "Index"),
-                (Onglet::Decor, "Décor"),
-                (Onglet::Reglages, "Réglages"),
+                (Onglet::Oeufs, tr("Œufs")),
+                (Onglet::Aquarium, tr("Mon aquarium")),
+                (Onglet::Poissodex, tr("Index")),
+                (Onglet::Decor, tr("Décor")),
+                (Onglet::Reglages, tr("Réglages")),
             ] {
                 let actif = self.onglet == o;
                 let b = egui::Button::new(RichText::new(nom).font(titre(15.0)).color(if actif {
@@ -448,16 +482,16 @@ impl Ecloserie {
                             ui.vertical_centered(|ui| {
                                 if o.dispo.is_some() {
                                     let (c, t) = if o.disponible(crate::sauve::maintenant()) {
-                                        (OR, "LIMITÉ · EN CE MOMENT")
+                                        (OR, tr("LIMITÉ · EN CE MOMENT"))
                                     } else {
-                                        (BRUME, "LIMITÉ")
+                                        (BRUME, tr("LIMITÉ"))
                                     };
                                     ui.label(RichText::new(t).font(titre(13.0)).color(c));
                                 }
                                 ui.add(egui::Image::from_texture((self.oeufs[i].id(), Vec2::new(196.0, 224.0))));
-                                ui.label(RichText::new(o.nom).font(titre(15.0)));
+                                ui.label(RichText::new(tr(o.nom)).font(titre(15.0)));
                             });
-                            ui.label(RichText::new(o.description).color(BRUME).size(14.0));
+                            ui.label(RichText::new(tr(o.description)).color(BRUME).size(14.0));
                             barre_chances(ui, &o.chances);
                             for r in Rarete::TOUTES {
                                 let c = o.chances[r.index()];
@@ -477,14 +511,14 @@ impl Ecloserie {
                             let dispo = o.disponible(horloge);
                             if let Some(s) = o.attente(horloge) {
                                 let (texte, c) = if dispo {
-                                    (format!("Encore là {}", duree(s as f64)), OR)
+                                    (trf("Encore là {}", &[&(duree(s as f64)).to_string()]), OR)
                                 } else {
-                                    (format!("Revient dans {}", duree(s as f64)), BRUME)
+                                    (trf("Revient dans {}", &[&(duree(s as f64)).to_string()]), BRUME)
                                 };
                                 ui.vertical_centered(|ui| ui.label(RichText::new(texte).font(titre(13.0)).color(c)));
                             }
                             let assez = p.argent >= prix && dispo;
-                            let texte = RichText::new(format!("Ouvrir · {}", court(prix)))
+                            let texte = RichText::new(trf("Ouvrir · {}", &[&(court(prix)).to_string()]))
                                 .font(titre(14.0))
                                 .color(if assez { ENCRE } else { BRUME });
                             let b = egui::Button::new(texte)
@@ -516,9 +550,9 @@ impl Ecloserie {
                             // Pitié : compteur avant la rareté garantie.
                             if let Some((r, reste)) = p.pitie_restante(i) {
                                 let txt = if reste <= 1 {
-                                    format!("{} ou mieux GARANTI au prochain !", r.nom())
+                                    trf("{} ou mieux GARANTI au prochain !", &[r.nom()])
                                 } else {
-                                    format!("{} ou mieux garanti dans {reste} œufs", r.nom())
+                                    trf("{} ou mieux garanti dans {} œufs", &[r.nom(), &reste.to_string()])
                                 };
                                 ui.vertical_centered(|ui| {
                                     ui.label(RichText::new(txt).color(c32(r.couleur())).size(14.0))
@@ -526,8 +560,8 @@ impl Ecloserie {
                             }
                             if !assez && dispo {
                                 let r = p.revenu_par_s();
-                                let t = if r > 0.0 { duree((prix - p.argent) / r) } else { "jamais".into() };
-                                ui.vertical_centered(|ui| ui.label(RichText::new(format!("Encore {t}")).color(BRUME).size(14.0)));
+                                let t = if r > 0.0 { duree((prix - p.argent) / r) } else { tr("jamais").into() };
+                                ui.vertical_centered(|ui| ui.label(RichText::new(trf("Encore {}", &[&t.to_string()])).color(BRUME).size(14.0)));
                             }
                             });
                         });
@@ -537,7 +571,7 @@ impl Ecloserie {
             }
             ui.add_space(8.0);
             ui.label(
-                RichText::new("Le prix d'un œuf monte un peu à chaque ouverture. Aquarium plein : le poisson part en réserve. Parfois, un œuf ordinaire devient un œuf doré (meilleures chances) ! Malchance : après une longue série sans, la rareté indiquée est garantie.")
+                RichText::new(tr("Le prix d'un œuf monte un peu à chaque ouverture. Aquarium plein : le poisson part en réserve. Parfois, un œuf ordinaire devient un œuf doré (meilleures chances) ! Malchance : après une longue série sans, la rareté indiquée est garantie."))
                     .color(BRUME)
                     .size(14.0),
             );
@@ -582,18 +616,22 @@ impl Ecloserie {
                     e.passer(maintenant);
                 }
                 ui.label(
-                    RichText::new(format!(
+                    RichText::new(trf(
                         "{} éclot…",
-                        if e.dore {
-                            "Œuf doré"
+                        &[(if e.dore {
+                            tr("Œuf doré")
                         } else {
-                            OEUFS[e.oeuf].nom
-                        }
+                            tr(OEUFS[e.oeuf].nom)
+                        })],
                     ))
                     .font(titre(18.0))
                     .color(BRUME),
                 );
-                ui.label(RichText::new("Clique pour passer").color(BRUME).size(14.0));
+                ui.label(
+                    RichText::new(tr("Clique pour passer"))
+                        .color(BRUME)
+                        .size(14.0),
+                );
                 return;
             }
             let Some(f) = p.poissons.iter().find(|f| f.id == e.id) else {
@@ -607,25 +645,26 @@ impl Ecloserie {
             ui.label(RichText::new(nom).size(22.0));
             if let Some(m) = f.modif {
                 ui.label(
-                    RichText::new(format!(
+                    RichText::new(trf(
                         "{} · revenu ×{}",
-                        m.nom(),
-                        court_pct(m.multiplicateur())
+                        &[m.nom(), &(court_pct(m.multiplicateur())).to_string()],
                     ))
                     .font(titre(16.0))
                     .color(c32(m.couleur())),
                 );
             }
             ui.label(
-                RichText::new(format!(
+                RichText::new(trf(
                     "Rapporte {}/s · taille {} · {}",
-                    court(f.revenu()),
-                    taille(f.taille),
-                    if f.actif {
-                        "nage déjà dans ton aquarium"
-                    } else {
-                        "rangé dans la réserve (aquarium plein)"
-                    }
+                    &[
+                        &(court(f.revenu())).to_string(),
+                        &(taille(f.taille)).to_string(),
+                        (if f.actif {
+                            tr("nage déjà dans ton aquarium")
+                        } else {
+                            tr("rangé dans la réserve (aquarium plein)")
+                        }),
+                    ],
                 ))
                 .color(BRUME)
                 .font(titre(13.0)),
@@ -667,11 +706,18 @@ impl Ecloserie {
                     m.passer(maintenant);
                 }
                 ui.label(
-                    RichText::new(format!("{} ×{} éclosent…", OEUFS[oeuf].nom, ids.len()))
-                        .font(titre(18.0))
-                        .color(BRUME),
+                    RichText::new(trf(
+                        "{} ×{} éclosent…",
+                        &[tr(OEUFS[oeuf].nom), &ids.len().to_string()],
+                    ))
+                    .font(titre(18.0))
+                    .color(BRUME),
                 );
-                ui.label(RichText::new("Clique pour passer").color(BRUME).size(14.0));
+                ui.label(
+                    RichText::new(tr("Clique pour passer"))
+                        .color(BRUME)
+                        .size(14.0),
+                );
                 return;
             }
             // Résumé : la meilleure, puis le revenu ajouté.
@@ -684,16 +730,22 @@ impl Ecloserie {
                 .max_by_key(|f| (f.rarete, f.shiny, f.modif.is_some()))
             {
                 ui.label(texte_rarete(b.rarete, maintenant, 28.0));
-                ui.label(RichText::new(format!("Meilleure : {}", nom_de(b))).size(20.0));
+                ui.label(
+                    RichText::new(trf("Meilleure : {}", &[&(nom_de(b)).to_string()])).size(20.0),
+                );
             }
             let gain: f64 = fs.iter().map(|f| f.revenu()).sum();
             let shiny = fs.iter().filter(|f| f.shiny).count();
             let modif = fs.iter().filter(|f| f.modif.is_some()).count();
             ui.label(
-                RichText::new(format!(
-                    "+{}/s en tout · {shiny} shiny · {modif} modifié{}",
-                    court(gain),
-                    if modif > 1 { "s" } else { "" }
+                RichText::new(trf(
+                    "+{}/s en tout · {} shiny · {} modifié{}",
+                    &[
+                        &(court(gain)).to_string(),
+                        &shiny.to_string(),
+                        &modif.to_string(),
+                        (if modif > 1 { "s" } else { "" }),
+                    ],
                 ))
                 .color(BRUME)
                 .font(titre(13.0)),
@@ -726,10 +778,9 @@ impl Ecloserie {
                 .max_by_key(|f| (f.rarete, f.shiny));
             if let (true, Some(f)) = (self.auto, arret) {
                 self.auto = false;
-                self.auto_arret = Some(format!(
+                self.auto_arret = Some(trf(
                     "Ouverture auto arrêtée : {}{} !",
-                    f.rarete.nom(),
-                    if f.shiny { " shiny" } else { "" }
+                    &[f.rarete.nom(), (if f.shiny { tr(" shiny") } else { "" })],
                 ));
             }
         }
@@ -752,9 +803,12 @@ impl Ecloserie {
                 ui.add_space((ui.available_width() - 2.0 * w - 8.0).max(0.0) / 2.0);
                 let assez = p.argent >= prix;
                 let texte = if lot <= 1 {
-                    format!("Encore un · {}", court(prix))
+                    trf("Encore un · {}", &[&(court(prix)).to_string()])
                 } else {
-                    format!("Encore ×{lot} · {}", court(prix))
+                    trf(
+                        "Encore ×{} · {}",
+                        &[&lot.to_string(), &(court(prix)).to_string()],
+                    )
                 };
                 let b = egui::Button::new(RichText::new(texte).font(titre(14.0)).color(if assez {
                     ENCRE
@@ -769,7 +823,7 @@ impl Ecloserie {
                 }
                 if ui
                     .add(
-                        egui::Button::new(RichText::new("Retour aux œufs").font(titre(14.0)))
+                        egui::Button::new(RichText::new(tr("Retour aux œufs")).font(titre(14.0)))
                             .min_size(Vec2::new(w, 38.0)),
                     )
                     .clicked()
@@ -785,7 +839,7 @@ impl Ecloserie {
             let avant = self.auto;
             ui.checkbox(
                 &mut self.auto,
-                RichText::new("Ouverture auto").font(titre(13.0)),
+                RichText::new(tr("Ouverture auto")).font(titre(13.0)),
             );
             if self.auto && !avant {
                 self.auto_arret = None;
@@ -794,7 +848,7 @@ impl Ecloserie {
                 }
             }
             let r = &mut p.reglages;
-            ui.label(RichText::new("s'arrête sur").color(BRUME).size(14.0));
+            ui.label(RichText::new(tr("s'arrête sur")).color(BRUME).size(14.0));
             egui::ComboBox::from_id_salt("auto_rarete")
                 .selected_text(Rarete::TOUTES[(r.auto_rarete as usize).min(8)].nom())
                 .show_ui(ui, |ui| {
@@ -802,7 +856,7 @@ impl Ecloserie {
                         ui.selectable_value(&mut r.auto_rarete, k as u8, format!("{}+", rr.nom()));
                     }
                 });
-            ui.checkbox(&mut r.auto_shiny, "ou un shiny");
+            ui.checkbox(&mut r.auto_shiny, tr("ou un shiny"));
         });
         if fini || encore {
             self.liberer_annonces();
@@ -834,8 +888,11 @@ impl Ecloserie {
             if ui
                 .selectable_label(
                     !self.reserve,
-                    RichText::new(format!("Dans l'aquarium ({}/{CAPACITE})", p.nb_actifs()))
-                        .font(titre(14.0)),
+                    RichText::new(trf(
+                        "Dans l'aquarium ({}/{})",
+                        &[&p.nb_actifs().to_string(), &CAPACITE.to_string()],
+                    ))
+                    .font(titre(14.0)),
                 )
                 .clicked()
             {
@@ -844,7 +901,7 @@ impl Ecloserie {
             if ui
                 .selectable_label(
                     self.reserve,
-                    RichText::new(format!("Réserve ({n_reserve})")).font(titre(14.0)),
+                    RichText::new(trf("Réserve ({})", &[&n_reserve.to_string()])).font(titre(14.0)),
                 )
                 .clicked()
             {
@@ -854,7 +911,7 @@ impl Ecloserie {
         // « Équiper les meilleurs » : les plus rentables dans l'aquarium, le reste en réserve.
         ui.horizontal(|ui| {
             let b = egui::Button::new(
-                RichText::new("Équiper les meilleurs")
+                RichText::new(tr("Équiper les meilleurs"))
                     .font(titre(14.0))
                     .color(ENCRE),
             )
@@ -863,24 +920,28 @@ impl Ecloserie {
             if ui.add(b).clicked() {
                 let (avant, apres) = p.equiper_meilleurs();
                 let d = apres - avant;
-                self.bandeau = Some(format!(
+                self.bandeau = Some(trf(
                     "Meilleurs équipés : {}/s ({}{}/s)",
-                    court(apres),
-                    if d >= 0.0 { "+" } else { "-" },
-                    court(d.abs())
+                    &[
+                        &(court(apres)).to_string(),
+                        (if d >= 0.0 { "+" } else { "-" }),
+                        &(court(d.abs())).to_string(),
+                    ],
                 ));
             }
             ui.checkbox(
                 &mut p.reglages.equiper_auto,
-                RichText::new("Auto : un nouveau poisson meilleur remplace le plus faible")
-                    .size(13.0),
+                RichText::new(tr(
+                    "Auto : un nouveau poisson meilleur remplace le plus faible",
+                ))
+                .size(13.0),
             );
         });
         ui.label(
             RichText::new(if self.reserve {
-                "Les poissons de la réserve ne rapportent rien. Sors-les quand il y a de la place."
+                tr("Les poissons de la réserve ne rapportent rien. Sors-les quand il y a de la place.")
             } else {
-                "Nourrir fait monter le niveau : +20 % de revenu par niveau, jusqu'au niveau 10."
+                tr("Nourrir fait monter le niveau : +20 % de revenu par niveau, jusqu'au niveau 10.")
             })
             .color(BRUME)
             .size(14.0),
@@ -898,9 +959,9 @@ impl Ecloserie {
             ui.vertical_centered(|ui| {
                 ui.label(
                     RichText::new(if self.reserve {
-                        "Réserve vide."
+                        tr("Réserve vide.")
                     } else {
-                        "Aquarium vide : ouvre un œuf."
+                        tr("Aquarium vide : ouvre un œuf.")
                     })
                     .color(BRUME),
                 );
@@ -954,11 +1015,13 @@ impl Ecloserie {
                                             .size(14.0),
                                     );
                                     ui.label(
-                                        RichText::new(format!(
+                                        RichText::new(trf(
                                             "niv. {} · taille {} · {}/s",
-                                            f.niveau,
-                                            taille(f.taille),
-                                            court(f.revenu())
+                                            &[
+                                                &f.niveau.to_string(),
+                                                &(taille(f.taille)).to_string(),
+                                                &(court(f.revenu())).to_string(),
+                                            ],
                                         ))
                                         .color(BRUME)
                                         .font(titre(12.0)),
@@ -970,9 +1033,15 @@ impl Ecloserie {
                                 |ui| {
                                     let confirme = self.confirmer == Some(f.id);
                                     let t = if confirme {
-                                        format!("Relâcher ? +{}", court(f.prix_relache()))
+                                        trf(
+                                            "Relâcher ? +{}",
+                                            &[&(court(f.prix_relache())).to_string()],
+                                        )
                                     } else {
-                                        format!("Relâcher +{}", court(f.prix_relache()))
+                                        trf(
+                                            "Relâcher +{}",
+                                            &[&(court(f.prix_relache())).to_string()],
+                                        )
                                     };
                                     let b = egui::Button::new(
                                         RichText::new(t).font(titre(12.0)).color(if confirme {
@@ -992,16 +1061,16 @@ impl Ecloserie {
                                     }
                                     let plein = p.nb_actifs() >= CAPACITE;
                                     let (t, ok) = if f.actif {
-                                        ("Ranger", true)
+                                        (tr("Ranger"), true)
                                     } else {
-                                        ("Sortir", !plein)
+                                        (tr("Sortir"), !plein)
                                     };
                                     if ui
                                         .add_enabled(
                                             ok,
                                             egui::Button::new(RichText::new(t).font(titre(12.0))),
                                         )
-                                        .on_disabled_hover_text("Aquarium plein")
+                                        .on_disabled_hover_text(tr("Aquarium plein"))
                                         .clicked()
                                     {
                                         action = Some((f.id, 1));
@@ -1009,16 +1078,19 @@ impl Ecloserie {
                                     if let Some(c) = f.cout_nourrir() {
                                         let assez = p.argent >= c;
                                         let b = egui::Button::new(
-                                            RichText::new(format!("Nourrir · {}", court(c)))
-                                                .font(titre(12.0))
-                                                .color(if assez { ENCRE } else { BRUME }),
+                                            RichText::new(trf(
+                                                "Nourrir · {}",
+                                                &[&(court(c)).to_string()],
+                                            ))
+                                            .font(titre(12.0))
+                                            .color(if assez { ENCRE } else { BRUME }),
                                         )
                                         .fill(if assez { SABLE } else { VERRE_FONCE });
                                         if ui.add_enabled(assez, b).clicked() {
                                             action = Some((f.id, 0));
                                         }
                                     } else {
-                                        ui.label(RichText::new("Niveau max").color(OR));
+                                        ui.label(RichText::new(tr("Niveau max")).color(OR));
                                     }
                                 },
                             );
@@ -1072,20 +1144,27 @@ impl Ecloserie {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(format!(
-                    "Index {} : {n}/{total} ({} %)",
-                    nom_index(k),
-                    n * 100 / total.max(1)
+                RichText::new(trf(
+                    "Index {} : {}/{} ({} %)",
+                    &[
+                        (nom_index(k)),
+                        &n.to_string(),
+                        &total.to_string(),
+                        &(n * 100 / total.max(1)).to_string(),
+                    ],
                 ))
                 .font(titre(16.0))
                 .color(c32(couleur_index(k))),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    RichText::new(format!(
+                    RichText::new(trf(
                         "{} index complets : +{} % de revenu",
-                        p.index_complets(),
-                        court_pct(p.index_complets() as f64 * BONUS_INDEX * 100.0)
+                        &[
+                            &p.index_complets().to_string(),
+                            &(court_pct(p.index_complets() as f64 * BONUS_INDEX * 100.0))
+                                .to_string(),
+                        ],
                     ))
                     .font(titre(12.0))
                     .color(OR),
@@ -1093,26 +1172,33 @@ impl Ecloserie {
             });
         });
         let regle = match k {
-            0 => "Chaque espèce éclose (sous n'importe quelle forme) compte.".to_string(),
+            0 => tr("Chaque espèce éclose (sous n'importe quelle forme) compte.").to_string(),
             k if k < NB_INDEX - 1 => {
                 let m = Modif::TOUS[k - 1];
-                format!(
+                trf(
                     "Espèces écloses avec le modificateur {} (1 chance sur {}, revenu ×{}).",
-                    m.nom(),
-                    (1.0 / m.chance()).round(),
-                    court_pct(m.multiplicateur())
+                    &[
+                        m.nom(),
+                        &((1.0 / m.chance()).round()).to_string(),
+                        &(court_pct(m.multiplicateur())).to_string(),
+                    ],
                 )
             }
-            _ => format!(
+            _ => trf(
                 "Espèces écloses shiny (1 chance sur {}, revenu ×{}).",
-                (1.0 / crate::jeu::CHANCE_SHINY).round(),
-                court_pct(MULT_SHINY)
+                &[
+                    &((1.0 / crate::jeu::CHANCE_SHINY).round()).to_string(),
+                    &(court_pct(MULT_SHINY)).to_string(),
+                ],
             ),
         };
         ui.label(
-            RichText::new(format!(
-                "{regle} Index complet : +{} % de revenu pour toujours.",
-                court_pct(BONUS_INDEX * 100.0)
+            RichText::new(trf(
+                "{} Index complet : +{} % de revenu pour toujours.",
+                &[
+                    &regle.to_string(),
+                    &(court_pct(BONUS_INDEX * 100.0)).to_string(),
+                ],
             ))
             // Chiffres en Silkscreen (dans Pixelify Sans, le 5 ressemble à un S).
             .color(BRUME)
@@ -1195,7 +1281,7 @@ impl Ecloserie {
             Color32::WHITE,
         );
         let (nom, c) = if vu {
-            (e.nom.to_string(), Color32::WHITE)
+            (tr(e.nom).to_string(), Color32::WHITE)
         } else {
             ("???".to_string(), BRUME)
         };
@@ -1207,11 +1293,11 @@ impl Ecloserie {
             c,
         );
         let bas = if !vu {
-            "À découvrir".into()
+            tr("À découvrir").into()
         } else if k == 0 {
-            format!("{n} éclos")
+            trf("{} éclos", &[&n.to_string()])
         } else {
-            "Découvert".into()
+            tr("Découvert").into()
         };
         peintre.text(
             egui::pos2(rect.center().x, rect.top() + 86.0),
@@ -1239,18 +1325,33 @@ impl Ecloserie {
             if let Some(m) = maj {
                 ligne(
                     ui,
-                    "Mises à jour",
-                    &format!(
-                        "Version actuelle : {}. L'appli se met à jour elle-même (rien à dézipper).",
-                        crate::maj::VERSION
-                    ),
+                    tr("Mises à jour"),
+                    &trf("Version actuelle : {}. L'appli se met à jour elle-même (rien à dézipper).", &[(crate::maj::VERSION)]),
                     &mut |ui| section_maj(ui, m),
                 );
             }
             ligne(
                 ui,
-                "Sons",
-                "Seulement dans l'Écloserie (éclosions, cartes, achats) : le fond d'écran reste toujours silencieux.",
+                tr("Langue"),
+                tr("La langue de l'interface (les noms des créatures aussi)."),
+                &mut |ui| {
+                    let mut l = r.langue.unwrap_or_else(crate::i18n::langue_systeme);
+                    ui.horizontal(|ui| {
+                        ui.radio_value(&mut l, crate::i18n::Langue::Fr, "Français");
+                        ui.radio_value(&mut l, crate::i18n::Langue::En, "English");
+                    });
+                    if Some(l) != r.langue
+                        && (r.langue.is_some() || l != crate::i18n::langue_systeme())
+                    {
+                        r.langue = Some(l);
+                        crate::i18n::regler(l);
+                    }
+                },
+            );
+            ligne(
+                ui,
+                tr("Sons"),
+                tr("Seulement dans l'Écloserie (éclosions, cartes, achats) : le fond d'écran reste toujours silencieux."),
                 &mut |ui| {
                     let mut pct = (r.volume * 100.0).round();
                     ui.horizontal(|ui| {
@@ -1266,37 +1367,37 @@ impl Ecloserie {
                         {
                             r.volume = pct / 100.0;
                         }
-                        ui.checkbox(&mut r.muet, "Couper le son");
+                        ui.checkbox(&mut r.muet, tr("Couper le son"));
                     });
                 },
             );
             ligne(
                 ui,
-                "Décor",
-                "Le décor du fond de l'aquarium (les objets achetés restent posés).",
+                tr("Décor"),
+                tr("Le décor du fond de l'aquarium (les objets achetés restent posés)."),
                 &mut |ui| {
                     for (i, nom) in crate::decor::THEMES.iter().enumerate() {
-                        ui.radio_value(&mut r.theme, i as u8, *nom);
+                        ui.radio_value(&mut r.theme, i as u8, tr(nom));
                     }
                 },
             );
             ligne(
                 ui,
-                "Poissons et souris",
+                tr("Poissons et souris"),
                 "Garde le clic appuyé un instant sur un poisson (bureau vide, pas sur une icône) \
                  pour l'attraper et le déplacer ; un clic bref montre sa fiche.",
                 &mut |ui| {
-                    ui.checkbox(&mut r.attraper, "Attraper les poissons");
+                    ui.checkbox(&mut r.attraper, tr("Attraper les poissons"));
                     ui.add_enabled(
                         r.attraper,
-                        egui::Checkbox::new(&mut r.attraper_alt, "Seulement avec Alt"),
+                        egui::Checkbox::new(&mut r.attraper_alt, tr("Seulement avec Alt")),
                     );
                 },
             );
             ligne(
                 ui,
-                "Teinte de l'eau",
-                "0 % : ton fond d'écran reste intact derrière les poissons.",
+                tr("Teinte de l'eau"),
+                tr("0 % : ton fond d'écran reste intact derrière les poissons."),
                 &mut |ui| {
                     let mut pct = (r.teinte * 100.0).round();
                     if ui
@@ -1314,16 +1415,16 @@ impl Ecloserie {
             );
             ligne(
                 ui,
-                "Poissons dessinés",
-                "Les plus rentables sont dessinés ; tous rapportent quand même.",
+                tr("Poissons dessinés"),
+                tr("Les plus rentables sont dessinés ; tous rapportent quand même."),
                 &mut |ui| {
                     ui.add(egui::Slider::new(&mut r.max_affiches, 5..=CAPACITE));
                 },
             );
             ligne(
                 ui,
-                "Fluidité",
-                "30 images par seconde suffisent et ménagent le processeur.",
+                tr("Fluidité"),
+                tr("30 images par seconde suffisent et ménagent le processeur."),
                 &mut |ui| {
                     ui.horizontal(|ui| {
                         ui.radio_value(&mut r.ips, 30, "30 i/s");
@@ -1334,53 +1435,53 @@ impl Ecloserie {
             let windows = self.windows;
             ligne(
                 ui,
-                "Démarrage",
+                tr("Démarrage"),
                 if windows {
-                    "L'aquarium se lance tout seul à l'ouverture de ta session."
+                    tr("L'aquarium se lance tout seul à l'ouverture de ta session.")
                 } else {
-                    "Disponible seulement sous Windows."
+                    tr("Disponible seulement sous Windows.")
                 },
                 &mut |ui| {
                     ui.add_enabled(
                         windows,
                         egui::Checkbox::new(
                             &mut r.demarrage_windows,
-                            "Lancer au démarrage de Windows",
+                            tr("Lancer au démarrage de Windows"),
                         ),
                     );
                 },
             );
             ligne(
                 ui,
-                "Jeux et vidéos",
-                "Animation en pause tant qu'une appli est en plein écran (l'argent continue).",
+                tr("Jeux et vidéos"),
+                tr("Animation en pause tant qu'une appli est en plein écran (l'argent continue)."),
                 &mut |ui| {
-                    ui.checkbox(&mut r.pause_plein_ecran, "Pause en plein écran");
+                    ui.checkbox(&mut r.pause_plein_ecran, tr("Pause en plein écran"));
                 },
             );
             ligne(
                 ui,
-                "Affichage",
-                "Si l'aquarium n'apparaît pas derrière les icônes : fenêtre sans bord au fond.",
+                tr("Affichage"),
+                tr("Si l'aquarium n'apparaît pas derrière les icônes : fenêtre sans bord au fond."),
                 &mut |ui| {
-                    ui.checkbox(&mut r.mode_fenetre, "Mode fenêtre");
+                    ui.checkbox(&mut r.mode_fenetre, tr("Mode fenêtre"));
                 },
             );
             ligne(
                 ui,
-                "Mode Abysses",
-                "Aquarium des grands fonds : eau sombre, neige marine, poissons qui luisent.",
+                tr("Mode Abysses"),
+                tr("Aquarium des grands fonds : eau sombre, neige marine, poissons qui luisent."),
                 &mut |ui| {
-                    ui.checkbox(&mut r.abysses, "Mode Abysses");
+                    ui.checkbox(&mut r.abysses, tr("Mode Abysses"));
                 },
             );
             ui.label(
-                RichText::new(format!("Sauvegarde : {}", self.dossier))
+                RichText::new(trf("Sauvegarde : {}", &[&self.dossier.to_string()]))
                     .color(BRUME)
                     .size(13.0),
             );
             ui.label(
-                RichText::new("Raccourci : Ctrl + Alt + A ouvre l'Écloserie.")
+                RichText::new(tr("Raccourci : Ctrl + Alt + A ouvre l'Écloserie."))
                     .color(BRUME)
                     .size(13.0),
             );
@@ -1401,26 +1502,29 @@ fn section_maj(ui: &mut Ui, m: &crate::maj::Maj) {
         }
     };
     match m.etat() {
-        Etat::Rien => chercher(ui, "Rechercher une mise à jour"),
+        Etat::Rien => chercher(ui, tr("Rechercher une mise à jour")),
         Etat::Recherche => {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label(RichText::new("Recherche en cours…").color(BRUME));
+                ui.label(RichText::new(tr("Recherche en cours…")).color(BRUME));
             });
         }
         Etat::AJour => {
-            ui.label(RichText::new("Tu as la dernière version.").color(OR));
-            chercher(ui, "Rechercher à nouveau");
+            ui.label(RichText::new(tr("Tu as la dernière version.")).color(OR));
+            chercher(ui, tr("Rechercher à nouveau"));
         }
         Etat::Erreur(e) => {
             ui.label(RichText::new(e).color(ALERTE));
-            chercher(ui, "Réessayer");
+            chercher(ui, tr("Réessayer"));
         }
         Etat::Dispo(a) => {
             ui.label(
-                RichText::new(format!("Nouvelle version {} disponible", a.version))
-                    .font(titre(14.0))
-                    .color(OR),
+                RichText::new(trf(
+                    "Nouvelle version {} disponible",
+                    &[&a.version.to_string()],
+                ))
+                .font(titre(14.0))
+                .color(OR),
             );
             if !a.notes.trim().is_empty() {
                 egui::ScrollArea::vertical()
@@ -1431,7 +1535,7 @@ fn section_maj(ui: &mut Ui, m: &crate::maj::Maj) {
                     });
             }
             let b = egui::Button::new(
-                RichText::new(format!("Installer v{}", a.version))
+                RichText::new(trf("Installer v{}", &[&a.version.to_string()]))
                     .font(titre(14.0))
                     .color(ENCRE),
             )
@@ -1441,13 +1545,16 @@ fn section_maj(ui: &mut Ui, m: &crate::maj::Maj) {
                 m.telecharger();
             }
             ui.label(
-                RichText::new("L'appli redémarre toute seule après l'installation.")
+                RichText::new(tr("L'appli redémarre toute seule après l'installation."))
                     .color(BRUME)
                     .size(13.0),
             );
         }
         Etat::Telechargement(v, n, t) => {
-            ui.label(RichText::new(format!("Téléchargement de la version {v}…")).color(BRUME));
+            ui.label(
+                RichText::new(trf("Téléchargement de la version {}…", &[&v.to_string()]))
+                    .color(BRUME),
+            );
             ui.add(
                 egui::ProgressBar::new(n as f32 / t.max(1) as f32)
                     .show_percentage()
@@ -1455,11 +1562,11 @@ fn section_maj(ui: &mut Ui, m: &crate::maj::Maj) {
             );
         }
         Etat::Pret(_) | Etat::Installation => {
-            ui.label(RichText::new("Installation, redémarrage…").color(OR));
+            ui.label(RichText::new(tr("Installation, redémarrage…")).color(OR));
         }
         Etat::Echec(e) => {
             ui.label(RichText::new(e).color(ALERTE));
-            chercher(ui, "Réessayer");
+            chercher(ui, tr("Réessayer"));
         }
     }
 }
@@ -1500,8 +1607,11 @@ fn couleur_index(k: usize) -> Rgb {
 /// Badges shiny et modificateur (liste de « Mon aquarium »).
 fn badges(ui: &mut Ui, f: &Poisson) {
     if f.shiny {
-        ui.label(RichText::new("SHINY").font(titre(12.0)).color(SHINY))
-            .on_hover_text(format!("Shiny : revenu ×{}", court_pct(MULT_SHINY)));
+        ui.label(RichText::new(tr("SHINY")).font(titre(12.0)).color(SHINY))
+            .on_hover_text(trf(
+                "Shiny : revenu ×{}",
+                &[&(court_pct(MULT_SHINY)).to_string()],
+            ));
     }
     if let Some(m) = f.modif {
         ui.label(
@@ -1509,10 +1619,9 @@ fn badges(ui: &mut Ui, f: &Poisson) {
                 .font(titre(12.0))
                 .color(c32(m.couleur())),
         )
-        .on_hover_text(format!(
+        .on_hover_text(trf(
             "{} : revenu ×{}",
-            m.nom(),
-            court_pct(m.multiplicateur())
+            &[m.nom(), &(court_pct(m.multiplicateur())).to_string()],
         ));
     }
 }
@@ -1520,7 +1629,7 @@ fn badges(ui: &mut Ui, f: &Poisson) {
 /// « SHINY ! » en lettres qui scintillent (révélation).
 fn texte_shiny(t: f64, taille: f32) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
-    for (i, ch) in "SHINY !".chars().enumerate() {
+    for (i, ch) in tr("SHINY !").chars().enumerate() {
         let k = 0.5 + 0.5 * (t as f32 * 6.0 - i as f32 * 0.9).sin();
         let c = c32(melange([0xff, 0x9c, 0xdc], [0xff, 0xf6, 0xc0], k));
         job.append(
@@ -1533,14 +1642,14 @@ fn texte_shiny(t: f64, taille: f32) -> egui::text::LayoutJob {
 }
 
 fn taille(t: f32) -> String {
-    format!("{t:.2}").replace('.', ",")
+    decimale(format!("{t:.2}"))
 }
 
 fn court_pct(c: f64) -> String {
     if c.fract() == 0.0 {
         format!("{c:.0}")
     } else {
-        format!("{c:.1}").replace('.', ",")
+        decimale(format!("{c:.1}"))
     }
 }
 
@@ -1654,7 +1763,7 @@ fn annonce(f: &Poisson) -> Option<Annonce> {
     }
     let mut texte = f.rarete.nom().to_uppercase();
     if f.shiny {
-        texte = format!("SHINY {texte}");
+        texte = trf("SHINY {}", &[&texte.to_string()]);
     }
     if let Some(m) = rare_modif {
         texte = format!("{texte} {}", m.nom().to_uppercase());
@@ -1666,4 +1775,13 @@ fn annonce(f: &Poisson) -> Option<Annonce> {
         shiny: f.shiny,
         reste: crate::scene::DUREE_ANNONCE,
     })
+}
+
+/// Virgule décimale en français, point en anglais.
+fn decimale(s: String) -> String {
+    if crate::i18n::anglais() {
+        s
+    } else {
+        s.replace('.', ",")
+    }
 }

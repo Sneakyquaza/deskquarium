@@ -1517,7 +1517,7 @@ impl Aquarium {
             forme.push(m.nom());
         }
         let c = if forme.is_empty() {
-            forme.push("Normal");
+            forme.push(crate::i18n::tr("Normal"));
             [0xc8, 0xdc, 0xe4]
         } else {
             p.modif.map_or([0xff, 0xf0, 0x90], |m| m.couleur())
