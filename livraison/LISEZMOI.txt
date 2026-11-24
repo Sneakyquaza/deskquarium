@@ -1,4 +1,4 @@
-AQUARIUM v0.3 - fond d'écran aquarium pixel art + petit jeu idle (Windows 10/11, 64 bits)
+AQUARIUM v0.4 - fond d'écran aquarium pixel art + petit jeu idle (Windows 10/11, 64 bits)
 
 LANCER
 - Décompresse le dossier où tu veux (par exemple Documents\aquarium) et lance aquarium.exe.
@@ -10,24 +10,37 @@ JOUER
 - Icône du poisson près de l'horloge (zone de notification, parfois dans la flèche ^) :
   clic gauche = ouvrir l'Écloserie ; clic droit = Ouvrir l'Écloserie, Pause, Quitter.
 - Raccourci : Ctrl + Alt + A ouvre l'Écloserie.
-- Les poissons rapportent de l'argent (compteur en bas à gauche du bureau).
+- Les poissons rapportent de l'argent (compteur en bas à gauche de l'écran principal).
+- Plusieurs écrans : l'aquarium couvre tous les écrans (disposition lue dans Windows), chaque
+  écran garde son fond d'écran et les poissons passent d'un écran à l'autre.
   Avec l'argent, ouvre des œufs dans l'Écloserie : 5 œufs, 9 raretés
   (Commun, Peu commun, Rare, Épique, Légendaire, Mythique, Céleste, Irréel, Préhistorique).
 - 61 espèces à collectionner, en pixel art détaillé et animé (poisson-clown, hippocampe, crabe,
   méduse, raie manta, requins, orque, baleine à bosse… jusqu'au kraken, au léviathan, au
   monstre du Loch Ness et à Jörmungandr), chacune avec plusieurs variantes de couleur.
-- Nouveau (v0.3) : l'œuf d'ambre, objectif de fin de partie, contient les créatures
+- Nouveau (v0.4) : tailles réalistes (petits poissons, crabe et hippocampe minuscules, requins,
+  baleines et créatures de légende immenses), nage plus vivante (coups de queue et glissés,
+  virages, corps qui s'incline), poissons répartis sur tout l'écran, 9 espèces redessinées,
+  multi-écrans.
+- v0.3 : l'œuf d'ambre, objectif de fin de partie, contient les créatures
   préhistoriques (mégalodon, mosasaure, ammonite, trilobite…). Le Poissodex montre les
   espèces trouvées.
 - 40 poissons nagent dans l'aquarium ; les autres vont en réserve (onglet Mon aquarium).
-  Pour que l'écran reste lisible, une grande créature (requin, raie…) compte pour 2 places
-  d'affichage, une énorme (baleine, orque…) pour 3 et une colossale (kraken, léviathan…) pour 5,
+  Pour que l'écran reste lisible, une énorme créature (baleine, orque…) compte pour 2 places
+  d'affichage et une colossale (kraken, léviathan…) pour 4,
   deux colossales au plus à l'écran ;
   elles nagent au fond, derrière les plantes. Tous les poissons de l'aquarium rapportent.
   « Nourrir » monte le niveau d'un poisson ; « Relâcher » le revend.
 - Hors ligne : à la relance, tu gagnes ce que l'aquarium a rapporté pendant ton absence (8 h au plus).
 - Réglages : teinte de l'eau (0 % = fond d'écran intact), nombre de poissons dessinés,
   30/60 images par seconde, lancer au démarrage de Windows, pause en plein écran.
+
+SI L'AQUARIUM N'APPARAÎT PAS SUR LE BUREAU
+- Clic droit sur l'icône du poisson > « Autre méthode d'incrustation » (4 méthodes, essaie-les
+  l'une après l'autre ; le choix est gardé).
+- Ou « Mode fenêtre » (menu ou Réglages) : l'aquarium s'affiche dans une fenêtre sans bord, au
+  fond, sous tes autres fenêtres (il cache alors les icônes du bureau).
+- « Ouvrir le journal » : envoie ce fichier (journal.log) pour qu'on voie ce qui bloque.
 
 QUITTER
 - Clic droit sur l'icône du poisson > Quitter. Le fond d'écran normal revient.
@@ -47,7 +60,8 @@ CE QUI N'A PAS ÉTÉ TESTÉ (version préparée sur un serveur Linux, sans Windo
 - Incrustation derrière les icônes (WorkerW), en particulier Windows 11 24H2 et plus récent.
 - Icône de notification, menu, raccourci Ctrl+Alt+A, démarrage avec Windows.
 - Détection du plein écran (jeux, vidéos), retour du fond d'écran à la fermeture.
-- Plusieurs écrans : l'aquarium couvre l'écran principal seulement.
+- Plusieurs écrans (nouveau, jamais essayé) : placement sur tout le bureau, fond de chaque écran,
+  écrans de tailles ou d'échelles différentes, branchement ou débranchement en marche.
 - Écrans à mise à l'échelle (125 %, 150 %), fonds d'écran en diaporama ou Windows à la une.
 - Consommation processeur réelle (mesurée seulement sous Linux, voir le message d'accompagnement).
 Si quelque chose ne marche pas, une capture d'écran et ta version de Windows aideront beaucoup.

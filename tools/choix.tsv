@@ -1,62 +1,62 @@
 # clé	image IA retenue (out/brouillons/ia/)	options de tools/pixeliser.py
-clown	clown_a	
-neon	neon_d	
-guppy	guppy_a	
-rouge	rouge_a	
-sardine	sardine_a	
-gobie	gobie_c	
-chirurgien	chirurgien_c	
-ange	ange_a	
-globe	globe_b	
-hippocampe	hippocampe_c	
-crabe	crabe_a	--vue face
+clown	clown_a	--longueur 30
+neon	neon_d	--longueur 25
+guppy	guppy_a	--longueur 27
+rouge	rouge_a	--longueur 32
+sardine	sardine_a	--longueur 33
+gobie	gobie_c	--longueur 28
+chirurgien	chirurgien_c	--longueur 35
+ange	ange_a	--longueur 35
+globe	globe_b	--longueur 30
+hippocampe	hippocampe_c	--longueur 38
+crabe	crabe_a	--vue face --longueur 38
 kraken	kraken_a	--largeur 378 --vue face --yeux 142,101,9;235,100,9
-crevette	crevette_b	
-meduse	meduse_a	--yeux aucun
-poulpe	poulpe_b	--vue face
-murene	murene_b	--yeux 162,14,2
-anguille	anguille_e	
-rascasse	rascasse_a	
-tortue	tortue_a	
-calamar	calamar_b	--yeux 71,24,5
-manta	manta_f	--nb-yeux 2
-marteau	marteau_c	--yeux 212,35,2;221,74,2
-espadon	espadon_d	--yeux 166,43,4
-phoque	phoque_d	
-dauphin	dauphin_e	
-mola	mola_c	
-blanc	blanc_a	
-orque	orque_d	
+crevette	crevette_c	--yeux 132,35,3 --longueur 35
+meduse	meduse_a	--yeux aucun --longueur 60
+poulpe	poulpe_b	--vue face --longueur 70
+murene	murene_b	--yeux 162,14,2 --longueur 110
+anguille	anguille_g	--longueur 100
+rascasse	rascasse_a	--longueur 65
+tortue	tortue_a	--longueur 85
+calamar	calamar_b	--yeux 71,24,5 --longueur 70
+manta	manta_h	--yeux 130,61,3;130,109,3 --longueur 145
+marteau	marteau_c	--yeux 212,35,2;221,74,2 --longueur 135
+espadon	espadon_d	--yeux 166,43,4 --longueur 145
+phoque	phoque_d	--longueur 100
+dauphin	dauphin_g	--yeux 190,47,3 --longueur 120
+mola	mola_c	--longueur 110
+blanc	blanc_a	--longueur 160
+orque	orque_d	--longueur 163
 requin_baleine	requin_baleine_a	
-narval	narval_c	
-calamar_geant	calamar_geant_a	--yeux 223,39,10
-baudroie	baudroie_d	--yeux 116,32,3 --lumieres 166,39,5
-dragon_feuillu	dragon_feuillu_a	
-coelacanthe	coelacanthe_a	
-lutin	lutin_c	
+narval	narval_c	--longueur 170
+calamar_geant	calamar_geant_a	--yeux 223,39,10 --longueur 280
+baudroie	baudroie_d	--yeux 116,32,3 --lumieres 166,39,5 --longueur 75
+dragon_feuillu	dragon_feuillu_a	--longueur 55
+coelacanthe	coelacanthe_a	--longueur 110
+lutin	lutin_c	--longueur 150
 bosse	bosse_a	
-isopode	isopode_a	
+isopode	isopode_a	--longueur 42
 hydre	hydre_a	--yeux 99,32,2;117,32,2;20,55,2;192,56,2
-cadborosaure	cadborosaure_a	
+cadborosaure	cadborosaure_c	
 baleine_stellaire	baleine_stellaire_b	
-meduse_nebuleuse	meduse_nebuleuse_c	--yeux aucun
-raie_aurore	raie_aurore_a	--yeux 178,61,2;177,87,2
-carpe_comete	carpe_comete_b	--yeux 204,46,3
-cthulhu	cthulhu_a	--yeux 126,36,2;146,36,2
+meduse_nebuleuse	meduse_nebuleuse_c	--yeux aucun --longueur 100
+raie_aurore	raie_aurore_a	--yeux 178,61,2;177,87,2 --longueur 150
+carpe_comete	carpe_comete_b	--yeux 204,46,3 --longueur 90
+cthulhu	cthulhu_c	--vue face --yeux 176,43,3;201,43,3
 leviathan	leviathan_c	--yeux 347,36,2
 oeil	oeil_a	--yeux 137,95,52
 bloop	bloop_c	--yeux 401,46,3 --lumieres 334,50,1;347,49,1;360,49,1;372,49,1
-grand_abyssal	grand_abyssal_b	--yeux 338,14,2
+grand_abyssal	grand_abyssal_d	--yeux 339,19,2
 lusca	lusca_b	
 jormungandr	jormungandr_a	--yeux 436,36,2
-loch_ness	loch_ness_c	--yeux 217,6,2
+loch_ness	loch_ness_e	
 megalodon	megalodon_a	--yeux 274,64,2
 mosasaure	mosasaure_a	--yeux 306,15,2
 liopleurodon	liopleurodon_a	
-ichthyosaure	ichthyosaure_a	--yeux 161,33,4
-dunkleosteus	dunkleosteus_a	
-helicoprion	helicoprion_d	
-anomalocaris	anomalocaris_a	--yeux 154,15,4;154,58,4
-ammonite	ammonite_a	
+ichthyosaure	ichthyosaure_a	--yeux 161,33,4 --longueur 145
+dunkleosteus	dunkleosteus_a	--longueur 170
+helicoprion	helicoprion_d	--longueur 145
+anomalocaris	anomalocaris_a	--yeux 154,15,4;154,58,4 --longueur 60
+ammonite	ammonite_a	--longueur 70
 basilosaurus	basilosaurus_d	--yeux 234,13,1
-trilobite	trilobite_e	--largeur 110 --yeux 82,17,3;83,48,3
+trilobite	trilobite_g	--yeux 150,29,8;150,89,8 --longueur 38

@@ -3,8 +3,9 @@
 //! immédiat) du même processus, qui partage la partie en direct.
 
 use crate::ecloserie::{installer_style, Ecloserie, Onglet};
+use crate::ecrans::Disposition;
 use crate::jeu::{court, Partie};
-use crate::scene::{echelle_pour, Aquarium};
+use crate::scene::Aquarium;
 use crate::{fond, sauve};
 use eframe::egui::{
     self, Color32, TextureHandle, TextureOptions, Ui, Vec2, ViewportBuilder, ViewportId,
@@ -21,11 +22,17 @@ pub struct Options {
 
 /// Commandes venues de l'icône de notification ou du raccourci global.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub enum Commande {
     Ouvrir,
     Pause,
-    #[cfg_attr(not(windows), allow(dead_code))]
     Quitter,
+    /// Bascule incrustation derrière les icônes / fenêtre au fond (réglage `mode_fenetre`).
+    ModeFenetre,
+    /// Méthode d'incrustation suivante (auto, Progman + calque, Progman, WorkerW).
+    AutreMethode,
+    /// L'Explorateur a redémarré : réincruster.
+    Rattacher,
 }
 
 struct Appli {
@@ -42,6 +49,11 @@ struct Appli {
     pause: bool,
     plein_ecran: bool,
     verif_plein_ecran: Instant,
+    /// Écrans de Windows (relus toutes les 3 s : branchés, débranchés, déplacés).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    disposition: Option<Disposition>,
+    #[cfg_attr(not(windows), allow(dead_code))]
+    verif_ecrans: Instant,
     message_depart: Option<String>,
     ecloserie: Ecloserie,
     ecloserie_ouverte: bool,
@@ -52,6 +64,11 @@ struct Appli {
     #[cfg(windows)]
     systeme: Option<crate::windows::Systeme>,
     demarrage_applique: Option<bool>,
+    /// Mode fenêtre et méthode d'incrustation appliqués (Windows).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    affichage_applique: Option<(bool, u8)>,
+    /// Première image dessinée (journal).
+    premiere_image: bool,
     /// Mesure : images dessinées depuis `mesure_depuis` (affichées si AQUARIUM_IPS est défini).
     mesure: (u32, Instant, Duration),
 }
@@ -123,6 +140,8 @@ pub fn lancer(o: Options) -> Result<(), String> {
         pause: false,
         plein_ecran: false,
         verif_plein_ecran: Instant::now(),
+        disposition: None,
+        verif_ecrans: Instant::now(),
         message_depart: message_fond,
         ecloserie,
         // Sous Windows l'Écloserie s'ouvre depuis l'icône ; en fenêtre de test, tout de suite.
@@ -135,6 +154,8 @@ pub fn lancer(o: Options) -> Result<(), String> {
         #[cfg(windows)]
         systeme: None,
         demarrage_applique: None,
+        affichage_applique: None,
+        premiere_image: false,
         mesure: (0, Instant::now(), Duration::ZERO),
     };
     eframe::run_native(
@@ -145,7 +166,11 @@ pub fn lancer(o: Options) -> Result<(), String> {
             Ok(Box::new(appli))
         }),
     )
-    .map_err(|e| format!("fenêtre : {e}"))
+    .map_err(|e| {
+        // OpenGL indisponible, fenêtre impossible… : le journal le garde.
+        crate::journal::ecrire(&format!("fenêtre / OpenGL : {e}"));
+        format!("fenêtre : {e}")
+    })
 }
 
 /// Icône 32x32 (fenêtres) : un poisson commun dessiné par le jeu.
@@ -196,10 +221,35 @@ impl Appli {
             }
             Commande::Pause => self.pause = !self.pause,
             Commande::Quitter => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Commande::ModeFenetre => {
+                let r = &mut self.partie.reglages;
+                r.mode_fenetre = !r.mode_fenetre;
+            }
+            Commande::AutreMethode => {
+                let r = &mut self.partie.reglages;
+                r.mode_fenetre = false;
+                r.incrustation = (r.incrustation + 1) % 4;
+            }
+            Commande::Rattacher => self.affichage_applique = None,
         }
     }
 
-    /// Toile à la taille de la fenêtre (pixels physiques / échelle entière).
+    /// Écrans couverts par la fenêtre : sous Windows ceux du bureau virtuel (la fenêtre
+    /// recouvre leur boîte englobante), sinon un seul écran de la taille de la fenêtre.
+    fn disposition(&mut self, lp: u32, hp: u32) -> Disposition {
+        #[cfg(windows)]
+        if !self.fenetre {
+            if self.disposition.is_none() {
+                self.disposition = crate::windows::disposition();
+            }
+            if let Some(d) = &self.disposition {
+                return d.clone();
+            }
+        }
+        Disposition::simple(lp, hp)
+    }
+
+    /// Toile à la taille de la fenêtre (pixels physiques / échelle entière de l'écran principal).
     fn preparer(&mut self, ui: &Ui) -> (f32, f32) {
         let ppp = ui.ctx().pixels_per_point();
         let taille = ui.ctx().content_rect().size() * ppp;
@@ -207,14 +257,15 @@ impl Appli {
             taille.x.round().max(64.0) as u32,
             taille.y.round().max(64.0) as u32,
         );
-        let e = echelle_pour(lp) as usize;
+        let disp = self.disposition(lp, hp);
+        let e = disp.echelle() as usize;
         let (l, h) = ((lp as usize).div_ceil(e), (hp as usize).div_ceil(e));
         let refaire = self
             .aquarium
             .as_ref()
             .is_none_or(|a| a.toile.l != l || a.toile.h != h || self.echelle != e);
         if refaire {
-            let mut aq = Aquarium::new(l, h, 1);
+            let mut aq = Aquarium::avec_zones(l, h, 1, &disp.zones(e as u32));
             if let Some(m) = &self.message_depart {
                 aq.message = Some((m.clone(), 15.0));
             }
@@ -223,19 +274,20 @@ impl Appli {
             self.echelle = e;
             self.fond_tex = None;
             if self.fond_img.is_none() {
-                self.fond_img = Some(self.charger_fond(lp, hp));
+                self.fond_img = Some(self.charger_fond(&disp, lp, hp));
             }
         }
         (lp as f32, hp as f32)
     }
 
-    fn charger_fond(&self, l: u32, h: u32) -> image::RgbaImage {
+    fn charger_fond(&self, d: &Disposition, l: u32, h: u32) -> image::RgbaImage {
         #[cfg(windows)]
         if !self.fenetre {
-            if let Some(img) = crate::windows::fond_bureau(l, h) {
+            if let Some(img) = crate::windows::fond_bureau(d) {
                 return img;
             }
         }
+        let _ = d;
         match &self.fond_chemin {
             Some(f) => image::open(f)
                 .map(|i| fond::couvrir(&i.to_rgba8(), l, h))
@@ -321,13 +373,40 @@ impl eframe::App for Appli {
         let ctx = ui.ctx().clone();
         #[cfg(windows)]
         if !self.fenetre && self.systeme.is_none() {
-            match crate::windows::Systeme::demarrer(frame, &ctx) {
-                Ok(s) => self.systeme = Some(s),
+            let r = &self.partie.reglages;
+            let voulu = (r.mode_fenetre, r.incrustation);
+            match crate::windows::Systeme::demarrer(frame, &ctx, voulu.0, voulu.1) {
+                Ok(s) => {
+                    self.systeme = Some(s);
+                    self.affichage_applique = Some(voulu);
+                }
                 Err(e) => {
+                    crate::journal::ecrire(&format!("démarrage impossible : {e}"));
                     crate::windows::alerte(&e);
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     return;
                 }
+            }
+        }
+        // Mode fenêtre ou méthode changés (menu, Réglages), Explorateur relancé : réappliquer.
+        #[cfg(windows)]
+        {
+            let r = &self.partie.reglages;
+            let voulu = (r.mode_fenetre, r.incrustation);
+            if self.affichage_applique != Some(voulu) {
+                if let Some(s) = &mut self.systeme {
+                    crate::journal::ecrire(&format!(
+                        "affichage : mode fenêtre {}, méthode {}",
+                        voulu.0, voulu.1
+                    ));
+                    if let Some(e) = s.appliquer(voulu.0, voulu.1) {
+                        self.ecloserie.bandeau = Some(e);
+                    }
+                    self.aquarium = None;
+                    self.fond_tex = None;
+                    self.toile_tex = None;
+                }
+                self.affichage_applique = Some(voulu);
             }
         }
         let _ = frame;
@@ -376,8 +455,30 @@ impl eframe::App for Appli {
             self.verif_plein_ecran = Instant::now();
             #[cfg(windows)]
             {
-                self.plein_ecran =
-                    self.partie.reglages.pause_plein_ecran && crate::windows::plein_ecran();
+                let raison = crate::windows::plein_ecran()
+                    .filter(|_| self.partie.reglages.pause_plein_ecran && !self.fenetre);
+                if raison.is_some() != self.plein_ecran {
+                    crate::journal::ecrire(&match &raison {
+                        Some(r) => format!("pause plein écran : {r}"),
+                        None => "fin de la pause plein écran".to_string(),
+                    });
+                }
+                self.plein_ecran = raison.is_some();
+            }
+        }
+        #[cfg(windows)]
+        if !self.fenetre && self.verif_ecrans.elapsed() > Duration::from_secs(3) {
+            self.verif_ecrans = Instant::now();
+            let d = crate::windows::disposition();
+            if d.is_some() && d != self.disposition {
+                // Écran branché, débranché ou déplacé : nouvelle place, nouveaux fonds.
+                self.disposition = d;
+                if let Some(s) = &self.systeme {
+                    s.recaler();
+                }
+                self.aquarium = None;
+                self.fond_img = None;
+                self.fond_tex = None;
             }
         }
         let fige = self.pause || self.plein_ecran;
@@ -401,6 +502,17 @@ impl eframe::App for Appli {
                         self.toile_tex =
                             Some(ctx.load_texture("toile", img, TextureOptions::NEAREST))
                     }
+                }
+                if !self.premiere_image {
+                    self.premiere_image = true;
+                    crate::journal::ecrire(&format!(
+                        "première image : fenêtre {lp}x{hp} px, toile {}x{} x{e}, {} pixels par \
+                         point, {} poissons",
+                        aq.toile.l,
+                        aq.toile.h,
+                        ctx.pixels_per_point(),
+                        aq.nageurs.len()
+                    ));
                 }
             }
         }

@@ -1,4 +1,4 @@
-# pixeliser.py <image_ia.png> <sortie.png> [--largeur L] [--couleurs N] [--apercu x4.png]
+# pixeliser.py <image_ia.png> <sortie.png> [--largeur L] [--longueur N] [--couleurs N] [--apercu x4.png]
 # Image ChatGPT (pixel art sur fond magenta uni) -> sprite au pixel près :
 # 1. détourage du fond (magenta, connexe au bord) et boîte de la créature ;
 # 2. grille : période mesurée (autocorrélation des bords de couleur) ou imposée par --largeur ;
@@ -22,6 +22,9 @@ ap.add_argument("--vue", default="cote", choices=["cote", "face"], help="où che
 ap.add_argument("--yeux", default="", help="yeux imposés « x,y,r;x,y,r » (pixels du sprite final)")
 ap.add_argument("--lumieres", default="", help="lumières (leurre…) « x,y,r;… » (pixels du sprite final)")
 ap.add_argument("--nb-yeux", type=int, default=0, help="nombre d'yeux cherchés (défaut 1 de côté, 2 de face)")
+ap.add_argument("--longueur", type=int, default=0,
+                help="plus grande dimension voulue (pixels du sprite) : réduit le sprite fini à sa taille "
+                     "dans l'aquarium (Espece::longueur_ecran / 2 ; --yeux en pixels non réduits)")
 a = ap.parse_args()
 
 im = np.asarray(Image.open(a.src).convert("RGB")).astype(np.float32)
@@ -353,6 +356,81 @@ for liste, val in ((yeux, 254), (lum, 253)):
         m = ((xx - x) ** 2 + (yy - y) ** 2 <= r * r + r) & (ind >= 0)
         out[m, 3] = val
 print("yeux", ";".join(f"{x},{y},{r}" for x, y, r in yeux) or "aucun", "lumières", a.lumieres or "aucune")
+
+
+def reduire(src, F):
+    """Réduit le sprite fini d'un facteur F (< 1) sans mélanger les tailles de pixel : chaque
+    pixel réduit prend une couleur réelle (médoïde) de sa fenêtre, le bord de la silhouette
+    reprend la couleur du contour d'origine, chaque œil et lumière garde au moins un pixel
+    (pupille sombre, reflet clair s'il en reste la place)."""
+    hs, ws = src.shape[:2]
+    pl = src[..., 3] > 0
+    bord_s = pl & (voisins4(pl) < 4)
+    lum_s = src[..., :3].astype(float) @ np.array([0.299, 0.587, 0.114])
+    cont = src[bord_s][:, :3]
+    c_cont = cont[np.argmin(cont.astype(float) @ np.array([0.299, 0.587, 0.114]))] if len(cont) else np.zeros(3)
+    nh, nw = max(4, round(hs * F)), max(4, round(ws * F))
+    o = np.zeros((nh, nw, 4), np.uint8)
+    fen = lambda k, n, N: (k * N // n, max(k * N // n + 1, (k + 1) * N // n))
+    for j in range(nh):
+        y0_, y1_ = fen(j, nh, hs)
+        for i in range(nw):
+            x0_, x1_ = fen(i, nw, ws)
+            w_ = src[y0_:y1_, x0_:x1_].reshape(-1, 4)
+            p_ = w_[w_[:, 3] > 0]
+            if len(p_) * 2 < len(w_):
+                continue
+            oe = p_[p_[:, 3] < 255]
+            if len(oe) * 3 >= len(p_):
+                # œil ou lumière : pupille (le plus sombre) ou lumière (le plus clair)
+                l_ = oe[:, :3].astype(float) @ np.array([0.299, 0.587, 0.114])
+                o[j, i] = oe[np.argmax(l_)] if oe[0, 3] == 253 else oe[np.argmin(l_)]
+                continue
+            inter = bord_s[y0_:y1_, x0_:x1_].reshape(-1)[w_[:, 3] > 0]
+            e = (p_[~inter] if (~inter).any() else p_)[:, :3].astype(float)
+            o[j, i, :3] = e[np.argmin(((e[:, None] - e[None]) ** 2).sum(2).sum(1))]
+            o[j, i, 3] = 255
+    # chaque œil / lumière de la source garde au moins son pixel central
+    for val in (254, 253):
+        m_ = src[..., 3] == val
+        vus = np.zeros_like(m_)
+        for y, x in zip(*np.where(m_)):
+            if vus[y, x]:
+                continue
+            pile, comp = [(y, x)], []
+            vus[y, x] = True
+            while pile:
+                cy_, cx_ = pile.pop()
+                comp.append((cy_, cx_))
+                for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    ny, nx = cy_ + dy, cx_ + dx
+                    if 0 <= ny < hs and 0 <= nx < ws and m_[ny, nx] and not vus[ny, nx]:
+                        vus[ny, nx] = True
+                        pile.append((ny, nx))
+            cy_, cx_ = np.mean(comp, 0)
+            j, i = min(nh - 1, int(cy_ * nh / hs)), min(nw - 1, int(cx_ * nw / ws))
+            pts = np.array([src[yy, xx] for yy, xx in comp])
+            l_ = pts[:, :3].astype(float) @ np.array([0.299, 0.587, 0.114])
+            dedans = [(jj, ii) for jj in range(nh) for ii in range(nw) if o[jj, ii, 3] == val
+                      and any(fen(jj, nh, hs)[0] <= yy < fen(jj, nh, hs)[1] and fen(ii, nw, ws)[0] <= xx < fen(ii, nw, ws)[1] for yy, xx in comp)]
+            if (j, i) not in dedans:
+                o[j, i] = pts[np.argmax(l_)] if val == 253 else pts[np.argmin(l_)]
+                dedans.append((j, i))
+            if val == 254 and len(dedans) >= 3:
+                # reflet : le pixel de l'œil le plus haut à droite
+                jj, ii = min(dedans, key=lambda q: q[0] * 2 - q[1])
+                o[jj, ii, :3] = pts[np.argmax(l_)][:3]
+    pl2 = o[..., 3] > 0
+    bord2 = pl2 & (voisins4(pl2) < 4) & (o[..., 3] == 255)
+    o[bord2, :3] = c_cont
+    ys_, xs_ = np.where(pl2)
+    o = o[ys_.min():ys_.max() + 1, xs_.min():xs_.max() + 1]
+    return np.pad(o, ((1, 1), (1, 1), (0, 0)))
+
+
+if a.longueur and a.longueur < 0.97 * max(out.shape[:2]):
+    out = reduire(out, (a.longueur - 2) / (max(out.shape[:2]) - 2))
+    ind = np.where(out[..., 3] > 0, 0, -1)
 Image.fromarray(out, "RGBA").save(a.dst, optimize=True)
 nc = len(np.unique(out[ind >= 0][:, :3], axis=0))
 print(f"{a.dst} : {out.shape[1]}x{out.shape[0]}, {nc} couleurs")

@@ -1,9 +1,10 @@
 //! Rendu sans écran (Linux) : capture PNG, vidéo via ffmpeg, planche des raretés, mesures.
 
+use crate::ecrans::Disposition;
 use crate::especes::{Espece, Taille};
 use crate::fond;
 use crate::jeu::{Alea, Partie, Rarete, CAPACITE};
-use crate::scene::{echelle_pour, Aquarium, Nageur};
+use crate::scene::{Aquarium, Nageur};
 use crate::toile::Toile;
 use std::io::Write;
 use std::path::Path;
@@ -101,33 +102,58 @@ pub struct Options {
     pub secondes: f32,
     pub demo: bool,
     pub fond: Option<String>,
+    /// Écrans simulés (« 1920x1080+0+0,1920x1080+1920+0 ») : remplace `largeur`x`hauteur`.
+    pub ecrans: Option<String>,
 }
 
-fn preparer(o: &Options) -> Result<(Partie, Aquarium, image::RgbaImage, usize), String> {
+type Prepare = (Partie, Aquarium, image::RgbaImage, usize, (u32, u32));
+
+fn preparer(o: &Options) -> Result<Prepare, String> {
     let partie = if o.demo {
         partie_demo()
     } else {
         crate::sauve::charger(&crate::sauve::dossier()).0
     };
-    let e = echelle_pour(o.largeur) as usize;
-    let mut aq = Aquarium::new(
-        (o.largeur as usize).div_ceil(e),
-        (o.hauteur as usize).div_ceil(e),
+    let d = match &o.ecrans {
+        Some(t) => Disposition::depuis_texte(t)?,
+        None => Disposition::simple(o.largeur, o.hauteur),
+    };
+    let (bx, by, bl, bh) = d.boite();
+    let (lp, hp) = (bl as u32, bh as u32);
+    let e = d.echelle() as usize;
+    let mut aq = Aquarium::avec_zones(
+        (lp as usize).div_ceil(e),
+        (hp as usize).div_ceil(e),
         1,
+        &d.zones(e as u32),
     );
     aq.synchroniser(&partie);
-    let fond = match &o.fond {
-        Some(f) => {
-            let img = image::open(f).map_err(|e| format!("fond {f} : {e}"))?;
-            fond::couvrir(&img.to_rgba8(), o.largeur, o.hauteur)
-        }
-        None => fond::factice(o.largeur, o.hauteur),
+    let image_fond = match &o.fond {
+        Some(f) => Some(
+            image::open(f)
+                .map_err(|e| format!("fond {f} : {e}"))?
+                .to_rgba8(),
+        ),
+        None => None,
     };
-    Ok((partie, aq, fond, e))
+    // Chaque écran son fond (le factice retourné un écran sur deux), trous en noir.
+    let mut fond = image::RgbaImage::from_pixel(lp, hp, image::Rgba([0, 0, 0, 255]));
+    for (i, c) in d.ecrans.iter().enumerate() {
+        let (l, h) = (c.l as u32, c.h as u32);
+        let mut img = match &image_fond {
+            Some(f) => fond::couvrir(f, l, h),
+            None => fond::factice(l, h),
+        };
+        if i % 2 == 1 && image_fond.is_none() {
+            img = image::imageops::flip_horizontal(&img);
+        }
+        image::imageops::replace(&mut fond, &img, (c.x - bx) as i64, (c.y - by) as i64);
+    }
+    Ok((partie, aq, fond, e, (lp, hp)))
 }
 
 pub fn capture(o: &Options, sortie: &Path) -> Result<(), String> {
-    let (mut partie, mut aq, fond, e) = preparer(o)?;
+    let (mut partie, mut aq, fond, e, _) = preparer(o)?;
     let dt = 1.0 / 30.0;
     let n = (o.secondes / dt) as usize;
     let debut = Instant::now();
@@ -149,7 +175,7 @@ pub fn capture(o: &Options, sortie: &Path) -> Result<(), String> {
 }
 
 pub fn video(o: &Options, sortie: &Path) -> Result<(), String> {
-    let (mut partie, mut aq, fond, e) = preparer(o)?;
+    let (mut partie, mut aq, fond, e, (lp, hp)) = preparer(o)?;
     creer_dossier(sortie)?;
     let ffmpeg = std::env::var("AQUARIUM_FFMPEG").unwrap_or_else(|_| "ffmpeg".into());
     let mut enfant = std::process::Command::new(&ffmpeg)
@@ -163,9 +189,9 @@ pub fn video(o: &Options, sortie: &Path) -> Result<(), String> {
             "rgba",
             "-s",
         ])
-        .arg(format!("{}x{}", o.largeur, o.hauteur))
+        .arg(format!("{lp}x{hp}"))
         .args([
-            "-r", "30", "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18",
+            "-r", "30", "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "21",
         ])
         .arg(sortie)
         .stdin(std::process::Stdio::piped())
@@ -263,13 +289,32 @@ pub fn planche_geantes(sortie: &Path, secondes: f32) -> Result<(), String> {
         .iter()
         .filter(|e| e.taille >= Taille::Enorme)
         .collect();
-    // Rangement en lignes de 900 pixels.
-    let largeur = 900;
+    planche_a_taille(sortie, secondes, &geantes, 900, 2)
+}
+
+/// Toutes les espèces côte à côte, de la plus petite à la plus grande, à leur taille dans
+/// l'aquarium en 1920x1080 (toile x4), avec une règle de 100 pixels écran : tailles relatives.
+pub fn alignement(sortie: &Path, secondes: f32) -> Result<(), String> {
+    let mut toutes: Vec<&Espece> = crate::especes::catalogue().iter().collect();
+    toutes.sort_by_key(|e| e.longueur_ecran());
+    planche_a_taille(sortie, secondes, &toutes, 480, 4)
+}
+
+/// Espèces à leur vraie taille rangées en lignes de `largeur` pixels monde, agrandies x`e`.
+fn planche_a_taille(
+    sortie: &Path,
+    secondes: f32,
+    geantes: &[&Espece],
+    largeur: usize,
+    e: usize,
+) -> Result<(), String> {
     let mut places = Vec::new();
     let (mut x, mut y, mut hl) = (0, 0, 0);
-    for e in &geantes {
+    for e in geantes {
         let f = crate::toile::FIN;
-        let (w, h) = (e.dims.0 as usize / f + 16, e.dims.1 as usize / f + 22);
+        let nom = crate::toile::largeur_texte(&format!("{} - {}", e.nom, e.rarete.nom()));
+        let w = (e.dims.0 as usize / f + 16).max(nom as usize + 6);
+        let h = e.dims.1 as usize / f + 22;
         if x + w > largeur {
             x = 0;
             y += hl;
@@ -307,7 +352,14 @@ pub fn planche_geantes(sortie: &Path, secondes: f32) -> Result<(), String> {
     p2.reglages.teinte = 0.0;
     aq.dessiner(&p2);
     t.superposer(&aq.toile);
-    for (e, &(x, y, w, h)) in geantes.iter().zip(&places) {
+    // Règle : 100 pixels écran.
+    let r = 100 / e as i32;
+    t.rect(2, 2, r, 1, [0xff, 0xff, 0xff], 255);
+    t.rect(2, 1, 1, 3, [0xff, 0xff, 0xff], 255);
+    t.rect(1 + r, 1, 1, 3, [0xff, 0xff, 0xff], 255);
+    t.texte(r + 5, 1, "100 PX", [0xff, 0xff, 0xff], 255, None);
+    for (esp, &(x, y, w, h)) in geantes.iter().zip(&places) {
+        let e = esp;
         let nom = format!("{} - {}", e.nom, e.rarete.nom());
         let tw = crate::toile::largeur_texte(&nom);
         t.texte(
@@ -319,7 +371,7 @@ pub fn planche_geantes(sortie: &Path, secondes: f32) -> Result<(), String> {
             Some([0, 0, 0]),
         );
     }
-    enregistrer(&t, 2, sortie)
+    enregistrer(&t, e, sortie)
 }
 
 fn rendre_planche(

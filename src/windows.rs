@@ -1,9 +1,12 @@
 //! Partie Windows : incrustation derrière les icônes (WorkerW), fond d'écran actuel,
 //! icône de notification + menu, raccourci global Ctrl+Alt+A, plein écran, démarrage
 //! avec Windows (HKCU\…\Run), rafraîchissement du fond d'écran à la fermeture.
+//! Multi-écrans (lot 4) : la fenêtre couvre tout le bureau virtuel (EnumDisplayMonitors),
+//! fond d'écran de chaque écran (IDesktopWallpaper).
 //! JAMAIS testé sur un vrai Windows (serveur Linux) : vérifié par compilation croisée.
 
 use crate::appli::Commande;
+use crate::ecrans::{Disposition, Ecran};
 use eframe::egui;
 use std::ffi::c_void;
 use std::ptr::{null, null_mut};
@@ -11,20 +14,25 @@ use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, S_OK, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, GetSysColor, MapWindowPoints, MonitorFromWindow, COLOR_DESKTOP, MONITORINFO,
-    MONITOR_DEFAULTTONEAREST,
+    EnumDisplayMonitors, GetMonitorInfoW, GetSysColor, MapWindowPoints, MonitorFromWindow,
+    COLOR_DESKTOP, HDC, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+};
+use windows_sys::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
+    COINIT_MULTITHREADED,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegGetValueW, RegSetValueExW, HKEY,
-    HKEY_CURRENT_USER, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_REG_SZ,
+    HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ,
+    RRF_RT_REG_SZ,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     RegisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT,
 };
 use windows_sys::Win32::UI::Shell::{
-    SHQueryUserNotificationState, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD,
-    NIM_DELETE, NOTIFYICONDATAW, QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
+    SHQueryUserNotificationState, ShellExecuteW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP,
+    NIM_ADD, NIM_DELETE, NOTIFYICONDATAW, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -53,11 +61,22 @@ const WM_ICONE: u32 = WM_APP + 1;
 pub struct Systeme {
     recu: mpsc::Receiver<Commande>,
     fil: Option<std::thread::JoinHandle<()>>,
+    fenetre: HWND,
+    /// Parent actuel (Progman ou WorkerW) ; nul en mode fenêtre.
+    parent: HWND,
 }
 
+static MODE_FENETRE: AtomicBool = AtomicBool::new(false);
+
 impl Systeme {
-    /// Incruste la fenêtre racine derrière les icônes et lance le fil de l'icône de notification.
-    pub fn demarrer(frame: &eframe::Frame, ctx: &egui::Context) -> Result<Systeme, String> {
+    /// Lance le fil de l'icône de notification, puis incruste la fenêtre racine derrière les
+    /// icônes (ou la laisse en fenêtre au fond si `mode_fenetre` ou si l'incrustation échoue).
+    pub fn demarrer(
+        frame: &eframe::Frame,
+        ctx: &egui::Context,
+        mode_fenetre: bool,
+        methode: u8,
+    ) -> Result<Systeme, String> {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
         let h = frame
             .window_handle()
@@ -65,15 +84,56 @@ impl Systeme {
         let RawWindowHandle::Win32(w) = h.as_raw() else {
             return Err("fenêtre : pas une fenêtre Win32".into());
         };
-        incruster(w.hwnd.get() as HWND)?;
+        let fenetre = w.hwnd.get() as HWND;
+        journal_version();
         let (tx, rx) = mpsc::channel();
         let _ = CANAL.set(Mutex::new(tx));
         let _ = CTX.set(ctx.clone());
         let fil = std::thread::spawn(fil_systeme);
-        Ok(Systeme {
+        let mut s = Systeme {
             recu: rx,
             fil: Some(fil),
-        })
+            fenetre,
+            parent: null_mut(),
+        };
+        s.appliquer(mode_fenetre, methode);
+        Ok(s)
+    }
+
+    /// Incruste (méthode 0 = auto, 1 = Progman + calque, 2 = Progman sans calque, 3 = WorkerW)
+    /// ou passe en mode fenêtre. Un échec d'incrustation donne le mode fenêtre : on voit
+    /// toujours l'aquarium, et le journal dit pourquoi. Renvoie le message d'erreur éventuel.
+    pub fn appliquer(&mut self, mode_fenetre: bool, methode: u8) -> Option<String> {
+        let mut erreur = None;
+        if !mode_fenetre {
+            match incruster(self.fenetre, methode) {
+                Ok(p) => {
+                    self.parent = p;
+                    MODE_FENETRE.store(false, Ordering::Relaxed);
+                    return None;
+                }
+                Err(e) => {
+                    crate::journal::ecrire(&format!("incrustation impossible : {e}"));
+                    erreur = Some(format!("{e} L'aquarium passe en mode fenêtre."));
+                }
+            }
+        }
+        unsafe { en_fenetre(self.fenetre) };
+        self.parent = null_mut();
+        MODE_FENETRE.store(true, Ordering::Relaxed);
+        erreur
+    }
+
+    /// Les écrans ont changé (branché, débranché, déplacé) : la fenêtre recouvre le nouveau
+    /// bureau virtuel.
+    pub fn recaler(&self) {
+        unsafe {
+            if self.parent.is_null() {
+                en_fenetre(self.fenetre);
+            } else {
+                placer(self.fenetre, self.parent, None);
+            }
+        }
     }
 
     pub fn commandes(&self) -> Vec<Commande> {
@@ -99,9 +159,39 @@ impl Systeme {
     }
 }
 
-/// Technique WorkerW (comme Wallpaper Engine / Lively) : le message 0x052C à Progman crée
-/// un WorkerW derrière les icônes ; notre fenêtre devient son enfant.
-fn incruster(hwnd: HWND) -> Result<(), String> {
+/// Version de Windows dans le journal (le numéro de build décide de la disposition du bureau).
+fn journal_version() {
+    let cle = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion";
+    let v = |n| lire_registre_dans(HKEY_LOCAL_MACHINE, cle, n).unwrap_or_default();
+    crate::journal::ecrire(&format!(
+        "--- aquarium {} : {} {} build {} ---",
+        env!("CARGO_PKG_VERSION"),
+        v("ProductName"),
+        v("DisplayVersion"),
+        v("CurrentBuild"),
+    ));
+}
+
+fn classe_de(h: HWND) -> String {
+    let mut c = [0u16; 64];
+    let n = unsafe { GetClassNameW(h, c.as_mut_ptr(), c.len() as i32) } as usize;
+    String::from_utf16_lossy(&c[..n])
+}
+
+fn rect_de(h: HWND) -> String {
+    let mut r: RECT = unsafe { std::mem::zeroed() };
+    unsafe { GetWindowRect(h, &mut r) };
+    format!("({},{})-({},{})", r.left, r.top, r.right, r.bottom)
+}
+
+/// Incrustation derrière les icônes, deux dispositions du bureau reconnues à l'exécution :
+/// - avant Windows 11 24H2 : le message 0x052C à Progman crée un WorkerW de premier niveau
+///   derrière celui qui porte les icônes (SHELLDLL_DefView) ; notre fenêtre devient son enfant ;
+/// - 24H2 et plus (25H2…) : SHELLDLL_DefView et le WorkerW restent ENFANTS de Progman ; notre
+///   fenêtre devient enfant de Progman, juste sous SHELLDLL_DefView et au-dessus du WorkerW,
+///   avec WS_EX_LAYERED (Progman n'a plus de surface de redirection : sans calque, un enfant
+///   n'est pas composé ; correctif de Lively Wallpaper). Renvoie le parent choisi.
+fn incruster(hwnd: HWND, methode: u8) -> Result<HWND, String> {
     unsafe {
         let progman = FindWindowW(large("Progman").as_ptr(), null());
         if progman.is_null() {
@@ -112,35 +202,169 @@ fn incruster(hwnd: HWND) -> Result<(), String> {
         let mut res = 0usize;
         SendMessageTimeoutW(progman, 0x052C, 0xD, 0x1, SMTO_NORMAL, 1000, &mut res);
         SendMessageTimeoutW(progman, 0x052C, 0, 0, SMTO_NORMAL, 1000, &mut res);
-        let mut worker: HWND = null_mut();
-        EnumWindows(Some(chercher_worker), &mut worker as *mut HWND as LPARAM);
-        if worker.is_null() {
-            // Windows 11 24H2 : le WorkerW est un enfant de Progman.
-            worker = FindWindowExW(progman, null_mut(), large("WorkerW").as_ptr(), null());
-        }
-        if worker.is_null() {
+        let vue_progman = FindWindowExW(
+            progman,
+            null_mut(),
+            large("SHELLDLL_DefView").as_ptr(),
+            null(),
+        );
+        let worker_enfant = FindWindowExW(progman, null_mut(), large("WorkerW").as_ptr(), null());
+        let mut worker_haut: HWND = null_mut();
+        EnumWindows(
+            Some(chercher_worker),
+            &mut worker_haut as *mut HWND as LPARAM,
+        );
+        let recent = !vue_progman.is_null();
+        crate::journal::ecrire(&format!(
+            "Progman {progman:?} {} ; DefView dans Progman {vue_progman:?} ; WorkerW enfant de \
+             Progman {worker_enfant:?} ; WorkerW de premier niveau {worker_haut:?} ; disposition {} ; \
+             méthode demandée {methode}",
+            rect_de(progman),
+            if recent { "24H2+" } else { "classique" },
+        ));
+        // Méthode : 1 Progman + calque, 2 Progman sans calque, 3 WorkerW.
+        let m = match methode {
+            1..=3 => methode,
+            _ if recent => 1,
+            _ => 3,
+        };
+        let worker = if worker_haut.is_null() {
+            worker_enfant
+        } else {
+            worker_haut
+        };
+        let parent = if m == 3 { worker } else { progman };
+        if parent.is_null() {
             return Err("Calque du fond d'écran introuvable (WorkerW).".into());
         }
         let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
         let style =
             (style & !(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU)) | WS_CHILD | WS_VISIBLE;
         SetWindowLongPtrW(hwnd, GWL_STYLE, style as isize);
-        SetParent(hwnd, worker);
-        // Écran principal : (0,0)-(cx,cy) en coordonnées écran, ramené dans le repère du WorkerW.
-        let mut pt = POINT { x: 0, y: 0 };
-        MapWindowPoints(null_mut(), worker, &mut pt, 1);
-        let (cx, cy) = (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        let ex = if m == 1 {
+            ex | WS_EX_LAYERED
+        } else {
+            ex & !WS_EX_LAYERED
+        };
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex as isize);
+        if m == 1 {
+            SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+        }
+        if SetParent(hwnd, parent).is_null() {
+            return Err(format!(
+                "Rattachement au bureau refusé (SetParent, erreur {}).",
+                windows_sys::Win32::Foundation::GetLastError()
+            ));
+        }
+        // Sous les icônes : juste après SHELLDLL_DefView dans l'ordre des enfants de Progman.
+        let apres = (m != 3 && !vue_progman.is_null()).then_some(vue_progman);
+        placer(hwnd, parent, apres);
+        if m != 3 && !worker_enfant.is_null() {
+            SetWindowPos(
+                worker_enfant,
+                HWND_BOTTOM,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
+        crate::journal::ecrire(&format!(
+            "incrustée : méthode {m}, parent {parent:?} ({}), rect {}, style {:#x}, exstyle {:#x}, \
+             visible {}",
+            classe_de(GetParent(hwnd)),
+            rect_de(hwnd),
+            GetWindowLongPtrW(hwnd, GWL_STYLE) as u32,
+            GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32,
+            IsWindowVisible(hwnd) != 0,
+        ));
+        Ok(parent)
+    }
+}
+
+/// Mode fenêtre : fenêtre sans bord de premier niveau sur tout le bureau, au fond de la pile
+/// (au-dessus du bureau, sous les autres applis).
+unsafe fn en_fenetre(hwnd: HWND) {
+    unsafe {
+        if !GetParent(hwnd).is_null() {
+            SetParent(hwnd, null_mut());
+        }
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+        SetWindowLongPtrW(
+            hwnd,
+            GWL_STYLE,
+            ((style & !(WS_CHILD | WS_CAPTION | WS_THICKFRAME)) | WS_POPUP | WS_VISIBLE) as isize,
+        );
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, (ex & !WS_EX_LAYERED) as isize);
+        placer(hwnd, null_mut(), Some(HWND_BOTTOM));
+        crate::journal::ecrire(&format!("mode fenêtre : rect {}", rect_de(hwnd)));
+    }
+}
+
+/// Tout le bureau virtuel (tous les écrans, coordonnées écran) ramené dans le repère du parent
+/// (nul : coordonnées écran). `apres` : place dans l'ordre d'empilement, sinon inchangée.
+unsafe fn placer(hwnd: HWND, parent: HWND, apres: Option<HWND>) {
+    unsafe {
+        let (x, y, l, h) = match disposition() {
+            Some(d) => d.boite(),
+            None => (
+                GetSystemMetrics(SM_XVIRTUALSCREEN),
+                GetSystemMetrics(SM_YVIRTUALSCREEN),
+                GetSystemMetrics(SM_CXVIRTUALSCREEN),
+                GetSystemMetrics(SM_CYVIRTUALSCREEN),
+            ),
+        };
+        let mut pt = POINT { x, y };
+        if !parent.is_null() {
+            MapWindowPoints(null_mut(), parent, &mut pt, 1);
+        }
+        let ordre = if apres.is_some() { 0 } else { SWP_NOZORDER };
         SetWindowPos(
             hwnd,
-            null_mut(),
+            apres.unwrap_or(null_mut()),
             pt.x,
             pt.y,
-            cx,
-            cy,
-            SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED,
+            l,
+            h,
+            ordre | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED,
         );
     }
-    Ok(())
+}
+
+/// Écrans de Windows en pixels physiques (le processus est « per-monitor DPI aware », réglé
+/// par winit) : EnumDisplayMonitors + GetMonitorInfoW, aucune disposition en dur.
+pub fn disposition() -> Option<Disposition> {
+    unsafe extern "system" fn un(m: HMONITOR, _: HDC, _: *mut RECT, l: LPARAM) -> i32 {
+        unsafe {
+            let v = &mut *(l as *mut Vec<Ecran>);
+            let mut info: MONITORINFO = std::mem::zeroed();
+            info.cbSize = size_of::<MONITORINFO>() as u32;
+            if GetMonitorInfoW(m, &mut info) != 0 {
+                let r = info.rcMonitor;
+                v.push(Ecran {
+                    x: r.left,
+                    y: r.top,
+                    l: r.right - r.left,
+                    h: r.bottom - r.top,
+                    principal: info.dwFlags & MONITORINFOF_PRIMARY != 0,
+                });
+            }
+        }
+        1
+    }
+    let mut v: Vec<Ecran> = Vec::new();
+    unsafe {
+        EnumDisplayMonitors(
+            null_mut(),
+            null(),
+            Some(un),
+            &mut v as *mut Vec<Ecran> as LPARAM,
+        );
+    }
+    Disposition::nouvelle(v)
 }
 
 unsafe extern "system" fn chercher_worker(h: HWND, l: LPARAM) -> i32 {
@@ -173,11 +397,15 @@ fn chemin_fond() -> Vec<u16> {
 }
 
 fn lire_registre(cle: &str, valeur: &str) -> Option<String> {
+    lire_registre_dans(HKEY_CURRENT_USER, cle, valeur)
+}
+
+fn lire_registre_dans(racine: HKEY, cle: &str, valeur: &str) -> Option<String> {
     let mut buf = vec![0u16; 260];
     let mut taille = (buf.len() * 2) as u32;
     let r = unsafe {
         RegGetValueW(
-            HKEY_CURRENT_USER,
+            racine,
             large(cle).as_ptr(),
             large(valeur).as_ptr(),
             RRF_RT_REG_SZ,
@@ -189,27 +417,30 @@ fn lire_registre(cle: &str, valeur: &str) -> Option<String> {
     (r == 0).then(|| String::from_utf16_lossy(&buf[..(taille as usize / 2).saturating_sub(1)]))
 }
 
-/// Fond d'écran actuel à la taille de l'écran (Remplir, Ajuster, Étirer, Centrer ;
-/// mosaïque et étendu traités comme Remplir), ou la couleur unie du bureau.
-pub fn fond_bureau(l: u32, h: u32) -> Option<image::RgbaImage> {
+/// Couleur unie du bureau (pas d'image, bords des modes Centrer / Ajuster).
+fn couleur_bureau() -> image::Rgba<u8> {
     let c = unsafe { GetSysColor(COLOR_DESKTOP) };
-    let uni = image::Rgba([
+    image::Rgba([
         (c & 0xff) as u8,
         (c >> 8 & 0xff) as u8,
         (c >> 16 & 0xff) as u8,
         255,
-    ]);
-    let chemin = String::from_utf16_lossy(&chemin_fond());
-    if chemin.is_empty() {
-        return Some(image::RgbaImage::from_pixel(l, h, uni));
-    }
-    let img = image::open(&chemin).ok()?.to_rgba8();
-    let style = lire_registre("Control Panel\\Desktop", "WallpaperStyle").unwrap_or_default();
-    let mosaique = lire_registre("Control Panel\\Desktop", "TileWallpaper").as_deref() == Some("1");
-    Some(match (style.trim(), mosaique) {
-        ("2", _) => image::imageops::resize(&img, l, h, image::imageops::FilterType::Triangle),
-        ("6", _) | ("0", false) => {
-            let e = if style.trim() == "6" {
+    ])
+}
+
+/// Image posée sur `l`x`h` selon le mode de Windows (DESKTOP_WALLPAPER_POSITION : 0 Centrer,
+/// 1 Mosaïque, 2 Étirer, 3 Ajuster, 4 Remplir, 5 Étendre = Remplir sur la boîte).
+fn poser_image(
+    img: &image::RgbaImage,
+    l: u32,
+    h: u32,
+    mode: i32,
+    uni: image::Rgba<u8>,
+) -> image::RgbaImage {
+    match mode {
+        2 => image::imageops::resize(img, l, h, image::imageops::FilterType::Triangle),
+        0 | 3 => {
+            let e = if mode == 3 {
                 (l as f32 / img.width() as f32).min(h as f32 / img.height() as f32)
             } else {
                 1.0
@@ -218,8 +449,7 @@ pub fn fond_bureau(l: u32, h: u32) -> Option<image::RgbaImage> {
                 ((img.width() as f32 * e) as u32).max(1),
                 ((img.height() as f32 * e) as u32).max(1),
             );
-            let petit =
-                image::imageops::resize(&img, nl, nh, image::imageops::FilterType::Triangle);
+            let petit = image::imageops::resize(img, nl, nh, image::imageops::FilterType::Triangle);
             let mut fond = image::RgbaImage::from_pixel(l, h, uni);
             image::imageops::overlay(
                 &mut fond,
@@ -229,12 +459,203 @@ pub fn fond_bureau(l: u32, h: u32) -> Option<image::RgbaImage> {
             );
             fond
         }
-        _ => crate::fond::couvrir(&img, l, h),
+        1 => {
+            let mut fond = image::RgbaImage::from_pixel(l, h, uni);
+            for y in (0..h).step_by(img.height().max(1) as usize) {
+                for x in (0..l).step_by(img.width().max(1) as usize) {
+                    image::imageops::overlay(&mut fond, img, x as i64, y as i64);
+                }
+            }
+            fond
+        }
+        _ => crate::fond::couvrir(img, l, h),
+    }
+}
+
+/// Fond d'écran d'un écran selon IDesktopWallpaper : rectangle, chemin de l'image (vide =
+/// couleur unie), identifiant de l'écran (pour le réappliquer à la sortie).
+struct FondEcran {
+    rect: RECT,
+    chemin: String,
+    id: Vec<u16>,
+}
+
+/// IDesktopWallpaper (shobjidl_core.h) : table des méthodes dans l'ordre de l'interface
+/// (windows-sys ne fournit pas les interfaces COM).
+#[repr(C)]
+struct VtblFond {
+    query_interface: usize,
+    add_ref: usize,
+    release: unsafe extern "system" fn(*mut c_void) -> u32,
+    set_wallpaper: unsafe extern "system" fn(*mut c_void, *const u16, *const u16) -> i32,
+    get_wallpaper: unsafe extern "system" fn(*mut c_void, *const u16, *mut *mut u16) -> i32,
+    get_monitor_device_path_at: unsafe extern "system" fn(*mut c_void, u32, *mut *mut u16) -> i32,
+    get_monitor_device_path_count: unsafe extern "system" fn(*mut c_void, *mut u32) -> i32,
+    get_monitor_rect: unsafe extern "system" fn(*mut c_void, *const u16, *mut RECT) -> i32,
+    set_background_color: usize,
+    get_background_color: usize,
+    set_position: usize,
+    get_position: unsafe extern "system" fn(*mut c_void, *mut i32) -> i32,
+}
+
+const IID_IDESKTOPWALLPAPER: windows_sys::core::GUID =
+    windows_sys::core::GUID::from_u128(0xb92b56a9_8b55_4e14_9a89_0199bbb6f93b);
+
+/// Appelle `f` avec l'objet IDesktopWallpaper, dans un fil à part (COM initialisé pour lui
+/// seul, sans toucher à l'appartement du fil de la fenêtre).
+fn avec_fonds<T: Send + 'static>(
+    f: impl FnOnce(*mut c_void, &VtblFond) -> Option<T> + Send + 'static,
+) -> Option<T> {
+    std::thread::spawn(move || unsafe {
+        let init = CoInitializeEx(null(), COINIT_MULTITHREADED as u32);
+        let mut obj: *mut c_void = null_mut();
+        let r = CoCreateInstance(
+            &windows_sys::Win32::UI::Shell::DesktopWallpaper,
+            null_mut(),
+            CLSCTX_ALL,
+            &IID_IDESKTOPWALLPAPER,
+            &mut obj,
+        );
+        let res = if r >= 0 && !obj.is_null() {
+            let vt = &**(obj as *mut *const VtblFond);
+            let res = f(obj, vt);
+            (vt.release)(obj);
+            res
+        } else {
+            None
+        };
+        if init >= 0 {
+            CoUninitialize();
+        }
+        res
+    })
+    .join()
+    .ok()
+    .flatten()
+}
+
+/// Fond de chaque écran et mode de placement (commun à tous les écrans sous Windows).
+fn fonds_ecrans() -> Option<(Vec<FondEcran>, i32)> {
+    avec_fonds(|o, vt| unsafe {
+        let mut n = 0u32;
+        if (vt.get_monitor_device_path_count)(o, &mut n) < 0 {
+            return None;
+        }
+        let mut v = Vec::new();
+        for i in 0..n {
+            let mut id: *mut u16 = null_mut();
+            if (vt.get_monitor_device_path_at)(o, i, &mut id) < 0 || id.is_null() {
+                continue;
+            }
+            let lire = |p: *mut u16| {
+                let mut k = 0;
+                while *p.add(k) != 0 {
+                    k += 1;
+                }
+                std::slice::from_raw_parts(p, k).to_vec()
+            };
+            let ident = lire(id);
+            let mut rect: RECT = std::mem::zeroed();
+            let mut chemin: *mut u16 = null_mut();
+            // Écran inactif (dupliqué, éteint) : GetMonitorRECT échoue, on le saute.
+            if (vt.get_monitor_rect)(o, id, &mut rect) >= 0 {
+                let c = if (vt.get_wallpaper)(o, id, &mut chemin) >= 0 && !chemin.is_null() {
+                    String::from_utf16_lossy(&lire(chemin))
+                } else {
+                    String::new()
+                };
+                v.push(FondEcran {
+                    rect,
+                    chemin: c,
+                    id: ident.into_iter().chain(Some(0)).collect(),
+                });
+            }
+            if !chemin.is_null() {
+                CoTaskMemFree(chemin as *const c_void);
+            }
+            CoTaskMemFree(id as *const c_void);
+        }
+        let mut pos = 4;
+        (vt.get_position)(o, &mut pos);
+        Some((v, pos))
     })
 }
 
-/// Réapplique le fond d'écran actuel : le bureau se redessine sans l'aquarium.
+/// Mode de placement lu dans le registre (repli sans IDesktopWallpaper).
+fn mode_registre() -> i32 {
+    let style = lire_registre("Control Panel\\Desktop", "WallpaperStyle").unwrap_or_default();
+    let mosaique = lire_registre("Control Panel\\Desktop", "TileWallpaper").as_deref() == Some("1");
+    match (style.trim(), mosaique) {
+        (_, true) => 1,
+        ("0", false) => 0,
+        ("2", _) => 2,
+        ("6", _) => 3,
+        ("22", _) => 5,
+        _ => 4,
+    }
+}
+
+/// Fond d'écran actuel de chaque écran, assemblé sur la boîte englobante de `d` (trous entre
+/// écrans en noir : hors écran, jamais vus).
+pub fn fond_bureau(d: &Disposition) -> Option<image::RgbaImage> {
+    let (bx, by, bl, bh) = d.boite();
+    let uni = couleur_bureau();
+    let mut out = image::RgbaImage::from_pixel(bl as u32, bh as u32, image::Rgba([0, 0, 0, 255]));
+    let (fonds, mode) = match fonds_ecrans() {
+        Some((f, m)) if !f.is_empty() => (f, m),
+        _ => (Vec::new(), mode_registre()),
+    };
+    let commun = String::from_utf16_lossy(&chemin_fond());
+    let ouvrir = |c: &str| {
+        (!c.is_empty())
+            .then(|| image::open(c).ok())
+            .flatten()
+            .map(|i| i.to_rgba8())
+    };
+    // Étendre : une seule image sur toute la boîte.
+    let etendu = if mode == 5 {
+        let c = fonds
+            .first()
+            .map(|f| f.chemin.clone())
+            .unwrap_or(commun.clone());
+        ouvrir(&c).map(|img| crate::fond::couvrir(&img, bl as u32, bh as u32))
+    } else {
+        None
+    };
+    for e in &d.ecrans {
+        let (ox, oy) = ((e.x - bx) as i64, (e.y - by) as i64);
+        let morceau = if let Some(g) = &etendu {
+            image::imageops::crop_imm(g, ox as u32, oy as u32, e.l as u32, e.h as u32).to_image()
+        } else {
+            // L'écran de même rectangle chez IDesktopWallpaper, sinon le fond commun.
+            let c = fonds
+                .iter()
+                .find(|f| f.rect.left == e.x && f.rect.top == e.y)
+                .map(|f| f.chemin.clone())
+                .unwrap_or_else(|| commun.clone());
+            match ouvrir(&c) {
+                Some(img) => poser_image(&img, e.l as u32, e.h as u32, mode, uni),
+                None => image::RgbaImage::from_pixel(e.l as u32, e.h as u32, uni),
+            }
+        };
+        image::imageops::replace(&mut out, &morceau, ox, oy);
+    }
+    Some(out)
+}
+
+/// Réapplique le fond d'écran actuel : le bureau se redessine sans l'aquarium. Plusieurs
+/// écrans : chaque écran reçoit à nouveau SON image (jamais une image commune).
 pub fn rafraichir_fond() {
+    if let Some((fonds, _)) = fonds_ecrans().filter(|(f, _)| f.len() >= 2) {
+        let _ = avec_fonds(move |o, vt| unsafe {
+            for f in fonds.iter().filter(|f| !f.chemin.is_empty()) {
+                let c = large(&f.chemin);
+                (vt.set_wallpaper)(o, f.id.as_ptr(), c.as_ptr());
+            }
+            Some(())
+        });
+        return;
+    }
     let mut chemin = chemin_fond();
     chemin.push(0);
     unsafe {
@@ -247,27 +668,30 @@ pub fn rafraichir_fond() {
     }
 }
 
-/// Une appli en plein écran au premier plan (jeu, vidéo, présentation) ?
-pub fn plein_ecran() -> bool {
+/// Une appli en plein écran au premier plan (jeu, vidéo, présentation) ? Renvoie la raison
+/// (journal). Jamais le bureau lui-même ni une fenêtre de l'aquarium.
+pub fn plein_ecran() -> Option<String> {
     unsafe {
         let mut etat = 0;
         if SHQueryUserNotificationState(&mut etat) == S_OK
-            && matches!(
-                etat,
-                QUNS_BUSY | QUNS_RUNNING_D3D_FULL_SCREEN | QUNS_PRESENTATION_MODE
-            )
+            && matches!(etat, QUNS_RUNNING_D3D_FULL_SCREEN | QUNS_PRESENTATION_MODE)
         {
-            return true;
+            return Some(format!("état de notification {etat}"));
         }
         let fg = GetForegroundWindow();
         if fg.is_null() {
-            return false;
+            return None;
         }
-        let mut classe = [0u16; 64];
-        let n = GetClassNameW(fg, classe.as_mut_ptr(), classe.len() as i32) as usize;
-        let classe = String::from_utf16_lossy(&classe[..n]);
-        if classe == "Progman" || classe == "WorkerW" {
-            return false;
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(fg, &mut pid);
+        let classe = classe_de(fg);
+        if pid == std::process::id()
+            || matches!(
+                classe.as_str(),
+                "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd"
+            )
+        {
+            return None;
         }
         let mut r: RECT = std::mem::zeroed();
         let mut info: MONITORINFO = std::mem::zeroed();
@@ -275,10 +699,11 @@ pub fn plein_ecran() -> bool {
         if GetWindowRect(fg, &mut r) == 0
             || GetMonitorInfoW(MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST), &mut info) == 0
         {
-            return false;
+            return None;
         }
         let m = info.rcMonitor;
-        r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom
+        (r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom)
+            .then(|| format!("fenêtre {classe} {} plein écran", rect_de(fg)))
     }
 }
 
@@ -393,6 +818,20 @@ fn menu(h: HWND) {
         };
         AppendMenuW(m, MF_STRING | pause, 2, large("Pause").as_ptr());
         AppendMenuW(m, MF_SEPARATOR, 0, null());
+        let fenetre = if MODE_FENETRE.load(Ordering::Relaxed) {
+            MF_CHECKED
+        } else {
+            0
+        };
+        AppendMenuW(m, MF_STRING | fenetre, 4, large("Mode fenêtre").as_ptr());
+        AppendMenuW(
+            m,
+            MF_STRING,
+            5,
+            large("Autre méthode d'incrustation").as_ptr(),
+        );
+        AppendMenuW(m, MF_STRING, 6, large("Ouvrir le journal").as_ptr());
+        AppendMenuW(m, MF_SEPARATOR, 0, null());
         AppendMenuW(m, MF_STRING, 3, large("Quitter").as_ptr());
         let mut pt = POINT { x: 0, y: 0 };
         GetCursorPos(&mut pt);
@@ -413,6 +852,19 @@ fn menu(h: HWND) {
             1 => envoyer(Commande::Ouvrir),
             2 => envoyer(Commande::Pause),
             3 => envoyer(Commande::Quitter),
+            4 => envoyer(Commande::ModeFenetre),
+            5 => envoyer(Commande::AutreMethode),
+            6 => {
+                let f = large(&crate::journal::chemin().display().to_string());
+                ShellExecuteW(
+                    null_mut(),
+                    large("open").as_ptr(),
+                    f.as_ptr(),
+                    null(),
+                    null(),
+                    SW_SHOWNORMAL,
+                );
+            }
             _ => {}
         }
     }
@@ -443,9 +895,11 @@ unsafe extern "system" fn proc_sys(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> L
                 PostQuitMessage(0);
                 0
             }
-            // Explorateur relancé : l'icône est à remettre.
+            // Explorateur relancé : l'icône est à remettre, l'aquarium à réincruster.
             m if m != 0 && m == TASKBAR_CREATED.load(Ordering::Relaxed) => {
+                crate::journal::ecrire("Explorateur relancé (TaskbarCreated)");
                 ajouter_icone(h);
+                envoyer(Commande::Rattacher);
                 0
             }
             _ => DefWindowProcW(h, msg, w, l),

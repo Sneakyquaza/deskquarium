@@ -18,6 +18,10 @@ pub fn echelle_pour(largeur_ecran: u32) -> u32 {
     ((largeur_ecran as f32 / 960.0).round() as u32).clamp(1, 4) * crate::toile::FIN as u32
 }
 
+/// Ce que les autres imposent à un nageur : zones des yeux du fond à éviter, poussée de
+/// séparation, places prises (positions et cibles).
+type Voisinage<'a> = (&'a [(f32, f32, f32, f32)], (f32, f32), &'a [(f32, f32)]);
+
 pub struct Nageur {
     pub id: u64,
     pub rarete: Rarete,
@@ -50,6 +54,16 @@ pub struct Nageur {
     revenu: f64,
     /// Immobile (éclosion, planche) : la traînée est simulée.
     pub fixe: bool,
+    /// Clé de l'espèce (bancs d'une même espèce).
+    pub espece: &'static str,
+    /// Nage par poussées (vrai) et glissés, durée restante de la phase en cours.
+    poussee: bool,
+    battue: f32,
+    /// Force du battement de queue (suit la poussée avec retard).
+    vigueur: f32,
+    /// Inclinaison du corps (pente dy/dx, en montée négative) et sa valeur visée.
+    pente: f32,
+    pente_visee: f32,
 }
 
 struct Bulle {
@@ -97,13 +111,61 @@ struct Plante {
     feuilles: bool,
 }
 
+/// Eau de chaque colonne de la toile (pixels monde) : plusieurs écrans de tailles différentes
+/// laissent des trous (colonnes ou bouts de colonnes hors écran) où l'on ne nage pas.
+pub struct Bassin {
+    /// Haut de l'eau (haut de l'écran le plus haut de la colonne).
+    ciel: Vec<i32>,
+    /// Dessus du sable.
+    sable: Vec<i32>,
+    /// Bas de l'écran le plus bas de la colonne ; 0 = colonne hors écran.
+    bas: Vec<i32>,
+    /// Écran principal (compteur en bas à gauche) : x0, y0, x1, y1.
+    principal: (i32, i32, i32, i32),
+}
+
+impl Bassin {
+    fn col(&self, x: f32) -> usize {
+        (x.max(0.0) as usize).min(self.bas.len() - 1)
+    }
+
+    /// Eau où le centre d'un nageur peut aller sur les colonnes x0..x1 : (haut, plancher),
+    /// None si une des colonnes est hors écran.
+    pub fn eau(&self, x0: f32, x1: f32) -> Option<(f32, f32)> {
+        let (a, b) = (self.col(x0), self.col(x1));
+        let mut r = (f32::MIN, f32::MAX);
+        for c in a..=b {
+            if self.bas[c] == 0 {
+                return None;
+            }
+            r = (
+                r.0.max(self.ciel[c] as f32),
+                r.1.min((self.sable[c] - 8) as f32),
+            );
+        }
+        Some(r)
+    }
+
+    /// Hauteurs extrêmes de l'eau (serpents qui traversent tout).
+    fn eau_totale(&self) -> (f32, f32) {
+        let mut r = (f32::MAX, f32::MIN);
+        for c in (0..self.bas.len()).filter(|&c| self.bas[c] > 0) {
+            r = (
+                r.0.min(self.ciel[c] as f32),
+                r.1.max((self.sable[c] - 8) as f32),
+            );
+        }
+        r
+    }
+}
+
 pub struct Aquarium {
     pub toile: Toile,
     /// Eau teintée + sable + rochers, refait quand la teinte change.
     fond: Toile,
     rochers: Toile,
     teinte_fond: f32,
-    sable: Vec<i32>,
+    bassin: Bassin,
     plantes: Vec<Plante>,
     sources: Vec<(i32, i32)>,
     pub nageurs: Vec<Nageur>,
@@ -153,24 +215,41 @@ pub fn sprite_ajuste(p: &Poisson, lmax: i32, hmax: i32) -> Sprite {
 
 impl Aquarium {
     pub fn new(l: usize, h: usize, graine: u64) -> Aquarium {
+        Aquarium::avec_zones(l, h, graine, &[(0, 0, l as i32, h as i32)])
+    }
+
+    /// Aquarium sur plusieurs écrans : `zones` = rectangles des écrans en pixels monde
+    /// (x0, y0, x1, y1), le principal en premier (voir `ecrans.rs`). Hors des zones : rien.
+    pub fn avec_zones(l: usize, h: usize, graine: u64, zones: &[(i32, i32, i32, i32)]) -> Aquarium {
         let mut a = Alea(graine);
-        let hs = ((h as f32 * 0.085) as i32).max(12);
         let p1 = a.f() * TAU;
         let p2 = a.f() * TAU;
-        let sable: Vec<i32> = (0..l as i32)
-            .map(|x| {
-                let xf = x as f32;
-                h as i32 - hs
-                    + (2.5 * (xf * 0.021 + p1).sin() + 1.5 * (xf * 0.057 + p2).sin()).round() as i32
-            })
-            .collect();
+        let (mut ciel, mut sable, mut bas) = (vec![h as i32; l], vec![h as i32; l], vec![0; l]);
+        for x in 0..l {
+            let xi = x as i32;
+            let dessus = zones.iter().filter(|z| z.0 <= xi && xi < z.2);
+            let (Some(y0), Some(z)) = (
+                dessus.clone().map(|z| z.1.max(0)).min(),
+                dessus.max_by_key(|z| z.3),
+            ) else {
+                continue;
+            };
+            let y1 = z.3.min(h as i32);
+            let hs = (((z.3 - z.1) as f32 * 0.085) as i32).max(12);
+            let xf = x as f32;
+            ciel[x] = y0;
+            bas[x] = y1;
+            sable[x] = y1 - hs
+                + (2.5 * (xf * 0.021 + p1).sin() + 1.5 * (xf * 0.057 + p2).sin()).round() as i32;
+        }
+        let principal = zones.first().copied().unwrap_or((0, 0, l as i32, h as i32));
         let mut plantes = Vec::new();
         let mut sources = Vec::new();
         // Touffes de plantes réparties, plus denses sur les côtés.
         let n = (l / 34).max(6);
         for i in 0..n {
             let mut x = ((i as f32 + a.entre(0.1, 0.9)) / n as f32 * l as f32) as i32;
-            if a.f() < 0.35 {
+            if a.f() < 0.35 && zones.len() == 1 {
                 x = if a.f() < 0.5 {
                     a.n(l as u32 / 6) as i32
                 } else {
@@ -180,6 +259,9 @@ impl Aquarium {
             let touffe = 1 + a.n(3);
             for _ in 0..touffe {
                 let xx = (x + a.n(9) as i32 - 4).clamp(1, l as i32 - 2);
+                if bas[xx as usize] == 0 {
+                    continue;
+                }
                 let rouge = a.f() < 0.18;
                 let couleurs = if rouge {
                     [[0x5a, 0x1c, 0x3c], [0xa8, 0x34, 0x5c], [0xe8, 0x6a, 0x7c]]
@@ -191,12 +273,13 @@ impl Aquarium {
                 plantes.push(Plante {
                     x: xx,
                     base: sable[xx as usize] + 2,
-                    hauteur: (a.entre(0.08, 0.27) * h as f32) as i32,
+                    hauteur: (a.entre(0.08, 0.27) * (bas[xx as usize] - ciel[xx as usize]) as f32)
+                        as i32,
                     epaisseur: 2 + a.n(2) as i32,
                     couleurs,
                     phase: a.f() * TAU,
-                    // Pas de plante devant le compteur (coin bas gauche).
-                    devant: a.f() < 0.25 && xx > 90,
+                    // Pas de plante devant le compteur (coin bas gauche de l'écran principal).
+                    devant: a.f() < 0.25 && !(principal.0..principal.0 + 90).contains(&xx),
                     feuilles: a.f() < 0.6,
                 });
             }
@@ -209,7 +292,11 @@ impl Aquarium {
             let cx = ((i as f32 + a.entre(0.2, 0.8)) / nr as f32 * l as f32) as i32;
             let rl = a.entre(9.0, 22.0);
             let rh = rl * a.entre(0.45, 0.8);
-            let base = sable[cx.clamp(0, l as i32 - 1) as usize] + 3;
+            let c = cx.clamp(0, l as i32 - 1) as usize;
+            if bas[c] == 0 {
+                continue;
+            }
+            let base = sable[c] + 3;
             rocher(&mut rochers, cx, base, rl, rh, &mut a);
             sources.push((cx + (a.n(5) as i32 - 2), base - rh as i32));
         }
@@ -218,7 +305,12 @@ impl Aquarium {
             fond: Toile::new(l, h),
             rochers,
             teinte_fond: -1.0,
-            sable,
+            bassin: Bassin {
+                ciel,
+                sable,
+                bas,
+                principal,
+            },
             plantes,
             sources,
             nageurs: Vec::new(),
@@ -242,25 +334,22 @@ impl Aquarium {
         self.toile.h as i32
     }
 
-    /// Haut de la zone de nage autorisée au-dessus du sable.
-    fn plancher(&self) -> f32 {
-        (self.sable.iter().min().copied().unwrap_or(self.h()) - 8) as f32
-    }
-
     /// Eau (teinte 0..1, 0 = invisible), sable tramé et rochers.
     fn refaire_fond(&mut self, teinte: f32) {
         self.teinte_fond = teinte;
-        let (l, h) = (self.l(), self.h());
+        let l = self.l();
         let f = &mut self.fond;
         f.effacer();
         let haut: Rgb = [0x2a, 0x8c, 0xa8];
         let bas: Rgb = [0x0c, 0x3c, 0x5c];
-        for y in 0..h {
-            let t = y as f32 / h as f32;
-            let c = melange(haut, bas, t);
-            // Opacité max 50 %, un peu plus dense vers le fond.
-            let a = teinte.clamp(0.0, 1.0) * (0.32 + 0.18 * t) * 255.0;
-            for x in 0..l {
+        let b = &self.bassin;
+        for x in 0..l {
+            let (y0, y1) = (b.ciel[x as usize], b.bas[x as usize]);
+            for y in y0..y1 {
+                let t = (y - y0) as f32 / (y1 - y0).max(1) as f32;
+                let c = melange(haut, bas, t);
+                // Opacité max 50 %, un peu plus dense vers le fond.
+                let a = teinte.clamp(0.0, 1.0) * (0.32 + 0.18 * t) * 255.0;
                 // Tramage : l'opacité se quantifie par paliers de 8, sans dégradé lisse.
                 let q = ((a / 8.0) + bayer(x, y)).floor() * 8.0;
                 f.poser(x, y, c, q.clamp(0.0, 255.0) as u8);
@@ -274,8 +363,11 @@ impl Aquarium {
         ];
         let mut a = Alea(77);
         for x in 0..l {
-            let top = self.sable[x as usize];
-            for y in top..h {
+            let (top, y1) = (b.sable[x as usize], b.bas[x as usize]);
+            if y1 == 0 {
+                continue;
+            }
+            for y in top..y1 {
                 let prof = (y - top) as f32;
                 let mut k: usize = if prof < 1.0 {
                     3
@@ -302,7 +394,10 @@ impl Aquarium {
         // Cailloux et étoiles de mer.
         for _ in 0..l / 12 {
             let x = a.n(l as u32) as i32;
-            let y = self.sable[x as usize] + 3 + a.n(8) as i32;
+            if b.bas[x as usize] == 0 {
+                continue;
+            }
+            let y = b.sable[x as usize] + 3 + a.n(8) as i32;
             let c = [[0x6c, 0x64, 0x5c], [0xa0, 0x94, 0x84], [0xd8, 0xd0, 0xc0]][a.n(3) as usize];
             f.poser(x, y, c, 255);
             if a.f() < 0.4 {
@@ -311,7 +406,10 @@ impl Aquarium {
         }
         for _ in 0..if l > 160 { 2 } else { 0 } {
             let x = 100 + a.n((l - 120) as u32) as i32;
-            let y = self.sable[x as usize] + 5 + a.n(4) as i32;
+            if b.bas[x as usize] == 0 {
+                continue;
+            }
+            let y = b.sable[x as usize] + 5 + a.n(4) as i32;
             for (dx, dy) in [(0, 0), (-1, 0), (1, 0), (0, -1), (-2, 1), (2, 1), (0, 1)] {
                 f.poser(x + dx, y + dy, [0xf0, 0x7c, 0x5c], 255);
             }
@@ -355,35 +453,47 @@ impl Aquarium {
                 .entry(cle)
                 .or_insert_with(|| Arc::new(sprite_de(p)))
                 .clone();
-            let (l, plancher) = (self.l() as f32, self.plancher());
+            // Arrivée à une place libre (loin des autres et de leurs cibles), sur un écran.
+            let occupes: Vec<(f32, f32)> = self
+                .nageurs
+                .iter()
+                .flat_map(|n| [(n.x, n.y), n.cible])
+                .collect();
             let a = &mut self.alea;
-            let x = a.entre(20.0, l - 20.0);
-            let y = a.entre(20.0, plancher - 10.0);
+            let taille = (sprite.lw(), sprite.hw());
+            let (x, y) = place_libre(a, &occupes, &self.bassin, taille, false);
             let mut n = Nageur::new(p.id, p.rarete, sprite, x, y, a);
             n.revenu = p.revenu();
-            n.cible = (a.entre(20.0, l - 20.0), a.entre(20.0, plancher - 10.0));
+            n.espece = espece_de(p).cle;
+            n.cible = place_libre(a, &occupes, &self.bassin, taille, false);
             self.nageurs.push(n);
         }
-        // Bancs : les petits communs suivent un meneur.
-        let petits: Vec<u64> = self
-            .nageurs
-            .iter()
-            .filter(|n| n.sprite.mouvement == Mouvement::Banc)
-            .map(|n| n.id)
-            .collect();
-        // Bancs de 5 au plus : le premier de chaque groupe mène.
+        // Bancs lâches d'une même espèce : 5 au plus pour les poissons de banc, 3 pour les
+        // autres petits communs ; le premier de chaque groupe mène.
+        let mut groupes: Vec<(&'static str, Vec<u64>)> = Vec::new();
+        for n in &self.nageurs {
+            let max = match n.sprite.mouvement {
+                Mouvement::Banc => 5,
+                Mouvement::Nage if n.rarete == Rarete::Commun => 3,
+                _ => continue,
+            };
+            match groupes
+                .iter_mut()
+                .find(|g| g.0 == n.espece && g.1.len() < max)
+            {
+                Some(g) => g.1.push(n.id),
+                None => groupes.push((n.espece, vec![n.id])),
+            }
+        }
         for n in self.nageurs.iter_mut() {
-            let meneur = petits
-                .iter()
-                .position(|&id| id == n.id)
-                .map(|i| petits[i / 5 * 5]);
+            let meneur = groupes.iter().find(|g| g.1.contains(&n.id)).map(|g| g.1[0]);
             n.banc = match (meneur, n.banc) {
                 (Some(m), Some(b)) if b.0 == m && n.id != m => Some(b),
                 (Some(m), _) if n.id != m => {
                     let a = &mut self.alea;
                     // Écart à la taille du poisson : le banc ne se chevauche pas.
                     let (lw, hw) = (n.sprite.lw(), n.sprite.hw());
-                    Some((m, -lw * a.entre(0.8, 1.9), hw * a.entre(-1.6, 1.6)))
+                    Some((m, -lw * a.entre(1.0, 2.4), hw * a.entre(-2.2, 2.2)))
                 }
                 _ => None,
             };
@@ -399,7 +509,7 @@ impl Aquarium {
         let dt = dt.min(0.1);
         self.temps += dt;
         let t = self.temps;
-        let (l, plancher, ht) = (self.l() as f32, self.plancher(), self.h() as f32);
+        let (l, ht) = (self.l() as f32, self.h() as f32);
         if let Some((_, reste)) = &mut self.message {
             *reste -= dt;
             if *reste <= 0.0 {
@@ -418,7 +528,15 @@ impl Aquarium {
             .filter(|n| n.sprite.taille >= Taille::Enorme)
             .filter_map(Nageur::zone_yeux)
             .collect();
-        for i in 0..self.nageurs.len() {
+        let pousses = separation(&self.nageurs);
+        // Places prises (positions et cibles) : les nouvelles cibles vont vers l'eau libre.
+        let occupes: Vec<(f32, f32)> = self
+            .nageurs
+            .iter()
+            .filter(|n| !n.fixe)
+            .flat_map(|n| [(n.x, n.y), n.cible])
+            .collect();
+        for (i, &pousse) in pousses.iter().enumerate() {
             let n = &mut self.nageurs[i];
             let ev: &[(f32, f32, f32, f32)] = if n.sprite.taille >= Taille::Enorme {
                 &[]
@@ -427,10 +545,10 @@ impl Aquarium {
             };
             n.bouger(
                 dt,
-                (l, ht, plancher),
-                &self.sable,
+                (l, ht),
+                &self.bassin,
                 &meneurs,
-                ev,
+                (ev, pousse, &occupes),
                 &mut self.alea,
             );
             n.effets(dt, t, &mut self.particules, &mut self.alea);
@@ -476,7 +594,12 @@ impl Aquarium {
             b.y -= b.v * dt;
             b.x += (t * 2.2 + b.phase).sin() * 4.0 * dt;
         }
-        self.bulles.retain(|b| b.y > 2.0);
+        // Une bulle éclate à la surface de son écran (jamais dans un trou entre écrans).
+        let b = &self.bassin;
+        self.bulles.retain(|u| {
+            let c = b.col(u.x);
+            b.bas[c] > 0 && u.y > b.ciel[c] as f32 + 2.0
+        });
         for p in &mut self.particules {
             p.vie += dt;
             p.x += p.vx * dt;
@@ -498,8 +621,7 @@ impl Aquarium {
         let t = self.temps;
         if self.decor {
             self.toile.px.copy_from_slice(&self.fond.px);
-            let plancher = self.plancher();
-            rayons(&mut self.toile, t, plancher);
+            rayons(&mut self.toile, t, &self.bassin);
         } else {
             self.toile.effacer();
         }
@@ -517,12 +639,15 @@ impl Aquarium {
         // petites buttes sur ses bras.
         if self.decor {
             let lf = self.toile.lf();
-            let hf = self.toile.hf() as i32;
             let f = FIN as i32;
             for n in self.nageurs.iter().filter(abysse) {
                 let (xa, xb) = (n.x - n.sprite.lw() * 0.45, n.x + n.sprite.lw() * 0.45);
                 let ph = n.phase;
-                for (x, &top) in self.sable.iter().enumerate() {
+                for (x, &top) in self.bassin.sable.iter().enumerate() {
+                    let hf = self.bassin.bas[x] * f;
+                    if hf == 0 {
+                        continue;
+                    }
                     let xf = x as f32;
                     let dedans = ((xf - xa).min(xb - xf) / 12.0).clamp(0.0, 1.0);
                     let butte = (dedans
@@ -581,7 +706,7 @@ impl Aquarium {
         let argent = court(partie.argent);
         let revenu = format!("+{}/s", court(partie.revenu_par_s()));
         let w = largeur_texte(&argent).max(largeur_texte(&revenu) - 4) + 15;
-        let (x, y) = (4, self.h() - 22);
+        let (x, y) = (self.bassin.principal.0 + 4, self.bassin.principal.3 - 22);
         let t = &mut self.toile;
         // Cartouche sombre aux coins arrondis.
         t.rect(x + 1, y, w - 2, 18, [0x08, 0x16, 0x28], 190);
@@ -662,6 +787,12 @@ impl Nageur {
             gain_dans: a.entre(3.0, 12.0),
             revenu: 0.0,
             fixe: false,
+            espece: "",
+            poussee: a.f() < 0.5,
+            battue: a.entre(0.2, 1.2),
+            vigueur: 1.0,
+            pente: 0.0,
+            pente_visee: 0.0,
         }
     }
 
@@ -669,20 +800,16 @@ impl Nageur {
     fn cadence(&self, v: f32) -> f32 {
         // Vitesse d'animation qui varie doucement (rien de mécanique).
         let souffle = 1.0 + 0.22 * (self.bob * 0.37 + self.phase).sin();
+        // Le battement suit la vitesse et la poussée (presque arrêté pendant un glissé).
+        let g = self.vigueur;
         souffle
             * match self.sprite.mouvement {
-                Mouvement::Nage | Mouvement::Banc => 0.62 + v * 0.09,
-                Mouvement::Lent => 0.28 + v * 0.03,
-                Mouvement::Fonce => 0.45 + v * 0.05,
-                Mouvement::Ondule => 0.45 + v * 0.05,
-                Mouvement::Plane => {
-                    // Battements puis planés.
-                    if (self.bob * 0.45 + self.phase).sin() > -0.35 {
-                        0.4
-                    } else {
-                        0.05
-                    }
-                }
+                Mouvement::Nage | Mouvement::Banc => (0.3 + v * 0.07) * (0.3 + 1.0 * g),
+                Mouvement::Lent => (0.2 + v * 0.03) * (0.5 + 0.6 * g),
+                Mouvement::Fonce => (0.3 + v * 0.05) * (0.4 + 0.8 * g),
+                Mouvement::Ondule => 0.35 + v * 0.06,
+                // Battements d'ailes puis planés, ailes presque immobiles.
+                Mouvement::Plane => 0.04 + 0.42 * g.powi(2),
                 Mouvement::Pulse => 0.55,
                 Mouvement::Jet => 0.4 + self.elan * 0.6,
                 Mouvement::Fond => 0.7 + self.elan,
@@ -702,10 +829,10 @@ impl Nageur {
     fn bouger(
         &mut self,
         dt: f32,
-        (l, ht, plancher): (f32, f32, f32),
-        sable: &[i32],
+        (l, ht): (f32, f32),
+        b: &Bassin,
         meneurs: &HashMap<u64, (f32, f32, bool)>,
-        evite: &[(f32, f32, f32, f32)],
+        (evite, pousse, occupes): Voisinage,
         a: &mut Alea,
     ) {
         self.bob += dt;
@@ -717,7 +844,12 @@ impl Nageur {
         let mv = self.sprite.mouvement;
         let (sl, sh) = (self.sprite.lw(), self.sprite.hw());
         let marge_x = sl / 2.0 + 4.0;
-        let mut haut = sh / 2.0 + 10.0;
+        // L'eau sous tout le corps (plusieurs écrans : jamais dans les trous entre eux).
+        let (dessus, plancher) = b
+            .eau(self.x - sl / 2.0, self.x + sl / 2.0)
+            .or_else(|| b.eau(self.x, self.x))
+            .unwrap_or_else(|| b.eau_totale());
+        let mut haut = dessus + sh / 2.0 + 10.0;
         let bas = plancher - sh / 2.0;
         if mv == Mouvement::Fond {
             haut = haut.max(bas - 24.0);
@@ -728,7 +860,7 @@ impl Nageur {
         match mv {
             Mouvement::Marche => {
                 // Sur le sable : avance vers une cible le long du fond, s'arrête souvent.
-                let sol = |x: f32| sable[(x as usize).min(sable.len() - 1)] as f32;
+                let sol = |x: f32| b.sable[b.col(x)] as f32;
                 if self.pause > 0.0 {
                     self.pause -= dt;
                     self.vx *= 0.8;
@@ -743,7 +875,14 @@ impl Nageur {
                     self.vx += (d.signum() * vitesse * (d.abs() / 6.0).min(1.0) - self.vx)
                         * (dt * 3.0).min(1.0);
                 }
-                self.x = (self.x + self.vx * dt).clamp(marge_x, l - marge_x);
+                let nx = (self.x + (self.vx + pousse.0 * 2.5) * dt).clamp(marge_x, l - marge_x);
+                if b.eau(nx - sl / 2.0, nx + sl / 2.0).is_some() {
+                    self.x = nx;
+                } else {
+                    // Bord d'un écran sans voisin à cette hauteur : demi-tour.
+                    self.vx = 0.0;
+                    self.minuteur = 0.0;
+                }
                 let y0 = sol(self.x) + 2.0 + MARGE as f32 - sh;
                 self.y = y0 + (sh / 2.0).floor();
                 self.anim = (self.anim + dt * self.cadence(0.0) * nb) % nb;
@@ -758,7 +897,11 @@ impl Nageur {
                 let d = self.cible.0 - self.x;
                 self.vx += (d.signum() * vitesse * (d.abs() / 20.0).min(1.0) - self.vx) * dt;
                 self.x += self.vx * dt;
-                self.y = ht - sh * 0.95 + sh / 2.0;
+                let fond = match b.bas[b.col(self.x)] {
+                    0 => ht,
+                    y => y as f32,
+                };
+                self.y = fond - sh * 0.95 + sh / 2.0;
                 self.anim = (self.anim + dt * self.cadence(0.0) * nb) % nb;
                 return;
             }
@@ -770,7 +913,10 @@ impl Nageur {
                         // Nouvelle traversée depuis un bord, à une hauteur au hasard.
                         self.gauche = a.f() < 0.5;
                         self.x = if self.gauche { l + sl / 2.0 } else { -sl / 2.0 };
-                        self.y = a.entre(haut.min(bas), bas.max(haut));
+                        // Toute la hauteur des écrans (il passe aussi derrière les trous).
+                        let (t0, t1) = b.eau_totale();
+                        let (y0, y1) = (t0 + sh / 2.0 + 10.0, t1 - sh / 2.0);
+                        self.y = a.entre(y0.min(y1), y1.max(y0));
                     }
                     return;
                 }
@@ -778,7 +924,6 @@ impl Nageur {
                 self.vx = sens * vitesse;
                 self.x += self.vx * dt;
                 self.y += (self.bob * 0.35 + self.phase).sin() * 4.0 * dt;
-                self.y = self.y.clamp(haut.min(bas), bas.max(haut));
                 if dehors && (self.x - l / 2.0) * sens > 0.0 {
                     self.attente = a.entre(6.0, 18.0);
                 }
@@ -799,7 +944,8 @@ impl Nageur {
                 }
                 let vy = -poussee + if self.elan > 0.0 { 5.0 } else { 2.5 };
                 self.vy += (vy - self.vy) * (dt * 3.0).min(1.0);
-                self.vx = (self.bob * 0.21 + self.phase).sin() * 3.5;
+                self.vx = (self.bob * 0.21 + self.phase).sin() * 3.5 + pousse.0 * 2.0;
+                self.vy += pousse.1 * 2.0 * dt;
                 self.x = (self.x + self.vx * dt).clamp(marge_x, l - marge_x);
                 self.y = (self.y + self.vy * dt).clamp(haut - 4.0, bas.max(haut) + 2.0);
                 if self.y >= bas.max(haut) {
@@ -812,9 +958,15 @@ impl Nageur {
         }
         if let Some((m, dx, dy)) = self.banc {
             if let Some(&(mx, my, mg)) = meneurs.get(&m) {
+                // Banc lâche : la place de chacun dérive lentement autour du meneur.
+                let dx = dx + (self.bob * 0.37 + self.phase).sin() * sl * 0.6;
+                let dy = dy + (self.bob * 0.29 + self.phase * 2.0).sin() * sh * 1.2;
                 let dx = if mg { -dx } else { dx };
-                self.cible = (mx + dx, my + dy);
-                vitesse *= 1.3;
+                self.cible = (
+                    (mx + dx).clamp(marge_x, l - marge_x),
+                    (my + dy).clamp(haut, bas.max(haut)),
+                );
+                vitesse *= 1.25;
                 self.pause = 0.0;
             }
         } else if self.pause > 0.0 {
@@ -826,18 +978,23 @@ impl Nageur {
             let pause = match mv {
                 Mouvement::Lent | Mouvement::Flotte | Mouvement::Ondule => 0.08,
                 Mouvement::Debout => 0.4,
-                _ => 0.22,
+                _ => 0.15,
             };
             if a.f() < pause {
                 self.pause = a.entre(1.5, 4.0);
             }
-            // Cible plutôt sur le côté (les poissons nagent en long).
-            let dx = a.entre(60.0, 260.0) * if a.f() < 0.5 { -1.0 } else { 1.0 };
-            let dy = if mv == Mouvement::Fond { 12.0 } else { 40.0 };
-            self.cible = (
-                (self.x + dx).clamp(marge_x, l - marge_x),
-                (self.y + a.entre(-dy, dy)).clamp(haut, bas.max(haut)),
-            );
+            // Cible dans l'eau libre, sur tous les écrans et toute la hauteur de sa zone ;
+            // plutôt sur le côté (les poissons nagent en long).
+            let mut best = (f32::MIN, self.cible);
+            for _ in 0..3 {
+                let c = place_libre(a, occupes, b, (sl, sh), mv == Mouvement::Fond);
+                let (ex, ey) = ((c.0 - self.x).abs(), (c.1 - self.y).abs());
+                let score = ex.min(200.0) - (ey - ex * 0.6).max(0.0) * 2.0;
+                if score > best.0 {
+                    best = (score, c);
+                }
+            }
+            self.cible = best.1;
             // Cible devant des yeux du fond : à côté d'eux (au hasard, pas tous au même endroit).
             for &(x0, y0, x1, y1) in evite {
                 let m = 14.0 + sh / 2.0;
@@ -860,20 +1017,77 @@ impl Nageur {
             }
             _ => {}
         }
+        // Nage par poussées et glissés : quelques coups de queue qui accélèrent, puis le
+        // poisson glisse sur son élan en ralentissant (anguilles : ondulation continue).
+        self.battue -= dt;
+        if self.battue <= 0.0 {
+            self.poussee = !self.poussee || mv == Mouvement::Ondule;
+            let (p, g) = match mv {
+                Mouvement::Lent => ((2.0, 4.5), (1.5, 3.5)),
+                Mouvement::Plane => ((1.2, 2.2), (1.8, 4.0)),
+                Mouvement::Fonce => ((0.6, 1.4), (0.8, 2.0)),
+                _ => ((0.5, 1.5), (0.4, 1.3)),
+            };
+            let (d0, d1) = if self.poussee { p } else { g };
+            self.battue = a.entre(d0, d1);
+        }
+        let (fort, doux) = match mv {
+            Mouvement::Lent => (1.12, 0.75),
+            Mouvement::Plane => (1.2, 0.7),
+            Mouvement::Ondule => (1.0, 1.0),
+            _ => (1.3, 0.5),
+        };
+        vitesse *= if self.poussee { fort } else { doux };
+        // Allure qui varie doucement (pas de vitesse constante).
+        vitesse *= 1.0 + 0.15 * (self.bob * 0.23 + self.phase * 3.0).sin();
         vitesse *= match mv {
             Mouvement::Fonce => 1.0 + 2.6 * self.elan,
             Mouvement::Jet => 0.35 + 3.6 * self.elan,
             Mouvement::Fond => 0.3 + 2.4 * self.elan,
             _ => 1.0,
         };
+        if self.tourne > 0.0 {
+            // Ralentit pendant le demi-tour.
+            vitesse *= 0.55;
+        }
         let (dx, dy) = (self.cible.0 - self.x, (self.cible.1 - self.y) * 0.6);
         let d = dx.hypot(dy).max(0.001);
         let freine = (d / 12.0).min(1.0);
-        let (vx, vy) = (dx / d * vitesse * freine, dy / d * vitesse * freine);
-        let k = (dt * if self.elan > 0.0 { 4.0 } else { 1.6 }).min(1.0);
+        // Trajectoire courbe : la direction voulue oscille lentement autour de la cible.
+        let ang = 0.45 * (self.bob * 0.41 + self.phase).sin()
+            + 0.2 * (self.bob * 0.93 + self.phase * 1.7).sin();
+        let (ca, sa) = (ang.cos(), ang.sin());
+        let (ux, uy) = (dx / d, dy / d);
+        let (ux, uy) = (ux * ca - uy * sa, ux * sa + uy * ca);
+        let (vx, vy) = (ux * vitesse * freine, uy * vitesse * freine * 0.8);
+        // Poussée : rattrape vite la vitesse voulue ; glissé : ralentit lentement (élan).
+        let k = if self.elan > 0.0 {
+            4.0
+        } else if self.poussee {
+            2.2
+        } else {
+            0.7
+        };
+        let k = (dt * k).min(1.0);
         self.vx += (vx - self.vx) * k;
         self.vy += (vy - self.vy) * k;
-        self.x = (self.x + self.vx * dt).clamp(marge_x - 2.0, l - marge_x + 2.0);
+        // Séparation : s'écarte des voisins qui le chevauchent ; trop serré, il change de cible.
+        self.vx += pousse.0 * 3.0 * dt;
+        self.vy += pousse.1 * 3.0 * dt;
+        if pousse.0.hypot(pousse.1) > 3.0 && self.banc.is_none() {
+            self.minuteur = self.minuteur.min(0.4);
+        }
+        // Passage d'un écran à l'autre : seulement s'il y a de l'eau à cette hauteur.
+        let nx = (self.x + self.vx * dt).clamp(marge_x - 2.0, l - marge_x + 2.0);
+        match b.eau(nx - sl / 2.0, nx + sl / 2.0) {
+            Some((t, f)) if self.y - sh / 2.0 >= t - 2.0 && self.y + sh / 2.0 <= f + 8.0 => {
+                self.x = nx
+            }
+            _ => {
+                self.vx *= -0.3;
+                self.minuteur = self.minuteur.min(0.2);
+            }
+        }
         self.y = (self.y + self.vy * dt).clamp(haut - 4.0, bas.max(haut) + 2.0);
         // Retournement avec hystérésis et image écrasée pendant le demi-tour.
         if (self.vx < -1.5 && !self.gauche) || (self.vx > 1.5 && self.gauche) {
@@ -881,7 +1095,20 @@ impl Nageur {
             self.tourne = self.duree_tour();
         }
         self.tourne = (self.tourne - dt).max(0.0);
+        // Corps incliné dans le sens de la montée ou de la descente (vue de côté seulement).
+        self.pente_visee = match mv {
+            Mouvement::Fond | Mouvement::Debout | Mouvement::Flotte => 0.0,
+            _ => (self.vy / self.vx.abs().max(5.0)).clamp(-0.4, 0.4) * 0.8,
+        };
+        self.pente += (self.pente_visee - self.pente) * (dt * 2.5).min(1.0);
         let v = self.vx.hypot(self.vy);
+        // Battement de queue : fort pendant la poussée, presque arrêté pendant le glissé.
+        let vigueur = if self.poussee || mv == Mouvement::Ondule {
+            1.0
+        } else {
+            0.25
+        };
+        self.vigueur += (vigueur - self.vigueur) * (dt * 3.0).min(1.0);
         self.anim = (self.anim + dt * self.cadence(v) * nb) % nb;
         if self.rarete == Rarete::Mythique {
             let p = self.monde(self.sprite.queue);
@@ -1055,6 +1282,8 @@ impl Nageur {
             })
             .collect();
         let tx = |x: i32| -> i32 { colonnes[x as usize] };
+        let decal = self.decalages();
+        let ty = |x: i32, y: i32| -> i32 { y0 + y + decal[x as usize] };
         let r = self.rarete;
         let pouls = 0.75 + 0.25 * (t * 2.4 + self.phase).sin();
         // Immobile (éclosion, planches) : couleurs vraies, sans l'eau du lointain. Sinon l'eau
@@ -1137,12 +1366,12 @@ impl Nageur {
                 } else {
                     c1
                 };
-                toile.eclairer_fin(tx(x), y0 + y, c, (a1 * pouls) as u8);
+                toile.eclairer_fin(tx(x), ty(x, y), c, (a1 * pouls) as u8);
             }
             for &(x, y) in &im.halo2 {
                 // Second anneau tramé une case sur deux : lueur « pixel » sans flou.
                 if (x + y).rem_euclid(2) == 0 {
-                    toile.eclairer_fin(tx(x), y0 + y, c2, (a2 * pouls) as u8);
+                    toile.eclairer_fin(tx(x), ty(x, y), c2, (a2 * pouls) as u8);
                 }
             }
         }
@@ -1184,7 +1413,7 @@ impl Nageur {
                 for y in 0..s.h {
                     for x in 0..s.l {
                         if im.classe[(y * s.l + x) as usize] != VIDE {
-                            toile.eclairer_fin(tx(x) + dx, y0 + y, c, 90);
+                            toile.eclairer_fin(tx(x) + dx, ty(x, y), c, 90);
                         }
                     }
                 }
@@ -1289,7 +1518,7 @@ impl Nageur {
                 if prof > 0.0 && cl != OEIL && cl != LUMIERE && cl != CONTOUR {
                     c = melange(c, EAU_LOIN, prof);
                 }
-                toile.poser_fin(tx(x) + decal_ligne, y0 + y, c, p[3]);
+                toile.poser_fin(tx(x) + decal_ligne, ty(x, y), c, p[3]);
             }
         }
         // Leurre lumineux (baudroie…) : point vif et lueur tramée qui pulse (pixels monde).
@@ -1312,7 +1541,7 @@ impl Nageur {
             for &(x, y, ph) in &s.etoiles {
                 let v = (t * 2.6 + ph * TAU).sin();
                 if v > 0.1 {
-                    let (xx, yy) = (tx(x), y0 + y);
+                    let (xx, yy) = (tx(x), ty(x, y));
                     toile.poser_fin(xx, yy, [255, 255, 255], if v > 0.6 { 255 } else { 150 });
                     if v > 0.8 {
                         for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
@@ -1325,6 +1554,23 @@ impl Nageur {
         }
     }
 
+    /// Décalage vertical de chaque colonne du dessin (pixels fins, image tournée à droite) :
+    /// corps incliné en montée / descente, et queue en retard sur la tête quand la pente change
+    /// (le corps se plie). Les grandes créatures s'inclinent moins.
+    fn decalages(&self) -> Vec<i32> {
+        let s = &self.sprite;
+        let k = (60.0 / s.lw()).min(1.0);
+        let (p, pv) = (self.pente * k, self.pente_visee * k);
+        let flex = ((pv - p) * 0.8).clamp(-0.25, 0.25);
+        let (cx, l) = (s.l as f32 / 2.0, s.l as f32);
+        (0..s.l)
+            .map(|x| {
+                let u = x as f32 + 0.5 - cx;
+                (p * u + flex * u * u / l).round() as i32
+            })
+            .collect()
+    }
+
     /// Repose les yeux et lumières par-dessus les plantes du fond (créatures du lointain).
     pub fn dessiner_yeux(&self, toile: &mut Toile) {
         let s = &self.sprite;
@@ -1333,13 +1579,15 @@ impl Nageur {
         }
         let im = &s.images[(self.anim as usize) % s.images.len()];
         let (x0, y0) = self.origine_fine();
+        let decal = self.decalages();
         for y in 0..s.h {
             for x in 0..s.l {
                 let i = (y * s.l + x) as usize;
                 if im.classe[i] == OEIL || im.classe[i] == LUMIERE {
                     let xx = if self.gauche { s.l - 1 - x } else { x };
                     let p = im.px(i);
-                    toile.poser_fin(x0 + xx, y0 + y, [p[0], p[1], p[2]], 255);
+                    let yy = y0 + y + decal[x as usize];
+                    toile.poser_fin(x0 + xx, yy, [p[0], p[1], p[2]], 255);
                 }
             }
         }
@@ -1363,6 +1611,83 @@ impl Nageur {
         let (p, q) = (self.monde((a, b)), self.monde((c, d)));
         Some((p.0.min(q.0), p.1.min(q.1), p.0.max(q.0), p.1.max(q.1)))
     }
+}
+
+/// Place dans l'eau (sur un écran, corps `sl`x`sh` entier, près du sable si `fond`) la plus
+/// loin possible des points `occupes` : meilleur de 10 tirages, distance verticale comptée
+/// 1,6 fois (les poissons s'étalent sur tous les écrans).
+fn place_libre(
+    a: &mut Alea,
+    occupes: &[(f32, f32)],
+    b: &Bassin,
+    (sl, sh): (f32, f32),
+    fond: bool,
+) -> (f32, f32) {
+    let l = b.bas.len() as f32;
+    let p = b.principal;
+    let (t0, t1) = b.eau_totale();
+    let mut best = (f32::MIN, ((p.0 + p.2) as f32 / 2.0, (t0 + t1) / 2.0));
+    for _ in 0..10 {
+        let x = a.entre(sl / 2.0 + 4.0, (l - sl / 2.0 - 4.0).max(sl / 2.0 + 4.0));
+        let Some((t, f)) = b.eau(x - sl / 2.0, x + sl / 2.0) else {
+            continue;
+        };
+        let (y0, y1) = (t + sh / 2.0 + 10.0, f - sh / 2.0);
+        let y0 = if fond { y0.max(y1 - 24.0) } else { y0 };
+        let p = (x, a.entre(y0.min(y1), y1.max(y0)));
+        let libre = occupes
+            .iter()
+            .map(|&(ox, oy)| (p.0 - ox).hypot((p.1 - oy) * 1.6))
+            .fold(f32::MAX, f32::min);
+        if libre > best.0 {
+            best = (libre, p);
+        }
+    }
+    best.1
+}
+
+/// Poussée de séparation de chaque nageur (pixels monde de chevauchement à rattraper) :
+/// deux créatures du même plan (devant / lointain) ne se superposent pas ; la plus petite
+/// s'écarte le plus ; un banc reste groupé mais sans se chevaucher.
+fn separation(nageurs: &[Nageur]) -> Vec<(f32, f32)> {
+    let mut p = vec![(0.0f32, 0.0f32); nageurs.len()];
+    for (i, a) in nageurs.iter().enumerate() {
+        if a.fixe || a.attente > 0.0 {
+            continue;
+        }
+        let groupe_a = a.banc.map_or(a.id, |b| b.0);
+        for (j, b) in nageurs.iter().enumerate().skip(i + 1) {
+            if b.fixe
+                || b.attente > 0.0
+                || (a.sprite.taille.profondeur() > 0.0) != (b.sprite.taille.profondeur() > 0.0)
+            {
+                continue;
+            }
+            let meme_banc = groupe_a == b.banc.map_or(b.id, |c| c.0);
+            let k = if meme_banc { 0.55 } else { 0.85 };
+            let rx = (a.sprite.lw() + b.sprite.lw()) * 0.5 * k + 3.0;
+            let ry = (a.sprite.hw() + b.sprite.hw()) * 0.5 * k + 2.0;
+            let (dx, dy) = (a.x - b.x, a.y - b.y);
+            let q = (dx / rx).hypot(dy / ry);
+            if q >= 1.0 {
+                continue;
+            }
+            // Directions : à l'écart l'un de l'autre (au même point : l'un à gauche, l'autre à droite).
+            let (ux, uy) = if q > 0.01 {
+                (dx / rx / q, dy / ry / q)
+            } else {
+                (1.0, 0.0)
+            };
+            let (ma, mb) = (a.sprite.lw() * a.sprite.hw(), b.sprite.lw() * b.sprite.hw());
+            let f = 1.0 - q;
+            let (fa, fb) = (f * mb / (ma + mb), f * ma / (ma + mb));
+            p[i].0 += ux * rx * fa;
+            p[i].1 += uy * ry * fa;
+            p[j].0 -= ux * rx * fb;
+            p[j].1 -= uy * ry * fb;
+        }
+    }
+    p
 }
 
 fn dessiner_particules(toile: &mut Toile, parts: &[Particule]) {
@@ -1444,19 +1769,26 @@ fn bulle(t: &mut Toile, x: i32, y: i32, r: u8) {
 }
 
 /// Rayons de lumière obliques, tramés, très légers.
-fn rayons(t: &mut Toile, temps: f32, plancher: f32) {
+fn rayons(t: &mut Toile, temps: f32, b: &Bassin) {
     let (l, h) = (t.l as i32, t.h as i32);
-    let fin = plancher * 0.85;
-    for i in 0..5 {
+    let n = (l / 96).max(5);
+    for i in 0..n {
         let fi = i as f32;
-        let base = (fi + 0.5) / 5.0 * l as f32 + (temps * 0.07 + fi * 1.9).sin() * 18.0;
+        let base = (fi + 0.5) / n as f32 * l as f32 + (temps * 0.07 + fi * 1.9).sin() * 18.0;
         let larg = 9.0 + (fi * 2.3).sin().abs() * 14.0;
         let force = 0.6 + 0.4 * (temps * 0.5 + fi * 2.1).sin();
-        for y in 0..fin as i32 {
-            let fy = 1.0 - y as f32 / fin;
-            let x0 = base - y as f32 * 0.38;
+        // Chaque rayon descend depuis le haut de l'eau de sa colonne (écrans décalés).
+        let c = b.col(base);
+        if b.bas[c] == 0 {
+            continue;
+        }
+        let (y0, fin) = (b.ciel[c], (b.sable[c] - 8 - b.ciel[c]) as f32 * 0.85);
+        for dy in 0..fin as i32 {
+            let y = y0 + dy;
+            let fy = 1.0 - dy as f32 / fin;
+            let x0 = base - dy as f32 * 0.38;
             for x in (x0 - larg) as i32..(x0 + larg) as i32 {
-                if x < 0 || x >= l || y >= h {
+                if x < 0 || x >= l || y >= h || y < b.ciel[x as usize] || y >= b.bas[x as usize] {
                     continue;
                 }
                 let bord = 1.0 - ((x as f32 - x0).abs() / larg).powi(2);
@@ -1583,7 +1915,7 @@ mod tests {
         }
         let mut aq = Aquarium::new(480, 270, 1);
         aq.synchroniser(&p);
-        // Limite des places : 40, une grande en prend 2, une énorme 3, une colossale 5 (2 colossales au plus).
+        // Limite des places : 40, une énorme en prend 2, une colossale 4 (2 colossales au plus).
         let places: usize = aq.nageurs.iter().map(|n| n.sprite.taille.places()).sum();
         let colossales = aq
             .nageurs
@@ -1610,5 +1942,83 @@ mod tests {
         aq.synchroniser(&p);
         let places: usize = aq.nageurs.iter().map(|n| n.sprite.taille.places()).sum();
         assert!(!aq.nageurs.is_empty() && places <= 5);
+    }
+
+    #[test]
+    fn poissons_etales_sans_entassement() {
+        // Aquarium de démo : après une minute, personne n'est entassé (au plus 2 voisins du
+        // même plan dont le centre est dans sa moitié de corps) et les poissons bougent tous.
+        let p = crate::capture::partie_demo();
+        let mut aq = Aquarium::new(480, 270, 1);
+        aq.synchroniser(&p);
+        let mut parcours = vec![0.0f32; aq.nageurs.len()];
+        let mut pire = 0;
+        for k in 0..1800 {
+            let avant: Vec<(f32, f32)> = aq.nageurs.iter().map(|n| (n.x, n.y)).collect();
+            aq.avancer(1.0 / 30.0);
+            for (i, n) in aq.nageurs.iter().enumerate() {
+                parcours[i] += (n.x - avant[i].0).hypot(n.y - avant[i].1);
+            }
+            if k < 300 {
+                continue;
+            }
+            for a in &aq.nageurs {
+                let plan = a.sprite.taille.profondeur() > 0.0;
+                let voisins = aq
+                    .nageurs
+                    .iter()
+                    .filter(|b| b.id != a.id && (b.sprite.taille.profondeur() > 0.0) == plan)
+                    .filter(|b| {
+                        (a.x - b.x).abs() < a.sprite.lw() * 0.25 + 1.0
+                            && (a.y - b.y).abs() < a.sprite.hw() * 0.25 + 1.0
+                    })
+                    .count();
+                pire = pire.max(voisins);
+            }
+        }
+        assert!(pire <= 2, "{pire} voisins entassés");
+        for (i, n) in aq.nageurs.iter().enumerate() {
+            if matches!(
+                n.sprite.mouvement,
+                Mouvement::Nage | Mouvement::Banc | Mouvement::Lent
+            ) {
+                assert!(
+                    parcours[i] > 60.0,
+                    "{} : {} px en 60 s",
+                    n.espece,
+                    parcours[i]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn personne_dans_les_trous_entre_ecrans() {
+        // Principal 1920x1080 à droite d'un 2560x1440 plus haut : les trous au-dessus et
+        // au-dessous du principal ne sont pas de l'eau.
+        let d =
+            crate::ecrans::Disposition::depuis_texte("1920x1080+0+0,2560x1440+-2560+-200").unwrap();
+        let p = crate::capture::partie_demo();
+        let mut aq = Aquarium::avec_zones(1120, 360, 1, &d.zones(4));
+        aq.synchroniser(&p);
+        for k in 0..1800 {
+            aq.avancer(1.0 / 30.0);
+            if k % 10 != 0 {
+                continue;
+            }
+            for n in aq
+                .nageurs
+                .iter()
+                .filter(|n| !matches!(n.sprite.mouvement, Mouvement::Traverse | Mouvement::Abysse))
+            {
+                // Le dessin (sans ses marges d'animation) reste sur un écran.
+                let (dl, dh) = (n.sprite.lw() * 0.3, n.sprite.hw() * 0.3);
+                let ok = aq
+                    .bassin
+                    .eau(n.x - dl, n.x + dl)
+                    .is_some_and(|(t, _)| n.y - dh >= t - 3.0);
+                assert!(ok, "{} dans un trou : {} {}", n.espece, n.x, n.y);
+            }
+        }
     }
 }

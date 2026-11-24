@@ -4,9 +4,11 @@
 mod appli;
 mod capture;
 mod ecloserie;
+mod ecrans;
 mod especes;
 mod fond;
 mod jeu;
+mod journal;
 mod poisson;
 mod sauve;
 mod scene;
@@ -27,9 +29,11 @@ Options (tests) :
   --video X.mp4 --secondes N      vidéo 30 i/s (ffmpeg, AQUARIUM_FFMPEG)
   --planche X.png                 toutes les espèces, une ligne par rareté, x4
   --planche-geantes X.png         créatures énormes et colossales à taille réelle, x2
+  --alignement X.png              toutes les espèces à leur taille en 1920x1080 (tailles relatives)
   --planche-images X.png cle,cle  images d'animation des espèces données, x4
   --demo                          aquarium pré-rempli (raretés et espèces variées)
   --taille 1920x1080              taille de la capture / vidéo
+  --ecrans 1920x1080+0+0,...      écrans simulés (capture / vidéo), le premier est le principal
   --fond image.png                fond d'écran sous l'aquarium (sinon fond factice)
   --captures-ecloserie DOSSIER    (avec --fenetre) captures de chaque onglet puis quitte
   --simulation                    jalons de l'équilibrage (docs/equilibrage.md)";
@@ -83,6 +87,7 @@ fn lancer() -> Result<(), String> {
             .unwrap_or(5.0),
         demo: a("--demo"),
         fond: valeur("--fond"),
+        ecrans: valeur("--ecrans"),
     };
     if let Some(f) = valeur("--capture") {
         return capture::capture(&o, &PathBuf::from(f));
@@ -95,6 +100,9 @@ fn lancer() -> Result<(), String> {
     }
     if let Some(f) = valeur("--planche-geantes") {
         return capture::planche_geantes(&PathBuf::from(f), o.secondes.min(3.0));
+    }
+    if let Some(f) = valeur("--alignement") {
+        return capture::alignement(&PathBuf::from(f), o.secondes.min(3.0));
     }
     if let Some(f) = valeur("--planche-images") {
         let cles = valeur(&f).unwrap_or_default();

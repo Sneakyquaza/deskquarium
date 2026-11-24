@@ -892,6 +892,14 @@ impl Ecloserie {
                     ui.checkbox(&mut r.pause_plein_ecran, "Pause en plein écran");
                 },
             );
+            ligne(
+                ui,
+                "Affichage",
+                "Si l'aquarium n'apparaît pas derrière les icônes : fenêtre sans bord au fond.",
+                &mut |ui| {
+                    ui.checkbox(&mut r.mode_fenetre, "Mode fenêtre");
+                },
+            );
             ui.label(
                 RichText::new(format!("Sauvegarde : {}", self.dossier))
                     .color(BRUME)

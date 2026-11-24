@@ -214,6 +214,11 @@ pub struct Reglages {
     pub ips: u32,
     pub demarrage_windows: bool,
     pub pause_plein_ecran: bool,
+    /// Windows : aquarium dans une fenêtre sans bord au fond de la pile (au lieu de derrière
+    /// les icônes), si l'incrustation sur le bureau ne marche pas.
+    pub mode_fenetre: bool,
+    /// Windows : méthode d'incrustation (0 auto, 1 Progman + calque, 2 Progman, 3 WorkerW).
+    pub incrustation: u8,
 }
 
 impl Default for Reglages {
@@ -224,6 +229,8 @@ impl Default for Reglages {
             ips: 30,
             demarrage_windows: false,
             pause_plein_ecran: true,
+            mode_fenetre: false,
+            incrustation: 0,
         }
     }
 }
