@@ -110,3 +110,19 @@ Simulation (600 h = 25 jours de fond d'écran, mêmes règles que le lot 3) :
 | Index Normal | 35/61 | 51/61 | 36/61 |
 
 Lecture : les premières heures bougent peu (l'espérance ne vaut que +17 %, et un modifié est rare au début) ; un shiny ou un Diamant tôt dans la partie se sent (×2,5 à ×5 sur un poisson). Aucun index n'est complet en 25 jours : l'index Normal (dernières espèces Préhistoriques et Irréelles) est l'objectif du mois, les index de modificateurs et Shiny sont des chasses de très long terme (environ 700 œufs ouverts en 25 jours → ~7 shiny et ~35 Dorés pour 61 espèces). Leviers si c'est trop lent : `CHANCE_SHINY`, chances des modificateurs, ou un index Normal par rareté.
+
+## Œufs exceptionnels (v0.10)
+
+Disponibles par moments (heure UTC, jamais deux à la fois ; test `oeufs_exceptionnels`). Le joueur glouton de `--simulation` les ignore (il n'attend pas) : la progression de base ne dépend pas d'eux.
+
+| Œuf | Quand (UTC) | Prix de base | Commun | Peu c. | Rare | Épique | Légend. | Mythique | Céleste | Irréel | Préhist. | Shiny | Modif. |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Doré | 0-2 h, 8-10 h, 16-18 h | 250 000 | 10 | 30 | 32 | 18 | 8 | 2 | | | | ×5 (5 %) | ×4 (≈ 36 %) |
+| Arc-en-ciel | 4-6 h, 12-14 h, 20-22 h | 50 000 000 | | 10 | 30 | 32 | 18 | 8 | 2 | | | ×2 | ×8 (≈ 71 %) |
+| Éclipse | 22-23 h | 5 000 000 000 | | | | 10 | 30 | 30 | 20 | 8 | 2 | ×10 (10 %) | ×3 |
+
+Prix : même règle `base × (1 + n/10)²`. Placés entre les œufs ordinaires (Doré entre Lagon et Abysses, Arc-en-ciel entre Abysses et Cosmique, Éclipse entre Cosmique et Ambre) : une bonne affaire quand on tombe dessus, jamais obligatoire.
+
+## Œuf doré par hasard (v0.10)
+
+Chaque œuf ordinaire acheté a 3 % de chances (`CHANCE_OEUF_DORE`) de devenir doré : rareté = la meilleure de deux tirages, shiny ×3, modificateurs ×2, éclosion dorée. Effet mesuré (test `oeuf_dore_par_hasard`, 40 000 œufs de rivière) : Rare ou mieux ≈ ×1,9. Espérance de revenu d'un œuf : +≈ 4 % (sans effet visible sur les jalons de la simulation).

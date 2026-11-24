@@ -88,15 +88,47 @@ pub struct Oeuf {
     pub chances: [f64; 9],
     /// Couleurs de la coquille (base, taches).
     pub coquille: [[u8; 3]; 2],
+    /// v0.10 : chances de shiny et de modificateur multipliées (œufs exceptionnels).
+    pub bonus_shiny: f64,
+    pub bonus_modif: f64,
+    /// v0.10 : œuf exceptionnel disponible par moments (heure UTC) : période, début dans la
+    /// période, durée (secondes). None = toujours là.
+    pub dispo: Option<(u64, u64, u64)>,
 }
 
-pub const OEUFS: [Oeuf; 5] = [
+impl Oeuf {
+    /// Disponible à l'instant `maintenant` (secondes Unix) ?
+    pub fn disponible(&self, maintenant: u64) -> bool {
+        self.dispo
+            .is_none_or(|(periode, debut, duree)| (maintenant + periode - debut) % periode < duree)
+    }
+
+    /// Œuf exceptionnel : secondes avant la fin (disponible) ou avant le retour (absent).
+    pub fn attente(&self, maintenant: u64) -> Option<u64> {
+        let (periode, debut, duree) = self.dispo?;
+        let dans = (maintenant + periode - debut) % periode;
+        Some(if dans < duree {
+            duree - dans
+        } else {
+            periode - dans
+        })
+    }
+}
+
+const H: u64 = 3600;
+/// Chance qu'un œuf ordinaire acheté devienne un œuf doré (meilleures chances, v0.10).
+pub const CHANCE_OEUF_DORE: f64 = 0.03;
+
+pub const OEUFS: [Oeuf; 8] = [
     Oeuf {
         nom: "Œuf de rivière",
         description: "Pondu entre deux galets. Souvent des poissons communs.",
         prix: 80.0,
         chances: [70.0, 25.0, 4.5, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0],
         coquille: [[0xd9, 0xe8, 0xc8], [0x7f, 0xa8, 0x6a]],
+        bonus_shiny: 1.0,
+        bonus_modif: 1.0,
+        dispo: None,
     },
     Oeuf {
         nom: "Œuf de lagon",
@@ -104,6 +136,9 @@ pub const OEUFS: [Oeuf; 5] = [
         prix: 5_000.0,
         chances: [30.0, 42.0, 20.0, 6.5, 1.5, 0.0, 0.0, 0.0, 0.0],
         coquille: [[0xa8, 0xee, 0xf0], [0xff, 0xb0, 0xc8]],
+        bonus_shiny: 1.0,
+        bonus_modif: 1.0,
+        dispo: None,
     },
     Oeuf {
         nom: "Œuf des abysses",
@@ -111,6 +146,9 @@ pub const OEUFS: [Oeuf; 5] = [
         prix: 1_000_000.0,
         chances: [0.0, 20.0, 42.0, 26.0, 9.5, 2.5, 0.0, 0.0, 0.0],
         coquille: [[0x2c, 0x3c, 0x6e], [0x5c, 0xf0, 0xd8]],
+        bonus_shiny: 1.0,
+        bonus_modif: 1.0,
+        dispo: None,
     },
     Oeuf {
         nom: "Œuf cosmique",
@@ -118,6 +156,9 @@ pub const OEUFS: [Oeuf; 5] = [
         prix: 500_000_000.0,
         chances: [0.0, 0.0, 22.0, 36.0, 26.0, 11.0, 4.5, 0.5, 0.0],
         coquille: [[0x30, 0x1c, 0x58], [0xff, 0xe8, 0x9c]],
+        bonus_shiny: 1.0,
+        bonus_modif: 1.0,
+        dispo: None,
     },
     Oeuf {
         nom: "Œuf d'ambre",
@@ -125,6 +166,40 @@ pub const OEUFS: [Oeuf; 5] = [
         prix: 30_000_000_000.0,
         chances: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 12.0, 8.0, 80.0],
         coquille: [[0xe8, 0x9a, 0x3a], [0x7a, 0x46, 0x1c]],
+        bonus_shiny: 1.0,
+        bonus_modif: 1.0,
+        dispo: None,
+    },
+    // v0.10 : œufs exceptionnels, par moments (heure UTC).
+    Oeuf {
+        nom: "Œuf doré",
+        description: "Deux heures toutes les huit heures. Shiny ×5, modificateurs ×4.",
+        prix: 250_000.0,
+        chances: [10.0, 30.0, 32.0, 18.0, 8.0, 2.0, 0.0, 0.0, 0.0],
+        coquille: [[0xff, 0xcc, 0x40], [0xb0, 0x60, 0x10]],
+        bonus_shiny: 5.0,
+        bonus_modif: 4.0,
+        dispo: Some((8 * H, 0, 2 * H)),
+    },
+    Oeuf {
+        nom: "Œuf arc-en-ciel",
+        description: "Deux heures toutes les huit heures. Modificateurs ×8, shiny ×2.",
+        prix: 50_000_000.0,
+        chances: [0.0, 10.0, 30.0, 32.0, 18.0, 8.0, 2.0, 0.0, 0.0],
+        coquille: [[0xff, 0x9c, 0xd8], [0x7c, 0xe0, 0xff]],
+        bonus_shiny: 2.0,
+        bonus_modif: 8.0,
+        dispo: Some((8 * H, 4 * H, 2 * H)),
+    },
+    Oeuf {
+        nom: "Œuf de l'Éclipse",
+        description: "Une heure par jour, à la nuit tombée. Créatures mythiques, shiny ×10.",
+        prix: 5_000_000_000.0,
+        chances: [0.0, 0.0, 0.0, 10.0, 30.0, 30.0, 20.0, 8.0, 2.0],
+        coquille: [[0x20, 0x18, 0x28], [0xff, 0xc0, 0x40]],
+        bonus_shiny: 10.0,
+        bonus_modif: 3.0,
+        dispo: Some((24 * H, 22 * H, H)),
     },
 ];
 
@@ -208,13 +283,21 @@ pub struct Forme {
 impl Forme {
     /// Tirage à l'éclosion, à partir de la graine du poisson (flux à part : le tirage des
     /// raretés et des espèces ne change pas). Shiny et modificateur sont indépendants.
+    #[cfg(test)]
     pub fn tirer(graine: u64) -> Forme {
+        Forme::tirer_bonus(graine, 1.0, 1.0)
+    }
+
+    /// Tirage avec chances multipliées (œufs exceptionnels, œuf doré ; v0.10). Bonus 1 = même
+    /// résultat que `tirer` pour la même graine.
+    pub fn tirer_bonus(graine: u64, shiny: f64, modif: f64) -> Forme {
         let mut a = Alea(graine ^ 0x5f1e_77a3_c0de_0008);
-        let shiny = a.f64() < CHANCE_SHINY;
+        let shiny = a.f64() < CHANCE_SHINY * shiny;
+        let bonus = modif;
         let mut x = a.f64();
         let mut modif = None;
         for m in Modif::TOUS {
-            x -= m.chance();
+            x -= m.chance() * bonus;
             if x < 0.0 {
                 modif = Some(m);
                 break;
@@ -430,6 +513,9 @@ pub struct Partie {
     /// v0.9 : objets posés dans l'aquarium.
     #[serde(default)]
     pub decor_pose: Vec<Pose>,
+    /// v0.10 : le dernier œuf acheté est devenu un œuf doré (éclosion spéciale).
+    #[serde(skip)]
+    pub dernier_dore: bool,
 }
 
 /// Objet de décor posé (v0.9) : sur l'écran `ecran` (0 = principal, ordre de
@@ -457,6 +543,8 @@ pub enum Refus {
     Introuvable,
     NiveauMax,
     AquariumPlein,
+    /// Œuf exceptionnel hors de son moment.
+    Indisponible,
 }
 
 impl Partie {
@@ -478,6 +566,7 @@ impl Partie {
             reglages: Reglages::default(),
             decor_achete: BTreeMap::new(),
             decor_pose: Vec::new(),
+            dernier_dore: false,
         };
         let id = p.ajouter(Rarete::Commun, 1.0, 0);
         // Le poisson offert est toujours normal (départ identique pour tout le monde).
@@ -489,13 +578,17 @@ impl Partie {
     }
 
     fn ajouter(&mut self, rarete: Rarete, taille: f32, oeuf: u8) -> u64 {
+        self.ajouter_bonus(rarete, taille, oeuf, (1.0, 1.0))
+    }
+
+    fn ajouter_bonus(&mut self, rarete: Rarete, taille: f32, oeuf: u8, bonus: (f64, f64)) -> u64 {
         let id = self.prochain_id;
         self.prochain_id += 1;
         let graine = self.alea.suivant();
         let actif = self.nb_actifs() < CAPACITE;
         // L'espèce vient de la graine : le tirage des raretés (et l'équilibrage) ne change pas.
         let (e, variante) = crate::especes::choisir(rarete, graine);
-        let forme = Forme::tirer(graine);
+        let forme = Forme::tirer_bonus(graine, bonus.0, bonus.1);
         self.poissons.push(Poisson {
             id,
             graine,
@@ -726,16 +819,32 @@ impl Partie {
     /// Achète et fait éclore un œuf ; renvoie l'id du poisson (aquarium s'il reste de la place,
     /// sinon réserve).
     pub fn acheter_oeuf(&mut self, i: usize) -> Result<u64, Refus> {
+        self.acheter_oeuf_a(i, crate::sauve::maintenant())
+    }
+
+    /// Achat à l'instant `maintenant` (œufs exceptionnels : seulement pendant leur moment).
+    /// Un œuf ordinaire devient parfois un œuf doré (`CHANCE_OEUF_DORE`) : la meilleure de
+    /// deux raretés, shiny ×3, modificateurs ×2 (`dernier_dore`).
+    pub fn acheter_oeuf_a(&mut self, i: usize, maintenant: u64) -> Result<u64, Refus> {
         let oeuf = OEUFS.get(i).ok_or(Refus::Introuvable)?;
+        if !oeuf.disponible(maintenant) {
+            return Err(Refus::Indisponible);
+        }
         let prix = self.prix_oeuf(i);
         if self.argent < prix {
             return Err(Refus::PasAssez);
         }
         self.argent -= prix;
         self.oeufs_ouverts[i] += 1;
-        let rarete = Self::tirer_rarete(&mut self.alea, oeuf);
+        let mut rarete = Self::tirer_rarete(&mut self.alea, oeuf);
+        let mut bonus = (oeuf.bonus_shiny, oeuf.bonus_modif);
+        self.dernier_dore = oeuf.dispo.is_none() && self.alea.f64() < CHANCE_OEUF_DORE;
+        if self.dernier_dore {
+            rarete = rarete.max(Self::tirer_rarete(&mut self.alea, oeuf));
+            bonus = (3.0, 2.0);
+        }
         let taille = Self::tirer_taille(&mut self.alea);
-        Ok(self.ajouter(rarete, taille, i as u8))
+        Ok(self.ajouter_bonus(rarete, taille, i as u8, bonus))
     }
 
     fn poisson_mut(&mut self, id: u64) -> Result<&mut Poisson, Refus> {
@@ -918,7 +1027,8 @@ pub fn simuler(heures: f64, graine: u64) -> Vec<Jalon> {
             .fold(f64::MAX, f64::min);
         let plein = p.nb_actifs() >= CAPACITE;
         let mut meilleur: Option<(f64, bool, u64)> = None;
-        for (i, o) in OEUFS.iter().enumerate() {
+        // Les œufs exceptionnels (par moments) ne comptent pas : le joueur glouton n'attend pas.
+        for (i, o) in OEUFS.iter().enumerate().filter(|(_, o)| o.dispo.is_none()) {
             let gain: f64 = Rarete::TOUTES
                 .iter()
                 .map(|r| {
@@ -1019,6 +1129,82 @@ mod tests {
     use super::*;
 
     #[test]
+    fn oeufs_exceptionnels() {
+        let doré = &OEUFS[5];
+        // Doré : 0 h-2 h toutes les 8 h (UTC) ; Éclipse : 22 h-23 h.
+        assert!(doré.disponible(0) && doré.disponible(2 * H - 1) && !doré.disponible(2 * H));
+        assert!(doré.disponible(8 * H + 60));
+        assert_eq!(doré.attente(2 * H), Some(6 * H));
+        assert_eq!(doré.attente(H), Some(H));
+        let eclipse = &OEUFS[7];
+        assert!(eclipse.disponible(22 * H) && !eclipse.disponible(23 * H));
+        assert!(OEUFS[0].disponible(12345) && OEUFS[0].attente(0).is_none());
+        // Chaque heure du jour : au plus un œuf exceptionnel à la fois, jamais aucun moment.
+        for h in 0..24 {
+            let n = OEUFS
+                .iter()
+                .filter(|o| o.dispo.is_some() && o.disponible(h * H))
+                .count();
+            assert!(n <= 1, "{h} h : {n}");
+        }
+        let mut p = Partie::nouvelle(0, 1);
+        p.argent = 1e12;
+        assert_eq!(p.acheter_oeuf_a(5, 3 * H), Err(Refus::Indisponible));
+        let id = p.acheter_oeuf_a(5, 30).unwrap();
+        assert_eq!(p.poissons.last().unwrap().id, id);
+        assert_eq!(p.oeufs_ouverts[5], 1);
+        // Bonus 1 : même forme que le tirage normal (sauvegardes, équilibrage inchangés).
+        for g in 0..2000u64 {
+            assert_eq!(Forme::tirer_bonus(g, 1.0, 1.0), Forme::tirer(g));
+        }
+        // Bonus : bien plus de shiny et de modificateurs.
+        let n = 100_000u64;
+        let (mut s1, mut m1, mut s5, mut m4) = (0, 0, 0, 0);
+        for g in 0..n {
+            let g = g.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            let (a, b) = (Forme::tirer(g), Forme::tirer_bonus(g, 5.0, 4.0));
+            s1 += a.shiny as u32;
+            m1 += a.modif.is_some() as u32;
+            s5 += b.shiny as u32;
+            m4 += b.modif.is_some() as u32;
+        }
+        let (s1, s5) = (s1 as f64 / n as f64, s5 as f64 / n as f64);
+        assert!((s5 / s1 - 5.0).abs() < 0.6, "shiny {s1} → {s5}");
+        assert!(
+            (m4 as f64 / m1 as f64 - 4.0).abs() < 0.3,
+            "modif {m1} → {m4}"
+        );
+    }
+
+    #[test]
+    fn oeuf_dore_par_hasard() {
+        // ~3 % des œufs ordinaires deviennent dorés, avec de meilleures raretés.
+        let mut p = Partie::nouvelle(0, 7);
+        p.argent = 1e300;
+        let (mut dores, mut rare_d, mut rare_n, mut n_n) = (0u32, 0u32, 0u32, 0u32);
+        let n = 40_000;
+        for _ in 0..n {
+            let id = p.acheter_oeuf_a(0, 0).unwrap();
+            p.oeufs_ouverts[0] = 0;
+            let f = p.poissons.pop().unwrap();
+            assert_eq!(f.id, id);
+            if p.dernier_dore {
+                dores += 1;
+                rare_d += (f.rarete >= Rarete::Rare) as u32;
+            } else {
+                n_n += 1;
+                rare_n += (f.rarete >= Rarete::Rare) as u32;
+            }
+        }
+        let taux = dores as f64 / n as f64;
+        assert!((taux - CHANCE_OEUF_DORE).abs() < 0.006, "{taux}");
+        assert!(rare_d as f64 / dores as f64 > 1.6 * rare_n as f64 / n_n as f64);
+        // Un œuf exceptionnel n'est jamais « doré par hasard ».
+        p.acheter_oeuf_a(5, 0).unwrap();
+        assert!(!p.dernier_dore);
+    }
+
+    #[test]
     fn decor_prix_et_achats() {
         use crate::decor::OBJETS;
         // Du moins cher (premières minutes) au plus cher (fin de partie, après l'œuf d'ambre).
@@ -1071,8 +1257,9 @@ mod tests {
             let s: f64 = o.chances.iter().sum();
             assert!((s - 100.0).abs() < 1e-9, "{} : {s}", o.nom);
         }
-        // Prix croissants.
-        assert!(OEUFS.windows(2).all(|w| w[0].prix < w[1].prix));
+        // Prix croissants (œufs ordinaires).
+        let ordinaires: Vec<&Oeuf> = OEUFS.iter().filter(|o| o.dispo.is_none()).collect();
+        assert!(ordinaires.windows(2).all(|w| w[0].prix < w[1].prix));
     }
 
     #[test]

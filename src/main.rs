@@ -9,6 +9,7 @@ mod capture;
 mod crochet;
 mod decor;
 mod ecloserie;
+mod eclosion;
 mod ecrans;
 mod especes;
 mod fond;
@@ -46,6 +47,9 @@ Options (tests) :
   --abysses                       mode Abysses (capture / vidéo)
   --theme N                      décor à thème 0-5 (capture / vidéo)
   --planche-souris X.png         curiosité, fuite, poisson attrapé, fiche (avec --demo)
+  --eclosion X.mp4 --oeuf N --espece cle [--forme shiny,galaxie] [--dore]
+                                 éclosion en vidéo (60 i/s) + planche X.png
+  --planche-oeufs X.png          les œufs et leur animation au repos (x3)
   --objets cle,cle               objets de décor posés (capture / vidéo)
   --fond image.png                fond d'écran sous l'aquarium (sinon fond factice)
   --captures-ecloserie DOSSIER    (avec --fenetre) captures de chaque onglet puis quitte
@@ -116,6 +120,22 @@ fn lancer() -> Result<(), String> {
     };
     if let Some(f) = valeur("--capture") {
         return capture::capture(&o, &PathBuf::from(f));
+    }
+    if let Some(f) = valeur("--planche-oeufs") {
+        return capture::planche_oeufs(&PathBuf::from(f));
+    }
+    if let Some(f) = valeur("--eclosion") {
+        // --eclosion X.mp4 --oeuf N --espece cle [--forme shiny,galaxie] [--dore]
+        let oeuf = valeur("--oeuf").and_then(|v| v.parse().ok()).unwrap_or(0);
+        let cle = valeur("--espece").unwrap_or_else(|| "clown".into());
+        let fo = valeur("--forme").unwrap_or_default();
+        let forme = jeu::Forme {
+            shiny: fo.contains("shiny"),
+            modif: jeu::Modif::TOUS
+                .into_iter()
+                .find(|m| fo.contains(&m.nom().to_lowercase())),
+        };
+        return capture::eclosion(&PathBuf::from(f), oeuf, &cle, forme, a("--dore"));
     }
     if let Some(f) = valeur("--planche-souris") {
         return capture::planche_souris(&o, &PathBuf::from(f));

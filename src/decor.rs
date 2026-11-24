@@ -13,7 +13,7 @@ pub struct Img {
 }
 
 impl Img {
-    fn charger(b: &[u8]) -> Img {
+    pub fn charger(b: &[u8]) -> Img {
         let i = image::load_from_memory(b)
             .expect("décor embarqué lisible")
             .to_rgba8();

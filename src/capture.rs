@@ -868,3 +868,130 @@ pub fn planche_souris(o: &Options, sortie: &Path) -> Result<(), String> {
     creer_dossier(sortie)?;
     out.save(sortie).map_err(|e| e.to_string())
 }
+
+/// Éclosion (v0.10) sans écran : vidéo mp4 (60 i/s, ×3) et planche d'images (toutes les
+/// 0,1 s) d'un œuf `oeuf` qui donne l'espèce `cle` (forme imposée, œuf doré si `dore`).
+pub fn eclosion(
+    sortie: &Path,
+    oeuf: usize,
+    cle: &str,
+    forme: crate::jeu::Forme,
+    dore: bool,
+) -> Result<(), String> {
+    let e = crate::especes::par_cle(cle).ok_or(format!("espèce inconnue : {cle}"))?;
+    let f = crate::jeu::Poisson {
+        id: 77,
+        graine: 77,
+        rarete: e.rarete,
+        taille: 1.0,
+        niveau: 1,
+        actif: true,
+        oeuf: oeuf as u8,
+        espece: cle.to_string(),
+        variante: 0,
+        shiny: forme.shiny,
+        modif: forme.modif,
+    };
+    let mut ecl =
+        crate::eclosion::Eclosion::nouvelle(&f, oeuf.min(crate::jeu::OEUFS.len() - 1), 0.0, dore);
+    let duree = ecl.suspense() + 2.6;
+    let k = 3usize;
+    let (l, h) = (ecl.toile.lf() * k, ecl.toile.hf() * k);
+    creer_dossier(sortie)?;
+    let ffmpeg = std::env::var("AQUARIUM_FFMPEG").unwrap_or_else(|_| "ffmpeg".into());
+    let mut enfant = std::process::Command::new(&ffmpeg)
+        .args([
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "-s",
+        ])
+        .arg(format!("{l}x{h}"))
+        .args([
+            "-r", "60", "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18",
+        ])
+        .arg(sortie.with_extension("mp4"))
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("{ffmpeg} : {e} (AQUARIUM_FFMPEG pour donner le chemin)"))?;
+    let mut entree = enfant.stdin.take().ok_or("ffmpeg sans entrée")?;
+    let mut cases = Vec::new();
+    let n = (duree * 60.0) as usize;
+    for i in 0..n {
+        let t = i as f64 / 60.0;
+        ecl.dessiner(t);
+        let img = ecl.toile.agrandie_rgba(k * crate::toile::FIN);
+        entree.write_all(&img).map_err(|e| e.to_string())?;
+        if i % 6 == 0 {
+            cases.push((t, ecl.toile.clone()));
+        }
+    }
+    drop(entree);
+    let s = enfant.wait().map_err(|e| e.to_string())?;
+    if !s.success() {
+        return Err(format!("ffmpeg : {s}"));
+    }
+    // Planche : 8 colonnes, temps au-dessus de chaque image.
+    let (cl, ch) = (128i32, 96i32);
+    let n_col = 8;
+    let lignes = cases.len().div_ceil(n_col) as i32;
+    let mut p = Toile::new(
+        ((cl + 2) * n_col as i32) as usize,
+        ((ch + 9) * lignes) as usize,
+    );
+    p.rect(0, 0, p.l as i32, p.h as i32, [0x06, 0x0c, 0x14], 255);
+    for (i, (t, c)) in cases.iter().enumerate() {
+        let (x, y) = ((i % n_col) as i32 * (cl + 2), (i / n_col) as i32 * (ch + 9));
+        p.texte(
+            x + 1,
+            y + 1,
+            &format!("{t:.1}"),
+            [0xff, 0xea, 0xa8],
+            255,
+            None,
+        );
+        for yy in 0..c.hf() as i32 {
+            for xx in 0..c.lf() as i32 {
+                let d = crate::toile::demultiplier(c.px[(yy * c.lf() as i32 + xx) as usize]);
+                p.poser_fin(x * 2 + xx, (y + 8) * 2 + yy, [d[0], d[1], d[2]], 255);
+            }
+        }
+    }
+    enregistrer(&p, 2, &sortie.with_extension("png"))
+}
+
+/// Planche des œufs (v0.10) : chaque œuf (une ligne) à 6 instants de son animation au repos.
+pub fn planche_oeufs(sortie: &Path) -> Result<(), String> {
+    let n = crate::jeu::OEUFS.len();
+    let (cl, ch) = (48i32, 52i32);
+    let mut p = Toile::new((cl * 6 + 70) as usize, ((ch + 2) * n as i32) as usize);
+    p.rect(0, 0, p.l as i32, p.h as i32, [0x10, 0x32, 0x4a], 255);
+    for i in 0..n {
+        let y = i as i32 * (ch + 2);
+        p.texte(
+            2,
+            y + ch / 2,
+            crate::jeu::OEUFS[i].nom,
+            [0xe8, 0xf0, 0xf4],
+            255,
+            None,
+        );
+        for k in 0..6 {
+            let v = crate::eclosion::vignette(i, k as f32 * 0.45);
+            let x = 70 + k * cl;
+            for yy in 0..v.hf() as i32 {
+                for xx in 0..v.lf() as i32 {
+                    let d = crate::toile::demultiplier(v.px[(yy * v.lf() as i32 + xx) as usize]);
+                    if d[3] > 0 {
+                        p.poser_fin(x * 2 + xx, y * 2 + yy, [d[0], d[1], d[2]], d[3]);
+                    }
+                }
+            }
+        }
+    }
+    enregistrer(&p, 6, sortie)
+}

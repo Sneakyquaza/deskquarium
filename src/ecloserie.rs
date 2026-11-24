@@ -7,8 +7,8 @@ use crate::jeu::{
     court, duree, nom_index, Forme, Modif, Partie, Poisson, Rarete, Refus, BONUS_INDEX, CAPACITE,
     MULT_SHINY, NB_INDEX, OEUFS,
 };
-use crate::scene::{nom_de, sprite_ajuste, Aquarium, Nageur};
-use crate::toile::{bayer, melange, Rgb, Toile};
+use crate::scene::{nom_de, sprite_ajuste, Aquarium};
+use crate::toile::{melange, Rgb, Toile};
 use eframe::egui::{
     self, Color32, CornerRadius, FontFamily, FontId, Margin, RichText, Stroke, TextureHandle,
     TextureOptions, Ui, Vec2,
@@ -125,23 +125,7 @@ pub enum Onglet {
     Reglages,
 }
 
-struct Eclosion {
-    oeuf: usize,
-    rarete: Rarete,
-    id: u64,
-    debut: f64,
-    toile: Toile,
-    poisson: Aquarium,
-    texture: Option<TextureHandle>,
-    eclats: Vec<(f32, f32, f32, f32, Rgb)>,
-    /// Agrandissement du poisson révélé (x2 s'il est petit, x1 sinon).
-    zoom: i32,
-    /// Shiny : révélation fêtée (pluie d'étoiles, rayons arc-en-ciel, second éclair).
-    shiny: bool,
-}
-
-/// Durée du suspense avant la révélation.
-const SUSPENSE: f64 = 2.6;
+use crate::eclosion::Eclosion;
 
 pub struct Ecloserie {
     pub onglet: Onglet,
@@ -201,53 +185,18 @@ impl Ecloserie {
                     .find(|f| f.id == id)
                     .cloned()
                     .expect("poisson éclos");
-                // Petit poisson : x2 dans une toile 64x48 ; gros : x1, réduit pour tenir.
-                let e = crate::scene::espece_de(&f);
-                let k = crate::poisson::echelle_individu(f.taille);
-                let m = 2.0 * crate::poisson::MARGE as f32;
-                // Tailles en pixels fins (FIN par pixel monde).
-                let fin = crate::toile::FIN as f32;
-                let petit =
-                    e.dims.0 as f32 * k + m <= 62.0 * fin && e.dims.1 as f32 * k + m <= 46.0 * fin;
-                // Très petit : x3 (la révélation remplit sa case).
-                let tres_petit =
-                    e.dims.0 as f32 * k + m <= 41.0 * fin && e.dims.1 as f32 * k + m <= 30.0 * fin;
-                let (s, zoom) = if tres_petit {
-                    (crate::scene::sprite_de(&f), 3)
-                } else if petit {
-                    (crate::scene::sprite_de(&f), 2)
-                } else {
-                    (sprite_ajuste(&f, 126 * 2, 90 * 2), 1)
-                };
-                let (al, ah) = (128 / zoom as usize, 96 / zoom as usize);
-                let mut aq = Aquarium::new(al, ah, 9);
-                aq.decor = false;
-                aq.avec_compteur = false;
-                let mut a = crate::jeu::Alea(id);
-                let mut n = Nageur::new(
-                    id,
-                    f.rarete,
-                    Arc::new(s),
-                    al as f32 / 2.0,
-                    ah as f32 / 2.0,
-                    &mut a,
-                );
-                n.fixe = true;
-                n.gauche = false;
-                n.forme = f.forme();
-                aq.nageurs.push(n);
-                self.eclosion = Some(Eclosion {
+                self.eclosion = Some(Eclosion::nouvelle(
+                    &f,
                     oeuf,
-                    rarete: f.rarete,
-                    id,
-                    debut: ui.input(|i| i.time),
-                    toile: Toile::new(128, 96),
-                    poisson: aq,
-                    texture: None,
-                    eclats: Vec::new(),
-                    zoom,
-                    shiny: f.shiny,
-                });
+                    ui.input(|i| i.time),
+                    p.dernier_dore,
+                ));
+            }
+            Err(Refus::Indisponible) => {
+                self.info = Some((
+                    "Cet œuf exceptionnel n'est pas là en ce moment.".into(),
+                    ui.input(|i| i.time),
+                ))
             }
             Err(Refus::PasAssez) => {
                 self.info = Some((
@@ -266,28 +215,30 @@ impl Ecloserie {
         };
         if let Some(f) = p.poissons.iter_mut().find(|f| f.id == e.id) {
             (f.shiny, f.modif) = (forme.shiny, forme.modif);
-            let s = crate::scene::sprite_de(f);
-            if let Some(n) = e.poisson.nageurs.first_mut() {
-                n.forme = forme;
-                if e.zoom > 1 {
-                    n.sprite = Arc::new(s);
-                } else {
-                    n.sprite = Arc::new(sprite_ajuste(f, 126 * 2, 90 * 2));
-                }
-            }
+            e.changer_poisson(f);
         }
-        e.shiny = forme.shiny;
     }
 
     pub fn ui(&mut self, ui: &mut Ui, p: &mut Partie) {
-        if self.oeufs.is_empty() {
+        let maintenant = ui.input(|i| i.time);
+        // Œufs animés au repos (onglet Œufs) : vignettes redessinées à chaque image.
+        if self.onglet == Onglet::Oeufs && self.eclosion.is_none() || self.oeufs.is_empty() {
             for i in 0..OEUFS.len() {
-                let mut t = Toile::new(32, 36);
-                dessiner_oeuf(&mut t, 16, 33, i, 0, 0.0, None);
-                self.oeufs.push(texture(ui.ctx(), &format!("oeuf{i}"), &t));
+                let img = image_couleur(&crate::eclosion::vignette(i, maintenant as f32));
+                match self.oeufs.get_mut(i) {
+                    Some(t) => t.set(img, TextureOptions::NEAREST),
+                    None => self.oeufs.push(ui.ctx().load_texture(
+                        format!("oeuf{i}"),
+                        img,
+                        TextureOptions::NEAREST,
+                    )),
+                }
+            }
+            if self.onglet == Onglet::Oeufs {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(33));
             }
         }
-        let maintenant = ui.input(|i| i.time);
         egui::Panel::top("entete")
             .frame(
                 egui::Frame::new()
@@ -399,18 +350,37 @@ impl Ecloserie {
         };
         let mut achat = None;
         egui::ScrollArea::vertical().show(ui, |ui| {
+            // Ordre : œufs exceptionnels présents d'abord, puis les ordinaires, puis les absents.
+            let horloge0 = crate::sauve::maintenant();
+            let mut ordre: Vec<usize> = (0..OEUFS.len()).collect();
+            ordre.sort_by_key(|&i| {
+                let o = &OEUFS[i];
+                match (o.dispo.is_some(), o.disponible(horloge0)) {
+                    (true, true) => 0,
+                    (false, _) => 1,
+                    _ => 2,
+                }
+            });
             for debut in (0..OEUFS.len()).step_by(colonnes) {
                 ui.columns(colonnes, |cols| {
                     for (k, ui) in cols.iter_mut().enumerate() {
-                        let i = debut + k;
-                        let Some(o) = OEUFS.get(i) else { continue };
+                        let Some(&i) = ordre.get(debut + k) else { continue };
+                        let o = &OEUFS[i];
                         biseau(o.coquille[1]).show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.set_min_height(420.0);
                             // Colonnes justifiées : on revient à un texte aligné à gauche.
                             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                             ui.vertical_centered(|ui| {
-                                ui.add(egui::Image::from_texture((self.oeufs[i].id(), Vec2::new(96.0, 108.0))));
+                                if o.dispo.is_some() {
+                                    let (c, t) = if o.disponible(crate::sauve::maintenant()) {
+                                        (OR, "LIMITÉ · EN CE MOMENT")
+                                    } else {
+                                        (BRUME, "LIMITÉ")
+                                    };
+                                    ui.label(RichText::new(t).font(titre(13.0)).color(c));
+                                }
+                                ui.add(egui::Image::from_texture((self.oeufs[i].id(), Vec2::new(192.0, 208.0))));
                                 ui.label(RichText::new(o.nom).font(titre(15.0)));
                             });
                             ui.label(RichText::new(o.description).color(BRUME).size(14.0));
@@ -428,7 +398,18 @@ impl Ecloserie {
                             }
                             ui.add_space(6.0);
                             let prix = p.prix_oeuf(i);
-                            let assez = p.argent >= prix;
+                            // Œuf exceptionnel : là encore… / revient dans…
+                            let horloge = crate::sauve::maintenant();
+                            let dispo = o.disponible(horloge);
+                            if let Some(s) = o.attente(horloge) {
+                                let (texte, c) = if dispo {
+                                    (format!("Encore là {}", duree(s as f64)), OR)
+                                } else {
+                                    (format!("Revient dans {}", duree(s as f64)), BRUME)
+                                };
+                                ui.vertical_centered(|ui| ui.label(RichText::new(texte).font(titre(13.0)).color(c)));
+                            }
+                            let assez = p.argent >= prix && dispo;
                             let texte = RichText::new(format!("Ouvrir · {}", court(prix)))
                                 .font(titre(14.0))
                                 .color(if assez { ENCRE } else { BRUME });
@@ -439,7 +420,7 @@ impl Ecloserie {
                             if ui.add_enabled(assez, b).clicked() {
                                 achat = Some(i);
                             }
-                            if !assez {
+                            if !assez && dispo {
                                 let r = p.revenu_par_s();
                                 let t = if r > 0.0 { duree((prix - p.argent) / r) } else { "jamais".into() };
                                 ui.vertical_centered(|ui| ui.label(RichText::new(format!("Encore {t}")).color(BRUME).size(14.0)));
@@ -452,7 +433,7 @@ impl Ecloserie {
             }
             ui.add_space(8.0);
             ui.label(
-                RichText::new("Le prix d'un œuf monte un peu à chaque ouverture. Aquarium plein : le poisson part en réserve.")
+                RichText::new("Le prix d'un œuf monte un peu à chaque ouverture. Aquarium plein : le poisson part en réserve. Parfois, un œuf ordinaire devient un œuf doré (meilleures chances) !")
                     .color(BRUME)
                     .size(14.0),
             );
@@ -467,7 +448,7 @@ impl Ecloserie {
             return;
         };
         let t = maintenant - e.debut;
-        dessiner_eclosion(e, t);
+        e.dessiner(t);
         let img = image_couleur(&e.toile);
         match &mut e.texture {
             Some(tex) => tex.set(img, TextureOptions::NEAREST),
@@ -491,14 +472,21 @@ impl Ecloserie {
                 egui::Image::from_texture((tex.id(), Vec2::new(128.0, 96.0) * echelle))
                     .sense(egui::Sense::click()),
             );
-            if t < SUSPENSE {
+            if !e.revele(maintenant) {
                 if r.clicked() {
-                    e.debut = maintenant - SUSPENSE;
+                    e.passer(maintenant);
                 }
                 ui.label(
-                    RichText::new(format!("{} éclot…", OEUFS[e.oeuf].nom))
-                        .font(titre(18.0))
-                        .color(BRUME),
+                    RichText::new(format!(
+                        "{} éclot…",
+                        if e.dore {
+                            "Œuf doré"
+                        } else {
+                            OEUFS[e.oeuf].nom
+                        }
+                    ))
+                    .font(titre(18.0))
+                    .color(BRUME),
                 );
                 ui.label(RichText::new("Clique pour passer").color(BRUME).size(14.0));
                 return;
@@ -1379,262 +1367,4 @@ fn image_sprite(s: &crate::poisson::Sprite, ombre: Option<Rgb>) -> egui::ColorIm
 
 pub fn image_couleur(t: &Toile) -> egui::ColorImage {
     egui::ColorImage::from_rgba_premultiplied([t.lf(), t.hf()], t.px.as_flattened())
-}
-
-fn texture(ctx: &egui::Context, nom: &str, t: &Toile) -> TextureHandle {
-    ctx.load_texture(nom, image_couleur(t), TextureOptions::NEAREST)
-}
-
-/// Œuf pixel art posé sur `base` (bas), centré en `cx` ; `penche` incline (cisaillement),
-/// `fissures` 0..1 dessine les fêlures, `lumiere` les fait luire.
-fn dessiner_oeuf(
-    t: &mut Toile,
-    cx: i32,
-    base: i32,
-    oeuf: usize,
-    penche: i32,
-    fissures: f32,
-    lumiere: Option<(Rgb, u8)>,
-) {
-    let (w, h) = (22.0f32, 28.0f32);
-    let [coq, tache] = OEUFS[oeuf].coquille;
-    let sombre = melange(coq, [0x10, 0x14, 0x30], 0.45);
-    let clair = melange(coq, [255, 255, 255], 0.55);
-    let contour = melange(coq, [0x08, 0x0c, 0x20], 0.75);
-    let demi = |y: i32| -> f32 {
-        let tt = (y as f32 + 0.5) / h;
-        if !(0.0..1.0).contains(&tt) {
-            return -1.0;
-        }
-        w / 2.0 * (1.0 - (2.0 * tt - 1.0).powi(2)).sqrt() * (0.74 + 0.26 * tt)
-    };
-    let haut = base - h as i32;
-    let dec = |y: i32| ((penche as f32) * (1.0 - (y as f32 + 0.5) / h)).round() as i32;
-    let dedans = |x: i32, y: i32| {
-        let d = demi(y);
-        d > 0.0 && ((x - dec(y)) as f32 + 0.5).abs() <= d
-    };
-    // Taches propres à chaque œuf.
-    let taches: [(f32, f32, f32); 6] = [
-        (-0.4, 0.35, 1.6),
-        (0.3, 0.5, 2.2),
-        (-0.1, 0.72, 1.4),
-        (0.45, 0.25, 1.2),
-        (-0.5, 0.62, 1.2),
-        (0.15, 0.85, 1.6),
-    ];
-    for y in -1..=h as i32 {
-        for x in -(w as i32)..=w as i32 {
-            let (px, py) = (cx + x, haut + y);
-            if dedans(x, y) {
-                let d = demi(y);
-                let u = (x - dec(y)) as f32 / d.max(1.0);
-                let tt = y as f32 / h;
-                let lum = -u * 0.5 + (0.5 - tt) * 0.9 + (bayer(px, py) - 0.5) * 0.4;
-                let mut c = if lum > 0.55 {
-                    clair
-                } else if lum < -0.35 {
-                    sombre
-                } else {
-                    coq
-                };
-                for (k, &(tu, tv, r)) in taches.iter().enumerate() {
-                    if oeuf == 0 && k.is_multiple_of(3) {
-                        continue;
-                    }
-                    let dx = x as f32 - dec(y) as f32 - tu * w / 2.0;
-                    let dy = y as f32 - tv * h;
-                    if dx * dx + dy * dy <= r * r {
-                        c = melange(tache, c, if lum > 0.55 { 0.3 } else { 0.0 });
-                    }
-                }
-                // Œuf cosmique : petites étoiles.
-                if oeuf == 3 && (x * 7 + y * 13).rem_euclid(23) == 0 {
-                    c = [255, 250, 220];
-                }
-                t.poser(px, py, c, 255);
-            } else if dedans(x + 1, y) || dedans(x - 1, y) || dedans(x, y + 1) || dedans(x, y - 1) {
-                t.poser(px, py, contour, 255);
-            }
-        }
-    }
-    // Fêlures en zigzag autour du milieu, puis des branches.
-    if fissures > 0.0 {
-        let c = lumiere
-            .map(|(c, _)| melange(c, [255, 255, 255], 0.4))
-            .unwrap_or(contour);
-        let y0 = (h * 0.45) as i32;
-        let pts: Vec<(i32, i32)> = (-5..=5)
-            .map(|i| (i * 2, y0 + if i % 2 == 0 { -1 } else { 1 }))
-            .collect();
-        let n = ((pts.len() as f32) * (fissures * 1.6).min(1.0)) as usize;
-        let mut tracer = |x: i32, y: i32| {
-            if dedans(x, y) {
-                t.poser(cx + x + dec(y), haut + y, c, 255);
-                if let Some((lc, a)) = lumiere {
-                    t.eclairer(cx + x + dec(y), haut + y - 1, lc, a / 2);
-                }
-            }
-        };
-        for w2 in pts.windows(2).take(n) {
-            let ((x0, y0), (x1, y1)) = (w2[0], w2[1]);
-            for k in 0..=2 {
-                tracer(x0 + (x1 - x0) * k / 2, y0 + (y1 - y0) * k / 2);
-            }
-        }
-        if fissures > 0.6 {
-            for (bx, by, dy) in [(-6, y0, -1), (4, y0, -1), (0, y0, 1)] {
-                for k in 0..((fissures - 0.6) * 12.0) as i32 {
-                    tracer(bx + if k % 2 == 0 { 0 } else { 1 }, by + dy * k);
-                }
-            }
-        }
-    }
-}
-
-fn dessiner_eclosion(e: &mut Eclosion, t: f64) {
-    let toile = &mut e.toile;
-    let (l, h) = (toile.l as i32, toile.h as i32);
-    toile.rect(0, 0, l, h, [0x0c, 0x22, 0x35], 255);
-    let (cx, cy) = (l / 2, h / 2 + 2);
-    let r = e.rarete;
-    // Couleur « taquine » : passe par les raretés inférieures avant de s'arrêter sur la bonne.
-    let etapes = r.index() + 1;
-    let pas = (SUSPENSE - 0.7) / etapes as f64;
-    let k = (((t - 0.7) / pas).floor().max(0.0) as usize).min(r.index());
-    let couleur = Rarete::TOUTES[k].couleur();
-    let ft = t as f32;
-    // Lueur tramée derrière (anneaux).
-    let force = if t < SUSPENSE {
-        ((t - 0.4) / (SUSPENSE - 0.4)).clamp(0.0, 1.0) as f32
-    } else {
-        1.0
-    };
-    for y in 0..h {
-        for x in 0..l {
-            let d = (((x - cx) as f32).powi(2) + ((y - cy) as f32 * 1.2).powi(2)).sqrt();
-            // Lueur en anneaux tramés (pas de dégradé lisse).
-            let a = (1.0 - d / 46.0).max(0.0) * force;
-            if a > bayer(x, y) {
-                toile.eclairer(
-                    x,
-                    y,
-                    melange(couleur, [0x0c, 0x22, 0x35], 0.55),
-                    (40.0 + a * 90.0) as u8,
-                );
-            }
-        }
-    }
-    if t < SUSPENSE {
-        let amp = 0.5 + 2.5 * (t / SUSPENSE) as f32;
-        let freq = 6.0 + 14.0 * (t / SUSPENSE) as f32;
-        let penche = ((ft * freq).sin() * amp).round() as i32;
-        let fiss = ((t - 0.5) / (SUSPENSE - 0.6)).clamp(0.0, 1.0) as f32;
-        let lum = (t > 0.7).then_some((couleur, (120.0 + 135.0 * fiss) as u8));
-        dessiner_oeuf(toile, cx, cy + 16, e.oeuf, penche, fiss, lum);
-        return;
-    }
-    let apres = (t - SUSPENSE) as f32;
-    // Rayons tournants (shiny : arc-en-ciel, deux fois plus nombreux et plus vifs).
-    let nr = if e.shiny { 24 } else { 12 };
-    for i in 0..nr {
-        let ang = i as f32 / nr as f32 * std::f32::consts::TAU + apres * 0.4;
-        let long = (apres * 160.0).min(70.0);
-        let c = if e.shiny {
-            crate::toile::hsv(i as f32 / nr as f32 + apres * 0.3, 0.55, 1.0)
-        } else {
-            couleur
-        };
-        let fort = if e.shiny { 130.0 } else { 90.0 };
-        for s in 10..long as i32 {
-            if i % 2 == 0 || s % 2 == 0 {
-                let (x, y) = (
-                    cx as f32 + ang.cos() * s as f32,
-                    cy as f32 + ang.sin() * s as f32 * 0.8,
-                );
-                toile.eclairer(
-                    x.round() as i32,
-                    y.round() as i32,
-                    c,
-                    (fort * (1.0 - s as f32 / 75.0)) as u8,
-                );
-            }
-        }
-    }
-    // Shiny : pluie d'étoiles à quatre branches qui s'ouvrent tour à tour autour du poisson.
-    if e.shiny {
-        let mut a = crate::jeu::Alea(e.id ^ 0x5419);
-        for _ in 0..22 {
-            let (x, y) = (a.entre(6.0, l as f32 - 6.0), a.entre(6.0, h as f32 - 6.0));
-            let (debut, vie) = (a.entre(0.0, 2.5), a.entre(0.5, 0.9));
-            let u = (apres - debut).rem_euclid(2.6) / vie;
-            if u >= 1.0 {
-                continue;
-            }
-            let o = ((1.0 - (2.0 * u - 1.0).abs()) * 4.0).round() as i32;
-            let (x, y) = (x as i32, (y - u * 4.0) as i32);
-            let c = [[255, 246, 190], [255, 190, 236], [190, 240, 255]][a.n(3) as usize];
-            toile.eclairer(x, y, [255, 255, 255], 255);
-            for k in 1..=o {
-                let ak = (230 - k * 45).max(40) as u8;
-                for (dx, dy) in [(k, 0), (-k, 0), (0, k), (0, -k)] {
-                    toile.eclairer(x + dx, y + dy, c, ak);
-                }
-            }
-        }
-    }
-    // Éclats de coquille.
-    if e.eclats.is_empty() {
-        let [coq, tache] = OEUFS[e.oeuf].coquille;
-        let mut a = crate::jeu::Alea(e.id ^ 0xec1a);
-        for i in 0..26 {
-            let ang = a.f() * std::f32::consts::TAU;
-            let v = a.entre(30.0, 80.0);
-            e.eclats.push((
-                ang.cos() * v,
-                ang.sin() * v - 30.0,
-                a.entre(0.0, 1.0),
-                0.0,
-                if i % 3 == 0 { tache } else { coq },
-            ));
-        }
-    }
-    for &(vx, vy, _, _, c) in &e.eclats {
-        let x = cx as f32 + vx * apres;
-        let y = cy as f32 + vy * apres + 60.0 * apres * apres;
-        let (x, y) = (x.round() as i32, y.round() as i32);
-        toile.rect(x, y, 2, 2, c, 255);
-        toile.poser(x, y, [255, 255, 255], 120);
-    }
-    // Poisson révélé, agrandi en entier (x2 ou x1).
-    e.poisson.avancer(1.0 / 60.0);
-    e.poisson.dessiner(&Partie::nouvelle(0, 0));
-    let src = &e.poisson.toile;
-    let z = e.zoom;
-    let f = crate::toile::FIN as i32;
-    let (sl, sh) = (src.lf() as i32, src.hf() as i32);
-    let (ox, oy) = (cx * f - sl * z / 2, cy * f - sh * z / 2);
-    for y in 0..sh {
-        for x in 0..sl {
-            let p = src.px[(y * sl + x) as usize];
-            if p[3] == 0 {
-                continue;
-            }
-            let c = crate::toile::demultiplier(p);
-            for dy in 0..z {
-                for dx in 0..z {
-                    toile.poser_fin(ox + x * z + dx, oy + y * z + dy, [c[0], c[1], c[2]], c[3]);
-                }
-            }
-        }
-    }
-    // Flash blanc (shiny : un second éclair doré).
-    if apres < 0.25 {
-        let a = ((0.25 - apres) / 0.25 * 255.0) as u8;
-        toile.rect(0, 0, l, h, [255, 255, 255], a);
-    }
-    if e.shiny && (0.45..0.75).contains(&apres) {
-        let a = ((0.3 - (apres - 0.45)) / 0.3 * 150.0) as u8;
-        toile.rect(0, 0, l, h, [255, 226, 150], a);
-    }
 }

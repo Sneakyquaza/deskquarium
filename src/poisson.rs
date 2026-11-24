@@ -638,6 +638,109 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8], forme: Form
                 }
             }
         }
+        // v0.10 (« antennes de la crevette en pointillés ») : les traits fins restent
+        // continus. Chaque pixel du dessin a une place dans l'image (son déplacement) ; deux
+        // pixels voisins dans le dessin dont les places ne se touchent plus sont reliés par un
+        // petit trait de leur couleur (seulement sur du vide : le corps ne change pas).
+        if n > 1 {
+            // Places atteintes par un pixel du dessin (les îlots qui n'en ont aucune sont des
+            // doublons de la déformation, quand une aile se replie : retirés).
+            let mut atteint = vec![false; (l * ht) as usize];
+            let place = |sx: i32, sy: i32| {
+                let (dx, dy) = deplacement(anim, (w as f32, h as f32), sx as f32, sy as f32, ph);
+                (sx + bord + dx.round() as i32, sy + bord + dy.round() as i32)
+            };
+            let plein_src = |sx: i32, sy: i32| {
+                sx >= 0 && sy >= 0 && sx < w && sy < h && src[(sy * w + sx) as usize][3] >= 128
+            };
+            for sy in 0..h {
+                for sx in 0..w {
+                    if !plein_src(sx, sy) {
+                        continue;
+                    }
+                    let a = place(sx, sy);
+                    if a.0 >= 0 && a.1 >= 0 && a.0 < l && a.1 < ht {
+                        // Sa place est toujours dessinée (le trait existe dans chaque image).
+                        let i = (a.1 * l + a.0) as usize;
+                        atteint[i] = true;
+                        if cl[i] == VIDE {
+                            let j = (sy * w + sx) as usize;
+                            px[i] = src_idx[j];
+                            cl[i] = match src[j][3] {
+                                254 => OEIL,
+                                253 => LUMIERE,
+                                _ => CORPS,
+                            };
+                        }
+                    }
+                    for (vx, vy) in [(1, 0), (0, 1), (1, 1), (1, -1)] {
+                        if !plein_src(sx + vx, sy + vy) {
+                            continue;
+                        }
+                        let b = place(sx + vx, sy + vy);
+                        let (ex, ey) = (b.0 - a.0, b.1 - a.1);
+                        let pas = ex.abs().max(ey.abs());
+                        if pas <= 1 {
+                            continue;
+                        }
+                        for k in 0..=pas {
+                            let (x, y) = (a.0 + ex * k / pas, a.1 + ey * k / pas);
+                            if x < 0 || y < 0 || x >= l || y >= ht {
+                                continue;
+                            }
+                            let i = (y * l + x) as usize;
+                            atteint[i] = true;
+                            if cl[i] == VIDE {
+                                // Couleur du bout le plus proche.
+                                let (cx, cy) = if k * 2 <= pas {
+                                    (sx, sy)
+                                } else {
+                                    (sx + vx, sy + vy)
+                                };
+                                let j = (cy * w + cx) as usize;
+                                px[i] = src_idx[j];
+                                cl[i] = match src[j][3] {
+                                    254 => OEIL,
+                                    253 => LUMIERE,
+                                    _ => CORPS,
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+            let mut vu = vec![false; cl.len()];
+            for depart in 0..cl.len() {
+                if cl[depart] == VIDE || vu[depart] {
+                    continue;
+                }
+                let mut ilot = vec![depart];
+                vu[depart] = true;
+                let mut k = 0;
+                while k < ilot.len() {
+                    let j = ilot[k];
+                    k += 1;
+                    let (x, y) = (j as i32 % l, j as i32 / l);
+                    for dy in -1..=1 {
+                        for dx in -1..=1 {
+                            let (xx, yy) = (x + dx, y + dy);
+                            if xx >= 0 && yy >= 0 && xx < l && yy < ht {
+                                let q = (yy * l + xx) as usize;
+                                if cl[q] != VIDE && !vu[q] {
+                                    vu[q] = true;
+                                    ilot.push(q);
+                                }
+                            }
+                        }
+                    }
+                }
+                if !ilot.iter().any(|&j| atteint[j]) {
+                    for j in ilot {
+                        cl[j] = VIDE;
+                    }
+                }
+            }
+        }
         // Trou d'un pixel laissé par la déformation (deux pixels qui se rejoignent) : bouché
         // avec son voisin de gauche.
         for y in 1..ht - 1 {
@@ -838,6 +941,63 @@ mod tests {
         }
     }
 
+    /// Morceaux 8-connexes d'un masque (l x h).
+    fn morceaux(plein: &[bool], l: i32, h: i32) -> usize {
+        let mut vu = vec![false; plein.len()];
+        let mut n = 0;
+        for i in 0..plein.len() {
+            if !plein[i] || vu[i] {
+                continue;
+            }
+            n += 1;
+            let mut pile = vec![i];
+            vu[i] = true;
+            while let Some(j) = pile.pop() {
+                let (x, y) = (j as i32 % l, j as i32 / l);
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        let (xx, yy) = (x + dx, y + dy);
+                        if xx >= 0 && yy >= 0 && xx < l && yy < h {
+                            let k = (yy * l + xx) as usize;
+                            if plein[k] && !vu[k] {
+                                vu[k] = true;
+                                pile.push(k);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        n
+    }
+
+    #[test]
+    fn traits_fins_jamais_coupes() {
+        // v0.10 : antennes, moustaches, leurres, filaments… restent d'un seul tenant dans
+        // TOUTES les images de TOUTES les espèces : jamais plus de morceaux que le dessin.
+        let mut fautes = Vec::new();
+        for e in catalogue() {
+            let img = image::load_from_memory(png_espece(e.cle))
+                .unwrap()
+                .to_rgba8();
+            let (w, h) = (img.width() as i32, img.height() as i32);
+            let plein: Vec<bool> = img.pixels().map(|p| p.0[3] >= 128).collect();
+            let n0 = morceaux(&plein, w, h);
+            let s = sprite(e, 0, 1.0);
+            for (k, im) in s.images.iter().enumerate() {
+                let p: Vec<bool> = im.classe.iter().map(|&c| c != VIDE).collect();
+                let n = morceaux(&p, s.l, s.h);
+                if n > n0 {
+                    fautes.push(format!(
+                        "{} image {k} : {n} morceaux (dessin : {n0})",
+                        e.cle
+                    ));
+                }
+            }
+        }
+        assert!(fautes.is_empty(), "{fautes:#?}");
+    }
+
     #[test]
     fn sprites_png_sans_trou_ni_dechirure() {
         // Les images déformées gardent la silhouette : ni trou d'un pixel au milieu du corps,
@@ -866,9 +1026,10 @@ mod tests {
             };
             for (k, im) in s.images.iter().enumerate() {
                 let aire = im.classe.iter().filter(|&&c| c != VIDE).count() as f32;
-                // Les ailes s'étirent et se replient (±15 %) ; une déchirure perdrait bien plus.
+                // Les ailes s'étirent et se replient (±15 %, +20 % avec les traits fins
+                // reliés, v0.10) ; une déchirure perdrait bien plus.
                 let r = aire / aire0;
-                assert!((0.85..1.15).contains(&r), "{} image {k} : aire {r}", e.cle);
+                assert!((0.85..1.2).contains(&r), "{} image {k} : aire {r}", e.cle);
                 assert_eq!(trous(&im.classe), 0, "{} image {k} : trous", e.cle);
             }
         }

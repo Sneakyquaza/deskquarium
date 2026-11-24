@@ -557,14 +557,14 @@ impl Appli {
         let dossier = c.dossier.clone();
         match nom {
             "achat" => {
-                // Œuf d'ambre (le dernier) : montre une éclosion Préhistorique (le plus souvent).
+                // Œuf d'ambre (toujours disponible) : montre une éclosion Préhistorique (le plus souvent).
                 self.partie.argent = self.partie.argent.max(1e12);
                 // AQUARIUM_OEUF=0 : œuf commun (petites espèces à l'éclosion).
                 let oeuf = std::env::var("AQUARIUM_OEUF")
                     .ok()
                     .and_then(|v| v.parse::<usize>().ok())
                     .filter(|&i| i < crate::jeu::OEUFS.len())
-                    .unwrap_or(crate::jeu::OEUFS.len() - 1);
+                    .unwrap_or(4);
                 self.ecloserie.acheter(ui, &mut self.partie, oeuf);
                 // AQUARIUM_FORME=shiny / galaxie… : force la forme du poisson éclos (captures).
                 if let Ok(v) = std::env::var("AQUARIUM_FORME") {

@@ -1,4 +1,4 @@
-AQUARIUM v0.9 - fond d'écran aquarium pixel art + petit jeu idle (Windows 10/11, 64 bits)
+AQUARIUM v0.10 - fond d'écran aquarium pixel art + petit jeu idle (Windows 10/11, 64 bits)
 
 MISES À JOUR (depuis la v0.8)
 - Plus besoin de dézipper : l'appli se met à jour elle-même depuis
@@ -12,6 +12,21 @@ MISES À JOUR (depuis la v0.8)
   n'est changé : l'ancienne version reste en place. Le dossier de l'exe doit être
   modifiable (pas dans C:\Program Files) ; sinon, télécharge le zip sur la page ci-dessus.
 - Seule la demande envoyée à GitHub (« aquarium-maj », sans donnée personnelle) sort de ton PC.
+
+NOUVEAU (v0.10) : LES ŒUFS
+- Chaque œuf a son propre dessin et sa petite animation (galet moucheté, nacre du lagon,
+  taches lumineuses des abysses qui pulsent, ciel étoilé dans le cristal cosmique, fossile pris
+  dans l'ambre).
+- Œufs exceptionnels, par moments (heure de Paris en hiver) : l'Œuf doré (1 h-3 h, 9 h-11 h,
+  17 h-19 h ; shiny ×5, modificateurs ×4), l'Œuf arc-en-ciel (5 h-7 h, 13 h-15 h, 21 h-23 h ;
+  modificateurs ×8) et l'Œuf de l'Éclipse (23 h-minuit ; créatures mythiques, shiny ×10).
+  Leur carte dit « Encore là … » ou « Revient dans … ».
+- Parfois (3 %), un œuf ordinaire devient un ŒUF DORÉ : meilleures chances, éclosion dorée.
+- Éclosion refaite : l'œuf tombe, oscille, se fêle peu à peu (la lumière passe par les
+  fêlures), tremble, éclate en morceaux ; le poisson rebondit et sa rareté s'affiche en grand.
+  Plus long et plus fort pour les raretés hautes, les shiny et les modificateurs. Un clic
+  passe l'attente.
+- Les antennes, moustaches et filaments restent d'un seul trait dans l'animation (crevette).
 
 NOUVEAU (v0.9) : LES POISSONS ET LA SOURIS
 - Laisse le curseur immobile sur le bureau près des poissons : les curieux viennent voir
