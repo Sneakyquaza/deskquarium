@@ -125,7 +125,10 @@ pub enum Onglet {
     Reglages,
 }
 
+use crate::eclosion::multi::Multi;
 use crate::eclosion::Eclosion;
+use crate::scene::Annonce;
+use crate::son::{self, Son};
 
 pub struct Ecloserie {
     pub onglet: Onglet,
@@ -151,6 +154,18 @@ pub struct Ecloserie {
     pub disposition: Option<(crate::ecrans::Disposition, u32)>,
     /// Onglet Décor (boutique, éditeur).
     pub decor: decor_ui::EtatDecor,
+    /// v0.11 : ouverture ×3/×10 en cours.
+    multi: Option<Multi>,
+    /// v0.11 : grandes éclosions à annoncer sur le fond d'écran (l'appli les vide), et
+    /// celles qui attendent la fin de l'animation (pas de surprise gâchée).
+    pub annonces: Vec<Annonce>,
+    a_annoncer: Vec<Annonce>,
+    /// v0.11 : ouverture auto (même œuf, même lot) : lot en cours, arrêt (message), instant
+    /// de la dernière révélation.
+    auto: bool,
+    lot: u32,
+    auto_arret: Option<String>,
+    revele_le: Option<f64>,
 }
 
 impl Ecloserie {
@@ -172,40 +187,82 @@ impl Ecloserie {
             relancer: None,
             disposition: None,
             decor: Default::default(),
+            multi: None,
+            annonces: Vec::new(),
+            a_annoncer: Vec::new(),
+            auto: false,
+            lot: 1,
+            auto_arret: None,
+            revele_le: None,
         }
     }
 
     /// Lance une éclosion (pour les captures automatiques).
     pub fn acheter(&mut self, ui: &Ui, p: &mut Partie, oeuf: usize) {
-        match p.acheter_oeuf(oeuf) {
-            Ok(id) => {
-                let f = p
-                    .poissons
+        self.acheter_lot(ui, p, oeuf, 1);
+    }
+
+    /// Ouvre `n` œufs (×1 : éclosion seule, ×3/×10 : grille de cartes).
+    pub fn acheter_lot(&mut self, ui: &Ui, p: &mut Partie, oeuf: usize, n: u32) {
+        let maintenant = ui.input(|i| i.time);
+        let res = if n <= 1 {
+            p.acheter_oeuf(oeuf).map(|id| {
+                vec![crate::jeu::Ouverture {
+                    id,
+                    dore: p.dernier_dore,
+                    pitie: p.derniere_pitie,
+                }]
+            })
+        } else {
+            p.acheter_lot(oeuf, n, crate::sauve::maintenant())
+        };
+        match res {
+            Ok(v) => {
+                son::jouer(Son::Piece, 1.0);
+                self.lot = n.max(1);
+                self.revele_le = None;
+                let poissons: Vec<(Poisson, bool, bool)> = v
                     .iter()
-                    .find(|f| f.id == id)
-                    .cloned()
-                    .expect("poisson éclos");
-                self.eclosion = Some(Eclosion::nouvelle(
-                    &f,
-                    oeuf,
-                    ui.input(|i| i.time),
-                    p.dernier_dore,
-                ));
+                    .filter_map(|o| {
+                        let f = p.poissons.iter().find(|f| f.id == o.id)?.clone();
+                        Some((f, o.dore, o.pitie))
+                    })
+                    .collect();
+                for (f, _, _) in &poissons {
+                    if let Some(a) = annonce(f) {
+                        self.a_annoncer.push(a);
+                    }
+                }
+                if n <= 1 {
+                    if let Some((f, dore, pitie)) = poissons.first() {
+                        self.eclosion =
+                            Some(Eclosion::nouvelle(f, oeuf, maintenant, *dore, *pitie));
+                    }
+                } else {
+                    self.multi = Some(Multi::nouvelle(&poissons, oeuf, maintenant));
+                }
             }
             Err(Refus::Indisponible) => {
+                self.auto = false;
                 self.info = Some((
                     "Cet œuf exceptionnel n'est pas là en ce moment.".into(),
-                    ui.input(|i| i.time),
+                    maintenant,
                 ))
             }
             Err(Refus::PasAssez) => {
-                self.info = Some((
-                    "Pas assez d'argent pour cet œuf.".into(),
-                    ui.input(|i| i.time),
-                ))
+                if self.auto {
+                    self.auto = false;
+                    self.auto_arret = Some("Ouverture auto arrêtée : plus assez d'argent.".into());
+                }
+                self.info = Some(("Pas assez d'argent pour ces œufs.".into(), maintenant))
             }
             Err(_) => {}
         }
+    }
+
+    /// Les annonces en attente partent vers le fond d'écran (fin de l'animation).
+    fn liberer_annonces(&mut self) {
+        self.annonces.append(&mut self.a_annoncer);
     }
 
     /// Captures : impose la forme du poisson de l'éclosion en cours.
@@ -221,8 +278,20 @@ impl Ecloserie {
 
     pub fn ui(&mut self, ui: &mut Ui, p: &mut Partie) {
         let maintenant = ui.input(|i| i.time);
+        // Sons : seulement l'Écloserie (le fond d'écran reste muet).
+        son::regler(p.reglages.volume, p.reglages.muet);
+        for (s, h) in self
+            .eclosion
+            .iter_mut()
+            .flat_map(|e| e.sons.drain(..))
+            .chain(self.multi.iter_mut().flat_map(|m| m.sons.drain(..)))
+        {
+            son::jouer(s, h);
+        }
         // Œufs animés au repos (onglet Œufs) : vignettes redessinées à chaque image.
-        if self.onglet == Onglet::Oeufs && self.eclosion.is_none() || self.oeufs.is_empty() {
+        if self.onglet == Onglet::Oeufs && self.eclosion.is_none() && self.multi.is_none()
+            || self.oeufs.is_empty()
+        {
             for i in 0..OEUFS.len() {
                 let img = image_couleur(&crate::eclosion::vignette(i, maintenant as f32));
                 match self.oeufs.get_mut(i) {
@@ -329,6 +398,7 @@ impl Ecloserie {
                 .stroke(Stroke::new(2.0, if actif { ENCRE } else { BISEAU_SOMBRE }))
                 .min_size(Vec2::new(0.0, 34.0));
                 if ui.add(b).clicked() {
+                    son::jouer(Son::Clic, 1.0);
                     self.onglet = o;
                     self.confirmer = None;
                 }
@@ -339,6 +409,10 @@ impl Ecloserie {
     fn onglet_oeufs(&mut self, ui: &mut Ui, p: &mut Partie, maintenant: f64) {
         if self.eclosion.is_some() {
             self.vue_eclosion(ui, p, maintenant);
+            return;
+        }
+        if self.multi.is_some() {
+            self.vue_multi(ui, p, maintenant);
             return;
         }
         let colonnes = if ui.available_width() > 1000.0 {
@@ -380,7 +454,7 @@ impl Ecloserie {
                                     };
                                     ui.label(RichText::new(t).font(titre(13.0)).color(c));
                                 }
-                                ui.add(egui::Image::from_texture((self.oeufs[i].id(), Vec2::new(192.0, 208.0))));
+                                ui.add(egui::Image::from_texture((self.oeufs[i].id(), Vec2::new(196.0, 224.0))));
                                 ui.label(RichText::new(o.nom).font(titre(15.0)));
                             });
                             ui.label(RichText::new(o.description).color(BRUME).size(14.0));
@@ -418,7 +492,37 @@ impl Ecloserie {
                                 .stroke(Stroke::new(2.0, if assez { ENCRE } else { BISEAU_SOMBRE }))
                                 .min_size(Vec2::new(ui.available_width(), 36.0));
                             if ui.add_enabled(assez, b).clicked() {
-                                achat = Some(i);
+                                achat = Some((i, 1));
+                            }
+                            // Ouvertures multiples ×3 et ×10 (prix du lot entier).
+                            ui.horizontal(|ui| {
+                                let w = (ui.available_width() - 8.0) / 2.0;
+                                for n in [3u32, 10] {
+                                    let lot = p.prix_lot(i, n);
+                                    let ok = p.argent >= lot && dispo;
+                                    let b = egui::Button::new(
+                                        RichText::new(format!("×{n} · {}", court(lot)))
+                                            .font(titre(12.0))
+                                            .color(if ok { ENCRE } else { BRUME }),
+                                    )
+                                    .fill(if ok { OR } else { VERRE_FONCE })
+                                    .stroke(Stroke::new(2.0, if ok { ENCRE } else { BISEAU_SOMBRE }))
+                                    .min_size(Vec2::new(w, 30.0));
+                                    if ui.add_enabled(ok, b).clicked() {
+                                        achat = Some((i, n));
+                                    }
+                                }
+                            });
+                            // Pitié : compteur avant la rareté garantie.
+                            if let Some((r, reste)) = p.pitie_restante(i) {
+                                let txt = if reste <= 1 {
+                                    format!("{} ou mieux GARANTI au prochain !", r.nom())
+                                } else {
+                                    format!("{} ou mieux garanti dans {reste} œufs", r.nom())
+                                };
+                                ui.vertical_centered(|ui| {
+                                    ui.label(RichText::new(txt).color(c32(r.couleur())).size(14.0))
+                                });
                             }
                             if !assez && dispo {
                                 let r = p.revenu_par_s();
@@ -433,13 +537,14 @@ impl Ecloserie {
             }
             ui.add_space(8.0);
             ui.label(
-                RichText::new("Le prix d'un œuf monte un peu à chaque ouverture. Aquarium plein : le poisson part en réserve. Parfois, un œuf ordinaire devient un œuf doré (meilleures chances) !")
+                RichText::new("Le prix d'un œuf monte un peu à chaque ouverture. Aquarium plein : le poisson part en réserve. Parfois, un œuf ordinaire devient un œuf doré (meilleures chances) ! Malchance : après une longue série sans, la rareté indiquée est garantie.")
                     .color(BRUME)
                     .size(14.0),
             );
         });
-        if let Some(i) = achat {
-            self.acheter(ui, p, i);
+        if let Some((i, n)) = achat {
+            self.auto_arret = None;
+            self.acheter_lot(ui, p, i, n);
         }
     }
 
@@ -461,18 +566,18 @@ impl Ecloserie {
         }
         ui.ctx().request_repaint();
         let echelle = (ui.available_width() / 128.0)
-            .min((ui.available_height() - 170.0) / 96.0)
+            .min((ui.available_height() - 200.0) / 96.0)
             .floor()
             .clamp(2.0, 5.0);
-        let mut fini = false;
-        let mut encore = None;
+        let revele = e.revele(maintenant);
+        let (oeuf, id) = (e.oeuf, e.id);
         ui.vertical_centered(|ui| {
             let tex = e.texture.as_ref().expect("texture d'éclosion");
             let r = ui.add(
                 egui::Image::from_texture((tex.id(), Vec2::new(128.0, 96.0) * echelle))
                     .sense(egui::Sense::click()),
             );
-            if !e.revele(maintenant) {
+            if !revele {
                 if r.clicked() {
                     e.passer(maintenant);
                 }
@@ -492,7 +597,6 @@ impl Ecloserie {
                 return;
             }
             let Some(f) = p.poissons.iter().find(|f| f.id == e.id) else {
-                fini = true;
                 return;
             };
             let nom = nom_de(f);
@@ -526,21 +630,142 @@ impl Ecloserie {
                 .color(BRUME)
                 .font(titre(13.0)),
             );
-            ui.add_space(8.0);
+        });
+        self.suite(ui, p, oeuf, &[id], revele, maintenant);
+    }
+
+    /// Ouverture ×3/×10 : la grille, puis le résumé.
+    fn vue_multi(&mut self, ui: &mut Ui, p: &mut Partie, maintenant: f64) {
+        let Some(m) = self.multi.as_mut() else {
+            return;
+        };
+        m.dessiner(maintenant - m.debut);
+        let img = image_couleur(&m.toile);
+        match &mut m.texture {
+            Some(tex) => tex.set(img, TextureOptions::NEAREST),
+            None => m.texture = Some(ui.ctx().load_texture("multi", img, TextureOptions::NEAREST)),
+        }
+        ui.ctx().request_repaint();
+        let (ml, mh) = (
+            crate::eclosion::multi::ML as f32,
+            crate::eclosion::multi::MH as f32,
+        );
+        let echelle = (ui.available_width() / ml)
+            .min((ui.available_height() - 170.0) / mh)
+            .floor()
+            .clamp(2.0, 5.0);
+        let revele = m.revele(maintenant);
+        let (oeuf, ids) = (m.oeuf, m.ids());
+        ui.vertical_centered(|ui| {
+            let tex = m.texture.as_ref().expect("texture de la grille");
+            let r = ui.add(
+                egui::Image::from_texture((tex.id(), Vec2::new(ml, mh) * echelle))
+                    .sense(egui::Sense::click()),
+            );
+            if !revele {
+                if r.clicked() {
+                    m.passer(maintenant);
+                }
+                ui.label(
+                    RichText::new(format!("{} ×{} éclosent…", OEUFS[oeuf].nom, ids.len()))
+                        .font(titre(18.0))
+                        .color(BRUME),
+                );
+                ui.label(RichText::new("Clique pour passer").color(BRUME).size(14.0));
+                return;
+            }
+            // Résumé : la meilleure, puis le revenu ajouté.
+            let fs: Vec<&Poisson> = ids
+                .iter()
+                .filter_map(|id| p.poissons.iter().find(|f| f.id == *id))
+                .collect();
+            if let Some(b) = fs
+                .iter()
+                .max_by_key(|f| (f.rarete, f.shiny, f.modif.is_some()))
+            {
+                ui.label(texte_rarete(b.rarete, maintenant, 28.0));
+                ui.label(RichText::new(format!("Meilleure : {}", nom_de(b))).size(20.0));
+            }
+            let gain: f64 = fs.iter().map(|f| f.revenu()).sum();
+            let shiny = fs.iter().filter(|f| f.shiny).count();
+            let modif = fs.iter().filter(|f| f.modif.is_some()).count();
+            ui.label(
+                RichText::new(format!(
+                    "+{}/s en tout · {shiny} shiny · {modif} modifié{}",
+                    court(gain),
+                    if modif > 1 { "s" } else { "" }
+                ))
+                .color(BRUME)
+                .font(titre(13.0)),
+            );
+        });
+        self.suite(ui, p, oeuf, &ids, revele, maintenant);
+    }
+
+    /// Sous une éclosion révélée : Encore (même lot), Retour, Ouverture auto (avec sa
+    /// condition d'arrêt). L'auto relance seul 1 s après la révélation.
+    fn suite(
+        &mut self,
+        ui: &mut Ui,
+        p: &mut Partie,
+        oeuf: usize,
+        ids: &[u64],
+        revele: bool,
+        maintenant: f64,
+    ) {
+        let mut fini = false;
+        let mut encore = false;
+        if revele && self.revele_le.is_none() {
+            self.revele_le = Some(maintenant);
+            self.liberer_annonces();
+            let r = &p.reglages;
+            let arret = ids
+                .iter()
+                .filter_map(|id| p.poissons.iter().find(|f| f.id == *id))
+                .filter(|f| f.rarete.index() >= r.auto_rarete as usize || (r.auto_shiny && f.shiny))
+                .max_by_key(|f| (f.rarete, f.shiny));
+            if let (true, Some(f)) = (self.auto, arret) {
+                self.auto = false;
+                self.auto_arret = Some(format!(
+                    "Ouverture auto arrêtée : {}{} !",
+                    f.rarete.nom(),
+                    if f.shiny { " shiny" } else { "" }
+                ));
+            }
+        }
+        if self.auto && revele && self.revele_le.is_some_and(|t| maintenant - t > 1.0) {
+            encore = true;
+        }
+        ui.add_space(6.0);
+        if let Some(m) = &self.auto_arret {
+            ui.vertical_centered(|ui| ui.label(RichText::new(m).color(OR).font(titre(14.0))));
+        }
+        let lot = self.lot;
+        let prix = if lot <= 1 {
+            p.prix_oeuf(oeuf)
+        } else {
+            p.prix_lot(oeuf, lot)
+        };
+        if revele {
             ui.horizontal(|ui| {
-                let prix = p.prix_oeuf(e.oeuf);
                 let w = 220.0;
                 ui.add_space((ui.available_width() - 2.0 * w - 8.0).max(0.0) / 2.0);
                 let assez = p.argent >= prix;
-                let b = egui::Button::new(
-                    RichText::new(format!("Encore un · {}", court(prix)))
-                        .font(titre(14.0))
-                        .color(if assez { ENCRE } else { BRUME }),
-                )
+                let texte = if lot <= 1 {
+                    format!("Encore un · {}", court(prix))
+                } else {
+                    format!("Encore ×{lot} · {}", court(prix))
+                };
+                let b = egui::Button::new(RichText::new(texte).font(titre(14.0)).color(if assez {
+                    ENCRE
+                } else {
+                    BRUME
+                }))
                 .fill(if assez { SABLE } else { VERRE_FONCE })
                 .min_size(Vec2::new(w, 38.0));
                 if ui.add_enabled(assez, b).clicked() {
-                    encore = Some(e.oeuf);
+                    encore = true;
+                    self.auto_arret = None;
                 }
                 if ui
                     .add(
@@ -550,14 +775,42 @@ impl Ecloserie {
                     .clicked()
                 {
                     fini = true;
+                    self.auto = false;
                 }
             });
-        });
-        if fini || encore.is_some() {
-            self.eclosion = None;
         }
-        if let Some(i) = encore {
-            self.acheter(ui, p, i);
+        // Ouverture auto et sa condition d'arrêt.
+        ui.horizontal(|ui| {
+            ui.add_space((ui.available_width() - 520.0).max(0.0) / 2.0);
+            let avant = self.auto;
+            ui.checkbox(
+                &mut self.auto,
+                RichText::new("Ouverture auto").font(titre(13.0)),
+            );
+            if self.auto && !avant {
+                self.auto_arret = None;
+                if revele {
+                    self.revele_le = Some(maintenant - 1.0);
+                }
+            }
+            let r = &mut p.reglages;
+            ui.label(RichText::new("s'arrête sur").color(BRUME).size(14.0));
+            egui::ComboBox::from_id_salt("auto_rarete")
+                .selected_text(Rarete::TOUTES[(r.auto_rarete as usize).min(8)].nom())
+                .show_ui(ui, |ui| {
+                    for (k, rr) in Rarete::TOUTES.iter().enumerate().skip(2) {
+                        ui.selectable_value(&mut r.auto_rarete, k as u8, format!("{}+", rr.nom()));
+                    }
+                });
+            ui.checkbox(&mut r.auto_shiny, "ou un shiny");
+        });
+        if fini || encore {
+            self.liberer_annonces();
+            self.eclosion = None;
+            self.multi = None;
+        }
+        if encore {
+            self.acheter_lot(ui, p, oeuf, lot);
         }
     }
 
@@ -996,6 +1249,29 @@ impl Ecloserie {
             }
             ligne(
                 ui,
+                "Sons",
+                "Seulement dans l'Écloserie (éclosions, cartes, achats) : le fond d'écran reste toujours silencieux.",
+                &mut |ui| {
+                    let mut pct = (r.volume * 100.0).round();
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                !r.muet,
+                                egui::Slider::new(&mut pct, 0.0..=100.0)
+                                    .suffix(" %")
+                                    .step_by(5.0)
+                                    .fixed_decimals(0),
+                            )
+                            .changed()
+                        {
+                            r.volume = pct / 100.0;
+                        }
+                        ui.checkbox(&mut r.muet, "Couper le son");
+                    });
+                },
+            );
+            ligne(
+                ui,
                 "Décor",
                 "Le décor du fond de l'aquarium (les objets achetés restent posés).",
                 &mut |ui| {
@@ -1367,4 +1643,27 @@ fn image_sprite(s: &crate::poisson::Sprite, ombre: Option<Rgb>) -> egui::ColorIm
 
 pub fn image_couleur(t: &Toile) -> egui::ColorImage {
     egui::ColorImage::from_rgba_premultiplied([t.lf(), t.hf()], t.px.as_flattened())
+}
+
+/// Annonce sur le fond d'écran pour une grande éclosion : Légendaire ou mieux, shiny, ou
+/// modificateur rare (revenu ×3 ou plus).
+fn annonce(f: &Poisson) -> Option<Annonce> {
+    let rare_modif = f.modif.filter(|m| m.multiplicateur() >= 3.0);
+    if f.rarete < Rarete::Legendaire && !f.shiny && rare_modif.is_none() {
+        return None;
+    }
+    let mut texte = f.rarete.nom().to_uppercase();
+    if f.shiny {
+        texte = format!("SHINY {texte}");
+    }
+    if let Some(m) = rare_modif {
+        texte = format!("{texte} {}", m.nom().to_uppercase());
+    }
+    Some(Annonce {
+        texte: format!("{texte} ! {}", nom_de(f)),
+        couleur: rare_modif.map_or(f.rarete.couleur(), |m| m.couleur()),
+        id: f.id,
+        shiny: f.shiny,
+        reste: crate::scene::DUREE_ANNONCE,
+    })
 }

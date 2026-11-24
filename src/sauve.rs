@@ -260,6 +260,33 @@ mod tests {
     }
 
     #[test]
+    fn sauvegarde_v010_migree_avec_pitie() {
+        // Format v0.10 (version 5) : ni pitié, ni sons, ni ouverture auto.
+        let d = dossier_test("v010");
+        let json = r#"{"version":5,"argent":50.0,"total_gagne":50.0,"horodatage":1700000000,
+            "prochain_id":2,"alea":9,"poissons":[
+            {"id":1,"graine":11,"rarete":"Commun","taille":1.0,"niveau":1,"actif":true,"oeuf":0,"espece":"clown","variante":0}],
+            "oeufs_ouverts":[3,0,0,0,0,0,0,0],"eclos":[1,0,0,0,0,0,0,0,0],
+            "vus":{"clown":1},"index":{"clown":1},"reglages":{"theme":2},"decor_achete":{},"decor_pose":[]}"#;
+        std::fs::write(fichier(&d), json).unwrap();
+        let (q, msg) = charger(&d);
+        assert!(msg.is_none(), "{msg:?}");
+        assert_eq!(q.version, crate::jeu::VERSION);
+        assert_eq!(q.pitie, vec![0; crate::jeu::OEUFS.len()]);
+        assert_eq!(q.reglages.theme, 2);
+        assert!(q.reglages.volume > 0.0 && !q.reglages.muet && q.reglages.auto_shiny);
+        assert_eq!(q.oeufs_ouverts[0], 3);
+        // Aller-retour : les compteurs sont sauvegardés.
+        let mut q = q;
+        q.pitie[1] = 7;
+        q.reglages.muet = true;
+        ecrire(&d, &q).unwrap();
+        let (r, _) = charger(&d);
+        assert_eq!(r.pitie[1], 7);
+        assert!(r.reglages.muet);
+    }
+
+    #[test]
     fn sauvegarde_v08_migree_avec_decor_vide() {
         // Format v0.8 (version 4) : ni thème, ni souris, ni objets de décor.
         let d = dossier_test("v08");

@@ -862,6 +862,10 @@ impl eframe::App for Appli {
                 self.sauver();
             }
         }
+        // Grandes éclosions : annoncées sur le fond d'écran, près du compteur (v0.11).
+        if let Some(aq) = &mut self.aquarium {
+            aq.annonces.append(&mut self.ecloserie.annonces);
+        }
         // Lancement au démarrage : appliqué quand le réglage change.
         if self.demarrage_applique != Some(self.partie.reglages.demarrage_windows) {
             #[cfg(windows)]

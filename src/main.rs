@@ -19,6 +19,7 @@ mod maj;
 mod poisson;
 mod sauve;
 mod scene;
+mod son;
 mod souris;
 mod toile;
 #[cfg(windows)]

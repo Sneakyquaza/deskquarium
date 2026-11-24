@@ -264,7 +264,23 @@ pub struct Aquarium {
     pub souris: Souris,
     /// Petite fiche d'un poisson cliqué : id et temps restant.
     fiche: Option<(u64, f32)>,
+    /// v0.11 : grandes éclosions annoncées près du compteur (Légendaire+, shiny, modificateur
+    /// rare), avec une gerbe d'étoiles là où la créature arrive.
+    pub annonces: Vec<Annonce>,
 }
+
+/// Annonce d'une grande éclosion sur le fond d'écran (v0.11).
+pub struct Annonce {
+    pub texte: String,
+    pub couleur: Rgb,
+    /// Poisson éclos (gerbe d'étoiles sur lui), arc-en-ciel si shiny.
+    pub id: u64,
+    pub shiny: bool,
+    pub reste: f32,
+}
+
+/// Durée d'une annonce (secondes).
+pub const DUREE_ANNONCE: f32 = 7.0;
 
 /// Espèce d'un poisson (toujours connue après `Partie::migrer`, repli par la graine sinon).
 pub fn espece_de(p: &Poisson) -> &'static crate::especes::Espece {
@@ -396,6 +412,7 @@ impl Aquarium {
             neige: Vec::new(),
             souris: Souris::default(),
             fiche: None,
+            annonces: Vec::new(),
         };
         aq.decorer(0, &[]);
         aq
@@ -1030,6 +1047,10 @@ impl Aquarium {
 
     /// Avance la simulation de `dt` secondes.
     pub fn avancer(&mut self, dt: f32) {
+        for a in &mut self.annonces {
+            a.reste -= dt;
+        }
+        self.annonces.retain(|a| a.reste > 0.0);
         let dt = dt.min(0.1);
         self.temps += dt;
         let t = self.temps;
@@ -1379,6 +1400,94 @@ impl Aquarium {
         self.dessiner_fiche(partie);
         if self.avec_compteur {
             self.compteur(partie);
+            self.dessiner_annonces();
+        }
+    }
+
+    /// Annonces des grandes éclosions (v0.11) : bandeaux empilés au-dessus du compteur qui
+    /// claquent (entrée de côté), bord de la couleur de la rareté (arc-en-ciel si shiny), et
+    /// gerbe d'étoiles à quatre branches sur la créature pendant 3 s.
+    fn dessiner_annonces(&mut self) {
+        let (x0, y0) = (self.bassin.principal.0 + 4, self.bassin.principal.3 - 22);
+        let haut = if self.message.is_some() { 12 } else { 0 };
+        let temps = self.temps;
+        for (k, a) in self.annonces.iter().enumerate() {
+            let age = DUREE_ANNONCE - a.reste;
+            let entree = (age / 0.25).min(1.0);
+            let alpha = (a.reste.min(0.8) / 0.8 * 255.0) as u8;
+            let w = largeur_texte(&a.texte) + 12;
+            let x = x0 - ((1.0 - entree) * (w + 8) as f32) as i32;
+            let y = y0 - 13 - haut - k as i32 * 12;
+            let bord = |i: i32| {
+                if a.shiny {
+                    hsv(i as f32 / 40.0 + temps * 0.6, 0.6, 1.0)
+                } else {
+                    a.couleur
+                }
+            };
+            let t = &mut self.toile;
+            t.rect(
+                x,
+                y,
+                w,
+                11,
+                [0x08, 0x12, 0x20],
+                (alpha as u16 * 235 / 255) as u8,
+            );
+            for i in 0..w {
+                t.rect(x + i, y, 1, 1, bord(i), alpha);
+                t.rect(x + i, y + 10, 1, 1, bord(i + 20), alpha);
+            }
+            t.rect(x, y, 1, 11, bord(0), alpha);
+            t.rect(x + w - 1, y, 1, 11, bord(w), alpha);
+            // Éclair blanc à l'arrivée.
+            let c = if age < 0.12 {
+                [255, 255, 255]
+            } else {
+                a.couleur
+            };
+            t.texte(x + 6, y + 3, &a.texte, c, alpha, Some([0x04, 0x08, 0x10]));
+            // Étoile qui clignote au bout du bandeau.
+            if (temps * 4.0).sin() > 0.0 {
+                t.eclairer(x + 2, y + 5, [255, 255, 255], alpha);
+                t.eclairer(x + 3, y + 5, a.couleur, alpha / 2);
+                t.eclairer(x + 2, y + 4, a.couleur, alpha / 2);
+            }
+        }
+        // Gerbe d'étoiles sur la créature qui vient d'arriver.
+        for a in &self.annonces {
+            let age = DUREE_ANNONCE - a.reste;
+            if age > 3.0 {
+                continue;
+            }
+            let Some(n) = self.nageurs.iter().find(|n| n.id == a.id) else {
+                continue;
+            };
+            let (cx, cy) = (n.x, n.dessin_y());
+            let r0 = n.sprite.lw().max(n.sprite.hw()) * 0.6;
+            for k in 0..12 {
+                let ph = k as f32 * 0.53;
+                let u = ((age * 1.3 + ph) % 1.0).clamp(0.0, 1.0);
+                let ang = k as f32 / 12.0 * TAU + age * 0.8;
+                let r = r0 + u * 14.0;
+                let (x, y) = (
+                    (cx + ang.cos() * r).round() as i32,
+                    (cy + ang.sin() * r * 0.7).round() as i32,
+                );
+                let al = ((1.0 - u) * (1.0 - age / 3.0) * 255.0) as u8;
+                let c = if a.shiny {
+                    hsv(k as f32 / 12.0, 0.5, 1.0)
+                } else {
+                    a.couleur
+                };
+                let o = ((1.0 - (2.0 * u - 1.0).abs()) * 2.0).round() as i32;
+                self.toile.eclairer(x, y, [255, 255, 255], al);
+                for s in 1..=o {
+                    for (dx, dy) in [(s, 0), (-s, 0), (0, s), (0, -s)] {
+                        self.toile.eclairer(x + dx, y + dy, c, al / 2);
+                    }
+                }
+            }
         }
     }
 

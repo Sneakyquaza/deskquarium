@@ -21,6 +21,7 @@ ap.add_argument("--fond", default="magenta", choices=["magenta", "vert"])
 ap.add_argument("--vue", default="cote", choices=["cote", "face"], help="où chercher les yeux")
 ap.add_argument("--yeux", default="", help="yeux imposés « x,y,r;x,y,r » (pixels du sprite final)")
 ap.add_argument("--lumieres", default="", help="lumières (leurre…) « x,y,r;… » (pixels du sprite final)")
+ap.add_argument("--sans-contour", action="store_true", help="pas de contour ajouté (lueurs, galaxie, couronne : v0.11)")
 ap.add_argument("--nb-yeux", type=int, default=0, help="nombre d'yeux cherchés (défaut 1 de côté, 2 de face)")
 a = ap.parse_args()
 
@@ -252,7 +253,7 @@ lumi = pal @ np.array([0.299, 0.587, 0.114])
 bord = sol & (voisins4(sol) < 4)
 part_sombre = (lumi[ind[bord]] < 60).mean()
 ind = np.pad(ind, 2, constant_values=-1)
-if part_sombre < 0.7:
+if part_sombre < 0.7 and not a.sans_contour:
     k0 = int(np.argmin(lumi))
     pal = np.vstack([pal, pal[k0] * 0.55])
     sol = ind >= 0

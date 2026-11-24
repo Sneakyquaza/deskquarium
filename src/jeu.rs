@@ -94,6 +94,9 @@ pub struct Oeuf {
     /// v0.10 : œuf exceptionnel disponible par moments (heure UTC) : période, début dans la
     /// période, durée (secondes). None = toujours là.
     pub dispo: Option<(u64, u64, u64)>,
+    /// v0.11 : pitié : au plus N œufs de suite sans cette rareté (ou mieux) ; le N-ième la
+    /// garantit. None = l'œuf donne déjà presque toujours ses meilleures raretés.
+    pub pitie: Option<(Rarete, u32)>,
 }
 
 impl Oeuf {
@@ -129,6 +132,7 @@ pub const OEUFS: [Oeuf; 8] = [
         bonus_shiny: 1.0,
         bonus_modif: 1.0,
         dispo: None,
+        pitie: Some((Rarete::Epique, 40)),
     },
     Oeuf {
         nom: "Œuf de lagon",
@@ -139,6 +143,7 @@ pub const OEUFS: [Oeuf; 8] = [
         bonus_shiny: 1.0,
         bonus_modif: 1.0,
         dispo: None,
+        pitie: Some((Rarete::Epique, 25)),
     },
     Oeuf {
         nom: "Œuf des abysses",
@@ -149,6 +154,7 @@ pub const OEUFS: [Oeuf; 8] = [
         bonus_shiny: 1.0,
         bonus_modif: 1.0,
         dispo: None,
+        pitie: Some((Rarete::Legendaire, 25)),
     },
     Oeuf {
         nom: "Œuf cosmique",
@@ -159,6 +165,7 @@ pub const OEUFS: [Oeuf; 8] = [
         bonus_shiny: 1.0,
         bonus_modif: 1.0,
         dispo: None,
+        pitie: Some((Rarete::Mythique, 25)),
     },
     Oeuf {
         nom: "Œuf d'ambre",
@@ -169,6 +176,7 @@ pub const OEUFS: [Oeuf; 8] = [
         bonus_shiny: 1.0,
         bonus_modif: 1.0,
         dispo: None,
+        pitie: None,
     },
     // v0.10 : œufs exceptionnels, par moments (heure UTC).
     Oeuf {
@@ -180,6 +188,7 @@ pub const OEUFS: [Oeuf; 8] = [
         bonus_shiny: 5.0,
         bonus_modif: 4.0,
         dispo: Some((8 * H, 0, 2 * H)),
+        pitie: Some((Rarete::Legendaire, 20)),
     },
     Oeuf {
         nom: "Œuf arc-en-ciel",
@@ -190,6 +199,7 @@ pub const OEUFS: [Oeuf; 8] = [
         bonus_shiny: 2.0,
         bonus_modif: 8.0,
         dispo: Some((8 * H, 4 * H, 2 * H)),
+        pitie: Some((Rarete::Mythique, 20)),
     },
     Oeuf {
         nom: "Œuf de l'Éclipse",
@@ -200,6 +210,7 @@ pub const OEUFS: [Oeuf; 8] = [
         bonus_shiny: 10.0,
         bonus_modif: 3.0,
         dispo: Some((24 * H, 22 * H, H)),
+        pitie: Some((Rarete::Irreel, 20)),
     },
 ];
 
@@ -460,6 +471,13 @@ pub struct Reglages {
     pub attraper: bool,
     /// v0.9 : attraper seulement en tenant Alt (sécurité).
     pub attraper_alt: bool,
+    /// v0.11 : sons de l'Écloserie (le fond d'écran reste muet) : volume 0..1, coupé.
+    pub volume: f32,
+    pub muet: bool,
+    /// v0.11 : ouverture auto : s'arrête sur cette rareté ou mieux (index de `Rarete`), et sur
+    /// un shiny si `auto_shiny`.
+    pub auto_rarete: u8,
+    pub auto_shiny: bool,
 }
 
 impl Default for Reglages {
@@ -477,6 +495,10 @@ impl Default for Reglages {
             theme: 0,
             attraper: true,
             attraper_alt: false,
+            volume: 0.7,
+            muet: false,
+            auto_rarete: Rarete::Legendaire as u8,
+            auto_shiny: true,
         }
     }
 }
@@ -516,6 +538,12 @@ pub struct Partie {
     /// v0.10 : le dernier œuf acheté est devenu un œuf doré (éclosion spéciale).
     #[serde(skip)]
     pub dernier_dore: bool,
+    /// v0.11 : œufs ouverts de suite sans la rareté garantie, par œuf (pitié).
+    #[serde(default)]
+    pub pitie: Vec<u32>,
+    /// v0.11 : le dernier œuf acheté a déclenché la pitié (rareté garantie).
+    #[serde(skip)]
+    pub derniere_pitie: bool,
 }
 
 /// Objet de décor posé (v0.9) : sur l'écran `ecran` (0 = principal, ordre de
@@ -532,10 +560,18 @@ pub struct Pose {
 }
 
 /// Version du format de sauvegarde (2 = espèces, 3 = rareté Préhistorique et œuf d'ambre,
-/// 4 = shiny, modificateurs et index, 5 = décor à thème et objets de décor).
-pub const VERSION: u32 = 5;
+/// 4 = shiny, modificateurs et index, 5 = décor à thème et objets de décor, 6 = pitié).
+pub const VERSION: u32 = 6;
 /// Exemplaires au plus d'un même objet de décor.
 pub const MAX_EXEMPLAIRES: u32 = 8;
+
+/// Un œuf ouvert (v0.11) : le poisson éclos, œuf devenu doré, rareté garantie par la pitié.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ouverture {
+    pub id: u64,
+    pub dore: bool,
+    pub pitie: bool,
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Refus {
@@ -567,6 +603,8 @@ impl Partie {
             decor_achete: BTreeMap::new(),
             decor_pose: Vec::new(),
             dernier_dore: false,
+            pitie: vec![0; OEUFS.len()],
+            derniere_pitie: false,
         };
         let id = p.ajouter(Rarete::Commun, 1.0, 0);
         // Le poisson offert est toujours normal (départ identique pour tout le monde).
@@ -668,6 +706,8 @@ impl Partie {
             .resize(OEUFS.len().max(self.oeufs_ouverts.len()), 0);
         self.eclos
             .resize(Rarete::TOUTES.len().max(self.eclos.len()), 0);
+        // Version 6 : compteurs de pitié (anciennes sauvegardes : tout à zéro).
+        self.pitie.resize(OEUFS.len().max(self.pitie.len()), 0);
         let mut ajout = false;
         for f in &mut self.poissons {
             let connue = crate::especes::par_cle(&f.espece).is_some_and(|e| e.rarete == f.rarete);
@@ -824,7 +864,8 @@ impl Partie {
 
     /// Achat à l'instant `maintenant` (œufs exceptionnels : seulement pendant leur moment).
     /// Un œuf ordinaire devient parfois un œuf doré (`CHANCE_OEUF_DORE`) : la meilleure de
-    /// deux raretés, shiny ×3, modificateurs ×2 (`dernier_dore`).
+    /// deux raretés, shiny ×3, modificateurs ×2 (`dernier_dore`). Pitié (v0.11) : le N-ième
+    /// œuf de suite sans la rareté garantie la donne (`derniere_pitie`).
     pub fn acheter_oeuf_a(&mut self, i: usize, maintenant: u64) -> Result<u64, Refus> {
         let oeuf = OEUFS.get(i).ok_or(Refus::Introuvable)?;
         if !oeuf.disponible(maintenant) {
@@ -843,8 +884,87 @@ impl Partie {
             rarete = rarete.max(Self::tirer_rarete(&mut self.alea, oeuf));
             bonus = (3.0, 2.0);
         }
+        self.derniere_pitie = false;
+        self.pitie.resize(OEUFS.len().max(self.pitie.len()), 0);
+        if let Some((min, n)) = oeuf.pitie {
+            if rarete < min && self.pitie[i] + 1 >= n {
+                rarete = Self::tirer_rarete_min(&mut self.alea, oeuf, min);
+                self.derniere_pitie = true;
+            }
+            self.pitie[i] = if rarete >= min { 0 } else { self.pitie[i] + 1 };
+        }
         let taille = Self::tirer_taille(&mut self.alea);
         Ok(self.ajouter_bonus(rarete, taille, i as u8, bonus))
+    }
+
+    /// Tirage limité aux raretés `min` ou mieux de l'œuf (mêmes proportions entre elles).
+    fn tirer_rarete_min(alea: &mut Alea, oeuf: &Oeuf, min: Rarete) -> Rarete {
+        let haut = |r: &Rarete| {
+            if *r >= min {
+                oeuf.chances[r.index()]
+            } else {
+                0.0
+            }
+        };
+        let total: f64 = Rarete::TOUTES.iter().map(haut).sum();
+        let mut x = alea.f64() * total;
+        for r in Rarete::TOUTES.iter().filter(|r| haut(r) > 0.0) {
+            x -= haut(r);
+            if x < 0.0 {
+                return *r;
+            }
+        }
+        Rarete::TOUTES
+            .iter()
+            .rev()
+            .copied()
+            .find(|r| haut(r) > 0.0)
+            .unwrap_or(min)
+    }
+
+    /// Œufs restants avant la rareté garantie (pitié) : (rareté, œufs), ou None.
+    pub fn pitie_restante(&self, i: usize) -> Option<(Rarete, u32)> {
+        let (r, n) = OEUFS.get(i)?.pitie?;
+        Some((r, n.saturating_sub(self.pitie.get(i).copied().unwrap_or(0))))
+    }
+
+    /// Prix total de `n` œufs `i` achetés d'affilée (le prix monte à chaque œuf).
+    pub fn prix_lot(&self, i: usize, n: u32) -> f64 {
+        let o = self.oeufs_ouverts[i] as f64;
+        (0..n)
+            .map(|k| OEUFS[i].prix * (1.0 + (o + k as f64) / 10.0).powi(2))
+            .sum()
+    }
+
+    /// Ouverture multiple (×3, ×10) : tout ou rien (il faut le prix du lot entier).
+    pub fn acheter_lot(
+        &mut self,
+        i: usize,
+        n: u32,
+        maintenant: u64,
+    ) -> Result<Vec<Ouverture>, Refus> {
+        let oeuf = OEUFS.get(i).ok_or(Refus::Introuvable)?;
+        if !oeuf.disponible(maintenant) {
+            return Err(Refus::Indisponible);
+        }
+        if self.argent < self.prix_lot(i, n) {
+            return Err(Refus::PasAssez);
+        }
+        let mut v = Vec::new();
+        for _ in 0..n {
+            // Arrondis : la somme du lot et les prix un à un peuvent différer d'un epsilon.
+            let pr = self.prix_oeuf(i);
+            if self.argent < pr && pr - self.argent <= pr * 1e-9 {
+                self.argent = pr;
+            }
+            let id = self.acheter_oeuf_a(i, maintenant)?;
+            v.push(Ouverture {
+                id,
+                dore: self.dernier_dore,
+                pitie: self.derniere_pitie,
+            });
+        }
+        Ok(v)
     }
 
     fn poisson_mut(&mut self, id: u64) -> Result<&mut Poisson, Refus> {
@@ -1186,6 +1306,7 @@ mod tests {
         for _ in 0..n {
             let id = p.acheter_oeuf_a(0, 0).unwrap();
             p.oeufs_ouverts[0] = 0;
+            p.pitie[0] = 0;
             let f = p.poissons.pop().unwrap();
             assert_eq!(f.id, id);
             if p.dernier_dore {
@@ -1559,5 +1680,76 @@ mod tests {
         let f = p.poissons.iter_mut().find(|f| f.id == id).unwrap();
         let nouveau = f.revenu();
         assert_eq!(f.actif, nouveau > faible);
+    }
+
+    #[test]
+    fn pitie_garantit_la_rarete() {
+        // Le N-ième œuf de suite sans la rareté garantie la donne ; le compteur repart à zéro.
+        for (i, o) in OEUFS.iter().enumerate() {
+            let Some((min, n)) = o.pitie else { continue };
+            let mut p = Partie::nouvelle(0, 11 + i as u64);
+            p.argent = 1e300;
+            let quand = o.dispo.map_or(0, |(_, debut, _)| debut + 1);
+            let mut sans = 0;
+            for _ in 0..3000 {
+                let id = p.acheter_oeuf_a(i, quand).unwrap();
+                p.oeufs_ouverts[i] = 0;
+                let f = p.poissons.pop().unwrap();
+                assert_eq!(f.id, id);
+                if f.rarete >= min {
+                    // Garantie seulement au N-ième (le tirage normal peut aussi la donner).
+                    assert!(!p.derniere_pitie || sans + 1 == n, "{}", o.nom);
+                    sans = 0;
+                } else {
+                    assert!(!p.derniere_pitie);
+                    sans += 1;
+                }
+                assert!(sans < n, "{} : {sans} œufs sans {:?}", o.nom, min);
+                assert_eq!(p.pitie[i], sans);
+                assert_eq!(p.pitie_restante(i), Some((min, n - sans)));
+            }
+        }
+        assert_eq!(Partie::nouvelle(0, 1).pitie_restante(4), None);
+    }
+
+    #[test]
+    fn pitie_respecte_les_proportions() {
+        // Le tirage forcé garde les proportions des raretés hautes de l'œuf (cosmique :
+        // Mythique 11, Céleste 4,5, Irréel 0,5 → 68,75 % / 28,1 % / 3,1 %).
+        let mut a = Alea(3);
+        let mut n = [0u32; 9];
+        for _ in 0..100_000 {
+            n[Partie::tirer_rarete_min(&mut a, &OEUFS[3], Rarete::Mythique).index()] += 1;
+        }
+        assert_eq!(n[..5].iter().sum::<u32>(), 0);
+        assert!((n[5] as f64 / 1000.0 - 68.75).abs() < 0.8, "{n:?}");
+        assert!((n[7] as f64 / 1000.0 - 3.125).abs() < 0.4, "{n:?}");
+    }
+
+    #[test]
+    fn ouverture_multiple() {
+        let mut p = Partie::nouvelle(0, 5);
+        let lot = p.prix_lot(0, 10);
+        let attendu: f64 = (0..10)
+            .map(|k| 80.0 * (1.0 + k as f64 / 10.0).powi(2))
+            .sum();
+        assert!((lot - attendu).abs() < 1e-6);
+        // Pas assez pour le lot entier : rien n'est acheté.
+        p.argent = lot - 1.0;
+        assert_eq!(p.acheter_lot(0, 10, 0), Err(Refus::PasAssez));
+        assert_eq!(p.oeufs_ouverts[0], 0);
+        assert_eq!(p.poissons.len(), 1);
+        p.argent = lot;
+        let v = p.acheter_lot(0, 10, 0).unwrap();
+        assert_eq!(v.len(), 10);
+        assert_eq!(p.oeufs_ouverts[0], 10);
+        assert_eq!(p.poissons.len(), 11);
+        assert!(p.argent.abs() < 1e-3);
+        let mut ids: Vec<u64> = v.iter().map(|o| o.id).collect();
+        ids.dedup();
+        assert_eq!(ids.len(), 10);
+        // Œuf exceptionnel hors de son moment : refusé.
+        p.argent = 1e300;
+        assert_eq!(p.acheter_lot(7, 3, 0), Err(Refus::Indisponible));
     }
 }

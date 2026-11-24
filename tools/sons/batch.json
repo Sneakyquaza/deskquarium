@@ -1,0 +1,251 @@
+{
+  "out_dir": "out/sons_wav",
+  "sr": 44100,
+  "normalize": -1.0,
+  "sounds": [
+    {"out": "fele1.wav", "duration": 0.22, "layers": [
+      {"type": "drum", "kind": "snap", "gain": 0.7},
+      {"type": "sfx", "kind": "click", "params": {"tone": 4200}, "gain": 0.6},
+      {"type": "sfx", "kind": "noise", "params": {"dur": 0.05}, "gain": 0.5, "fx": [{"type": "bandpass", "center": 3600, "q": 2.0}]},
+      {"type": "sfx", "kind": "click", "params": {"tone": 2600}, "at": 0.045, "gain": 0.35}
+    ], "fx": [{"type": "lowpass", "cutoff": 5500}, {"type": "reverb", "mix": 0.1, "size": 0.2}]},
+    {"out": "fele2.wav", "duration": 0.26, "layers": [
+      {"type": "sfx", "kind": "click", "params": {"tone": 3400}, "gain": 0.7},
+      {"type": "sfx", "kind": "noise", "params": {"dur": 0.04}, "gain": 0.5, "fx": [{"type": "bandpass", "center": 2800, "q": 2.5}]},
+      {"type": "sfx", "kind": "click", "params": {"tone": 4600}, "at": 0.03, "gain": 0.45},
+      {"type": "sfx", "kind": "noise", "params": {"dur": 0.03}, "at": 0.08, "gain": 0.35, "fx": [{"type": "bandpass", "center": 4200, "q": 3.0}]},
+      {"type": "drum", "kind": "woodblock", "params": {"tune": 1800}, "gain": 0.15}
+    ], "fx": [{"type": "lowpass", "cutoff": 5500}, {"type": "reverb", "mix": 0.1, "size": 0.2}]},
+    {"out": "fele3.wav", "duration": 0.3, "layers": [
+      {"type": "drum", "kind": "snap", "gain": 0.55},
+      {"type": "sfx", "kind": "noise", "params": {"dur": 0.06}, "gain": 0.55, "fx": [{"type": "bandpass", "center": 3200, "q": 2.0}]},
+      {"type": "sfx", "kind": "click", "params": {"tone": 3800}, "at": 0.06, "gain": 0.5},
+      {"type": "sfx", "kind": "click", "params": {"tone": 3000}, "at": 0.1, "gain": 0.4},
+      {"type": "sfx", "kind": "click", "params": {"tone": 4400}, "at": 0.13, "gain": 0.3}
+    ], "fx": [{"type": "lowpass", "cutoff": 5500}, {"type": "reverb", "mix": 0.12, "size": 0.25}]},
+    {"out": "chute.wav", "duration": 0.32, "layers": [
+      {"type": "drum", "kind": "kick", "params": {"tune": 75, "decay": 0.18, "punch": 0.4}, "gain": 0.8},
+      {"type": "sfx", "kind": "footstep", "params": {"tone": 140}, "gain": 0.6},
+      {"type": "sfx", "kind": "noise", "params": {"dur": 0.22, "color": "pink", "attack": 0.01}, "at": 0.02, "gain": 0.35, "fx": [{"type": "lowpass", "cutoff": 1800}, {"type": "highpass", "cutoff": 300}]}
+    ]},
+
+    {"out": "palier0.wav", "duration": 0.6, "layers": [
+      {"type": "sfx", "kind": "whoosh", "params": {"dur": 0.22, "low": 400, "high": 3000, "direction": "up"}, "gain": 0.5},
+      {"type": "synth", "inst": "celesta", "notes": "C5 E5 G5", "dur": 0.35, "vel": 0.7, "at": 0.2, "gain": 0.8},
+      {"type": "synth", "inst": "bell", "notes": "C5", "dur": 0.3, "vel": 0.5, "at": 0.2, "gain": 0.3, "params": {"bright": 0.6}}
+    ], "fx": [{"type": "reverb", "mix": 0.2, "size": 0.4}]},
+    {"out": "palier1.wav", "duration": 0.75, "layers": [
+      {"type": "sfx", "kind": "whoosh", "params": {"dur": 0.28, "low": 400, "high": 3400, "direction": "up"}, "gain": 0.55},
+      {"type": "synth", "inst": "celesta", "notes": "D5 F#5 A5", "dur": 0.4, "vel": 0.7, "at": 0.25, "gain": 0.8},
+      {"type": "synth", "inst": "bell", "notes": "D5", "dur": 0.35, "vel": 0.5, "at": 0.25, "gain": 0.3, "params": {"bright": 0.6}},
+      {"type": "synth", "inst": "strings", "notes": "D4 A4", "dur": 0.35, "vel": 0.6, "at": 0.25, "gain": 0.3, "params": {"attack": 0.03}}
+    ], "fx": [{"type": "reverb", "mix": 0.22, "size": 0.45}]},
+    {"out": "palier2.wav", "duration": 0.9, "layers": [
+      {"type": "sfx", "kind": "whoosh", "params": {"dur": 0.34, "low": 350, "high": 3800, "direction": "up"}, "gain": 0.6},
+      {"type": "sfx", "kind": "sweep_up", "params": {"start": 300, "end": 1300, "dur": 0.32}, "gain": 0.15},
+      {"type": "synth", "inst": "celesta", "notes": "E5 G#5 B5", "dur": 0.45, "vel": 0.7, "at": 0.3, "gain": 0.8},
+      {"type": "synth", "inst": "bell", "notes": "E5", "dur": 0.4, "vel": 0.55, "at": 0.3, "gain": 0.3, "params": {"bright": 0.6}},
+      {"type": "synth", "inst": "strings", "notes": "E4 B4", "dur": 0.4, "vel": 0.65, "at": 0.3, "gain": 0.35, "params": {"attack": 0.03}}
+    ], "fx": [{"type": "reverb", "mix": 0.24, "size": 0.5}]},
+    {"out": "palier3.wav", "duration": 1.05, "layers": [
+      {"type": "sfx", "kind": "whoosh", "params": {"dur": 0.4, "low": 300, "high": 4000, "direction": "up"}, "gain": 0.65},
+      {"type": "sfx", "kind": "sweep_up", "params": {"start": 300, "end": 1500, "dur": 0.38}, "gain": 0.18},
+      {"type": "synth", "inst": "celesta", "notes": "G5 B5 D6", "dur": 0.5, "vel": 0.7, "at": 0.36, "gain": 0.75},
+      {"type": "synth", "inst": "bell", "notes": "G4 G5", "dur": 0.45, "vel": 0.55, "at": 0.36, "gain": 0.3, "params": {"bright": 0.6}},
+      {"type": "synth", "inst": "strings", "notes": "G3 D4 B4", "dur": 0.45, "vel": 0.7, "at": 0.36, "gain": 0.4, "params": {"attack": 0.03}},
+      {"type": "sfx", "kind": "magic", "params": {"dur": 0.5, "density": 8, "freq": "G5"}, "at": 0.42, "gain": 0.25}
+    ], "fx": [{"type": "reverb", "mix": 0.26, "size": 0.55}]},
+    {"out": "palier4.wav", "duration": 1.25, "layers": [
+      {"type": "sfx", "kind": "whoosh", "params": {"dur": 0.46, "low": 250, "high": 4200, "direction": "up"}, "gain": 0.7},
+      {"type": "sfx", "kind": "sweep_up", "params": {"start": 260, "end": 1600, "dur": 0.44}, "gain": 0.2},
+      {"type": "synth", "inst": "celesta", "notes": "C6 E6 G6", "dur": 0.6, "vel": 0.6, "at": 0.42, "gain": 0.6},
+      {"type": "synth", "inst": "bell", "notes": "C5 C6", "dur": 0.55, "vel": 0.55, "at": 0.42, "gain": 0.3, "params": {"bright": 0.6}},
+      {"type": "synth", "inst": "strings", "notes": "C4 G4 E5", "dur": 0.6, "vel": 0.75, "at": 0.42, "gain": 0.45, "params": {"attack": 0.03}},
+      {"type": "synth", "inst": "choir", "notes": "C4 G4 C5", "dur": 0.6, "vel": 0.6, "at": 0.42, "gain": 0.3},
+      {"type": "seq", "inst": "glockenspiel", "steps": "C6:0.05 E6:0.05 G6:0.05 C7:0.05 G6:0.05 E6:0.2", "vel": 0.5, "at": 0.5, "gain": 0.35},
+      {"type": "sfx", "kind": "magic", "params": {"dur": 0.7, "density": 14, "freq": "C6"}, "at": 0.45, "gain": 0.3}
+    ], "fx": [{"type": "chorus", "mix": 0.25}, {"type": "reverb", "mix": 0.3, "size": 0.6}]},
+
+    {"out": "montee.wav", "duration": 1.5, "layers": [
+      {"type": "sfx", "kind": "riser", "params": {"dur": 1.45, "start": 120, "end": 1600}, "gain": 0.45},
+      {"type": "sfx", "kind": "noise", "params": {"dur": 1.45, "color": "brown", "attack": 0.8}, "gain": 0.7, "fx": [{"type": "lowpass", "cutoff": 220}]},
+      {"type": "synth", "inst": "strings", "notes": "C3 G3", "dur": 1.4, "vel": 0.6, "gain": 0.5, "params": {"attack": 0.9}, "fx": [{"type": "tremolo", "rate": 11, "depth": 0.7}]},
+      {"type": "sfx", "kind": "sweep_up", "params": {"start": 130, "end": 520, "dur": 1.4}, "gain": 0.2, "fx": [{"type": "tremolo", "rate": 14, "depth": 0.8}]}
+    ], "fx": [{"type": "reverb", "mix": 0.15, "size": 0.5}]},
+    {"out": "eclat.wav", "duration": 0.8, "layers": [
+      {"type": "sfx", "kind": "pop", "params": {"freq": 260}, "gain": 0.9},
+      {"type": "drum", "kind": "kick", "params": {"tune": 65, "decay": 0.2}, "gain": 0.5},
+      {"type": "sfx", "kind": "noise", "params": {"dur": 0.12}, "gain": 0.45, "fx": [{"type": "bandpass", "center": 3200, "q": 1.5}]},
+      {"type": "sfx", "kind": "click", "params": {"tone": 3800}, "at": 0.03, "gain": 0.4},
+      {"type": "sfx", "kind": "click", "params": {"tone": 3000}, "at": 0.06, "gain": 0.3},
+      {"type": "sfx", "kind": "magic", "params": {"dur": 0.6, "density": 12, "freq": "C6"}, "at": 0.06, "gain": 0.35}
+    ], "fx": [{"type": "reverb", "mix": 0.2, "size": 0.45}]},
+    {"out": "eclat_fort.wav", "duration": 1.5, "layers": [
+      {"type": "sfx", "kind": "explosion", "params": {"dur": 0.7, "boom": 1.0}, "gain": 0.55, "fx": [{"type": "lowpass", "cutoff": 1500}]},
+      {"type": "drum", "kind": "kick", "params": {"tune": 50, "decay": 0.4}, "gain": 0.8},
+      {"type": "sfx", "kind": "pop", "params": {"freq": 220}, "gain": 0.6},
+      {"type": "sfx", "kind": "noise", "params": {"dur": 0.18}, "gain": 0.4, "fx": [{"type": "bandpass", "center": 3000, "q": 1.4}]},
+      {"type": "synth", "inst": "choir", "notes": "C4 G4 C5 E5", "dur": 1.0, "vel": 0.7, "at": 0.05, "gain": 0.4},
+      {"type": "synth", "inst": "strings", "notes": "C3 G3 E4", "dur": 1.0, "vel": 0.7, "at": 0.05, "gain": 0.35, "params": {"attack": 0.05}},
+      {"type": "sfx", "kind": "magic", "params": {"dur": 1.1, "density": 20, "freq": "C6"}, "at": 0.08, "gain": 0.35},
+      {"type": "drum", "kind": "crash", "params": {"decay": 1.0}, "gain": 0.25}
+    ], "fx": [{"type": "chorus", "mix": 0.2}, {"type": "reverb", "mix": 0.28, "size": 0.65}]},
+
+    {"out": "jingle0.wav", "duration": 0.5, "layers": [
+      {"type": "seq", "inst": "marimba", "steps": "G5:0.09 C6:0.3", "vel": 0.7}
+    ], "fx": [{"type": "reverb", "mix": 0.18, "size": 0.35}]},
+    {"out": "jingle1.wav", "duration": 0.8, "layers": [
+      {"type": "seq", "inst": "marimba", "steps": "C5:0.08 E5:0.08 G5:0.4", "vel": 0.7, "gain": 0.8},
+      {"type": "synth", "inst": "kalimba", "notes": "C6", "dur": 0.4, "vel": 0.6, "at": 0.16, "gain": 0.5}
+    ], "fx": [{"type": "reverb", "mix": 0.2, "size": 0.4}]},
+    {"out": "jingle2.wav", "duration": 1.0, "layers": [
+      {"type": "seq", "inst": "harp", "steps": "C5:0.06 E5:0.06 G5:0.06 C6:0.5", "vel": 0.7, "gain": 0.7},
+      {"type": "seq", "inst": "celesta", "steps": "-:0.18 E6:0.1 G6:0.4", "vel": 0.55, "gain": 0.45},
+      {"type": "synth", "inst": "strings", "notes": "C4 G4", "dur": 0.6, "vel": 0.55, "at": 0.18, "gain": 0.3, "params": {"attack": 0.05}}
+    ], "fx": [{"type": "reverb", "mix": 0.22, "size": 0.45}]},
+    {"out": "jingle3.wav", "duration": 1.3, "layers": [
+      {"type": "seq", "inst": "vibraphone", "steps": "C5:0.08 E5:0.08 G5:0.08 B5:0.08 E6:0.6", "vel": 0.7, "gain": 0.7},
+      {"type": "synth", "inst": "strings", "notes": "C4 G4 B4 E5", "dur": 0.8, "vel": 0.65, "at": 0.3, "gain": 0.4, "params": {"attack": 0.05}},
+      {"type": "seq", "inst": "glockenspiel", "steps": "-:0.32 G6:0.08 B6:0.08 E7:0.4", "vel": 0.45, "gain": 0.3},
+      {"type": "drum", "kind": "triangle", "at": 0.32, "gain": 0.15}
+    ], "fx": [{"type": "reverb", "mix": 0.25, "size": 0.5}]},
+    {"out": "jingle4.wav", "duration": 2.0, "layers": [
+      {"type": "seq", "inst": "brass", "steps": "G4:0.12 C5:0.12 E5:0.12 G5:0.24 E5:0.12 [C5,E5,G5,C6]:0.9", "vel": 0.8, "gain": 0.7, "params": {"attack": 0.02}},
+      {"type": "seq", "inst": "trumpet", "steps": "-:0.6 G5:0.12 C6:0.8", "vel": 0.65, "gain": 0.4},
+      {"type": "synth", "inst": "strings", "notes": "C3 G3 C4 E4", "dur": 1.2, "vel": 0.7, "at": 0.6, "gain": 0.4, "params": {"attack": 0.05}},
+      {"type": "synth", "inst": "timpani", "notes": "C3", "dur": 0.5, "vel": 0.8, "at": 0.6, "gain": 0.6},
+      {"type": "drum", "kind": "crash", "params": {"decay": 1.2}, "at": 0.6, "gain": 0.25},
+      {"type": "sfx", "kind": "magic", "params": {"dur": 1.0, "density": 12, "freq": "C6"}, "at": 0.65, "gain": 0.2}
+    ], "fx": [{"type": "reverb", "mix": 0.25, "size": 0.6}, {"type": "compressor", "threshold": -16, "ratio": 2.5}]},
+    {"out": "jingle5.wav", "duration": 2.5, "layers": [
+      {"type": "seq", "inst": "french_horn", "steps": "C4:0.18 G4:0.18 C5:0.36 Ab4:0.18 Bb4:0.18 C5:1.2", "vel": 0.85, "gain": 0.75},
+      {"type": "seq", "inst": "brass", "steps": "-:0.72 [Ab3,C4,Eb4]:0.18 [Bb3,D4,F4]:0.18 [C4,E4,G4,C5]:1.2", "vel": 0.75, "gain": 0.5, "params": {"attack": 0.03}},
+      {"type": "synth", "inst": "choir", "notes": "C4 G4 C5 E5", "dur": 1.3, "vel": 0.7, "at": 1.08, "gain": 0.45},
+      {"type": "drum", "kind": "taiko", "params": {"tune": 55}, "at": 0.0, "gain": 0.7},
+      {"type": "drum", "kind": "taiko", "params": {"tune": 55}, "at": 0.36, "gain": 0.55},
+      {"type": "synth", "inst": "timpani", "notes": "C3", "dur": 0.8, "vel": 0.9, "at": 1.08, "gain": 0.7},
+      {"type": "drum", "kind": "crash", "params": {"decay": 1.4}, "at": 1.08, "gain": 0.28}
+    ], "fx": [{"type": "reverb", "mix": 0.28, "size": 0.7}, {"type": "compressor", "threshold": -16, "ratio": 2.5}]},
+    {"out": "jingle6.wav", "duration": 2.5, "layers": [
+      {"type": "seq", "inst": "celesta", "steps": "C6:0.09 G5:0.09 E6:0.09 C6:0.09 G6:0.09 E6:0.09 C7:0.9", "vel": 0.55, "gain": 0.6},
+      {"type": "synth", "inst": "choir", "notes": "E4 G4 C5", "dur": 1.8, "vel": 0.6, "at": 0.1, "gain": 0.45, "params": {"vowel": "o"}},
+      {"type": "synth", "inst": "strings", "notes": "C3 G3 E4", "dur": 1.8, "vel": 0.5, "at": 0.0, "gain": 0.3, "params": {"attack": 0.3}},
+      {"type": "synth", "inst": "glockenspiel", "notes": "G6", "dur": 0.6, "vel": 0.4, "at": 0.65, "gain": 0.25},
+      {"type": "sfx", "kind": "magic", "params": {"dur": 1.6, "density": 18, "freq": "G5"}, "at": 0.5, "gain": 0.2}
+    ], "fx": [{"type": "chorus", "mix": 0.3}, {"type": "reverb", "mix": 0.38, "size": 0.8}]},
+    {"out": "jingle7.wav", "duration": 3.0, "layers": [
+      {"type": "seq", "inst": "glass", "steps": "C5:0.14 D5:0.14 E5:0.14 F#5:0.14 G#5:0.14 A#5:0.14 C6:1.2", "vel": 0.6, "gain": 0.6, "fx": [{"type": "flanger", "rate": 0.4, "mix": 0.5}]},
+      {"type": "synth", "inst": "theremin", "notes": "E5", "dur": 1.6, "vel": 0.5, "at": 0.5, "gain": 0.3, "fx": [{"type": "vibrato", "rate": 3.5, "depth": 0.6}]},
+      {"type": "synth", "inst": "bell", "notes": "C5 F#5", "dur": 1.2, "vel": 0.5, "at": 0.84, "gain": 0.35, "params": {"ratio": 2.7, "bright": 0.5}},
+      {"type": "synth", "inst": "strings", "notes": "C4 E4 G#4", "dur": 2.0, "vel": 0.5, "at": 0.3, "gain": 0.3, "params": {"attack": 0.4}, "fx": [{"type": "pitch", "semitones": 0.25}]},
+      {"type": "synth", "inst": "strings", "notes": "C4 E4 G#4", "dur": 2.0, "vel": 0.5, "at": 0.3, "gain": 0.3, "params": {"attack": 0.4}, "fx": [{"type": "pitch", "semitones": -0.25}]},
+      {"type": "sfx", "kind": "magic", "params": {"dur": 2.0, "density": 16, "freq": "A5"}, "at": 0.9, "gain": 0.2, "fx": [{"type": "reverse"}]}
+    ], "fx": [{"type": "phaser", "rate": 0.6, "mix": 0.3}, {"type": "reverb", "mix": 0.4, "size": 0.8}]},
+    {"out": "jingle8.wav", "duration": 3.0, "layers": [
+      {"type": "pattern", "kind": "taiko", "steps": "X--x--x-X-x-xxX---------", "step": 0.1, "gain": 0.8},
+      {"type": "pattern", "kind": "tom", "steps": "--o--x---o--x-x-", "step": 0.1, "gain": 0.4},
+      {"type": "seq", "inst": "french_horn", "steps": "-:0.8 C3:0.3 G3:0.3 C4:1.2", "vel": 0.85, "gain": 0.7},
+      {"type": "synth", "inst": "didgeridoo", "notes": "C2", "dur": 2.2, "vel": 0.7, "at": 0.2, "gain": 0.35},
+      {"type": "synth", "inst": "timpani", "notes": "C3", "dur": 1.0, "vel": 0.9, "at": 1.4, "gain": 0.6},
+      {"type": "drum", "kind": "gong", "params": {"decay": 2.0}, "at": 1.4, "gain": 0.3}
+    ], "fx": [{"type": "reverb", "mix": 0.22, "size": 0.65}, {"type": "compressor", "threshold": -16, "ratio": 2.5}]},
+
+    {"out": "shiny.wav", "duration": 1.0, "layers": [
+      {"type": "seq", "inst": "glockenspiel", "steps": "C7:0.05 G6:0.05 E6:0.05 C6:0.05 G6:0.05 E6:0.05 G6:0.4", "vel": 0.5, "gain": 0.45},
+      {"type": "seq", "inst": "celesta", "steps": "E6:0.07 C6:0.07 G5:0.07 E6:0.5", "vel": 0.55, "at": 0.08, "gain": 0.45},
+      {"type": "sfx", "kind": "magic", "params": {"dur": 0.8, "density": 16, "freq": "C6"}, "gain": 0.3}
+    ], "fx": [{"type": "reverb", "mix": 0.3, "size": 0.5}]},
+    {"out": "modif.wav", "duration": 0.8, "layers": [
+      {"type": "synth", "inst": "strings", "notes": "C4 G4 E5", "dur": 0.55, "vel": 0.55, "gain": 0.45, "params": {"attack": 0.3}},
+      {"type": "sfx", "kind": "sweep_up", "params": {"start": 400, "end": 1200, "dur": 0.5}, "gain": 0.12},
+      {"type": "sfx", "kind": "magic", "params": {"dur": 0.6, "density": 10, "freq": "E6"}, "at": 0.15, "gain": 0.3}
+    ], "fx": [{"type": "chorus", "mix": 0.4}, {"type": "reverb", "mix": 0.3, "size": 0.5}]},
+    {"out": "piece.wav", "duration": 0.3, "layers": [
+      {"type": "sfx", "kind": "steel_ball", "params": {"surface": "metal", "force": 0.5}, "gain": 0.6},
+      {"type": "sfx", "kind": "coin", "params": {"freq": "B5"}, "gain": 0.35},
+      {"type": "drum", "kind": "triangle", "params": {"open": 0.3, "tune": 2600}, "at": 0.02, "gain": 0.15}
+    ], "fx": [{"type": "reverb", "mix": 0.12, "size": 0.25}]},
+    {"out": "clic.wav", "duration": 0.06, "layers": [
+      {"type": "sfx", "kind": "click", "params": {"tone": 1800}},
+      {"type": "drum", "kind": "woodblock", "params": {"tune": 1400}, "gain": 0.2}
+    ], "fx": [{"type": "lowpass", "cutoff": 4000}]},
+    {"out": "carte.wav", "duration": 0.25, "layers": [
+      {"type": "sfx", "kind": "swoosh", "params": {"dur": 0.18}, "gain": 0.6},
+      {"type": "sfx", "kind": "noise", "params": {"dur": 0.05, "color": "pink"}, "at": 0.15, "gain": 0.5, "fx": [{"type": "bandpass", "center": 2200, "q": 1.5}]},
+      {"type": "sfx", "kind": "click", "params": {"tone": 2200}, "at": 0.16, "gain": 0.3}
+     ], "fx": [{"type": "lowpass", "cutoff": 5500}]},
+    {"out": "carte_rare.wav", "duration": 0.6, "layers": [
+      {"type": "sfx", "kind": "swoosh", "params": {"dur": 0.18}, "gain": 0.6},
+      {"type": "sfx", "kind": "noise", "params": {"dur": 0.05, "color": "pink"}, "at": 0.15, "gain": 0.5, "fx": [{"type": "bandpass", "center": 2200, "q": 1.5}]},
+      {"type": "synth", "inst": "celesta", "notes": "G5 C6 E6", "dur": 0.35, "vel": 0.6, "at": 0.17, "gain": 0.55},
+      {"type": "synth", "inst": "glockenspiel", "notes": "G6", "dur": 0.3, "vel": 0.4, "at": 0.2, "gain": 0.25}
+    ], "fx": [{"type": "lowpass", "cutoff": 5500}, {"type": "reverb", "mix": 0.22, "size": 0.4}]},
+
+    {"out": "trou_noir.wav", "duration": 1.8, "layers": [
+      {"type": "sfx", "kind": "whoosh", "params": {"dur": 1.0, "low": 80, "high": 2500, "direction": "down"}, "gain": 0.7},
+      {"type": "sfx", "kind": "sweep_down", "params": {"start": 600, "end": 35, "dur": 1.2}, "gain": 0.3},
+      {"type": "sfx", "kind": "tone", "params": {"freq": 38, "dur": 1.2}, "at": 0.5, "gain": 0.6, "fx": [{"type": "fade", "in": 0.3, "out": 0.6}]},
+      {"type": "sfx", "kind": "noise", "params": {"dur": 1.2, "color": "brown", "attack": 0.5}, "at": 0.4, "gain": 0.6, "fx": [{"type": "lowpass", "cutoff": 160}]}
+    ], "fx": [{"type": "reverb", "mix": 0.2, "size": 0.7}]},
+    {"out": "eclipse.wav", "duration": 2.2, "layers": [
+      {"type": "synth", "inst": "strings", "notes": "C3 Eb3 G3", "dur": 1.1, "vel": 0.6, "gain": 0.5, "params": {"attack": 0.8, "release": 0.2}},
+      {"type": "sfx", "kind": "noise", "params": {"dur": 1.1, "color": "brown", "attack": 0.9}, "gain": 0.4, "fx": [{"type": "lowpass", "cutoff": 300}]},
+      {"type": "synth", "inst": "choir", "notes": "C4 G4 C5 E5", "dur": 0.9, "vel": 0.75, "at": 1.05, "gain": 0.55},
+      {"type": "synth", "inst": "celesta", "notes": "C6 E6 G6", "dur": 0.6, "vel": 0.55, "at": 1.05, "gain": 0.35},
+      {"type": "sfx", "kind": "magic", "params": {"dur": 0.9, "density": 14, "freq": "C6"}, "at": 1.08, "gain": 0.25}
+    ], "fx": [{"type": "reverb", "mix": 0.32, "size": 0.75}]},
+    {"out": "fonte.wav", "duration": 1.8, "layers": [
+      {"type": "sfx", "kind": "bubble", "params": {"freq": 220}, "at": 0.0, "gain": 0.6},
+      {"type": "sfx", "kind": "bubble", "params": {"freq": 180}, "at": 0.35, "gain": 0.55},
+      {"type": "sfx", "kind": "bubble", "params": {"freq": 260}, "at": 0.72, "gain": 0.5},
+      {"type": "sfx", "kind": "bubble", "params": {"freq": 160}, "at": 1.1, "gain": 0.5},
+      {"type": "sfx", "kind": "pop", "params": {"freq": 700}, "at": 0.5, "gain": 0.25},
+      {"type": "sfx", "kind": "pop", "params": {"freq": 900}, "at": 1.3, "gain": 0.2},
+      {"type": "sfx", "kind": "noise", "params": {"dur": 1.6, "attack": 0.2}, "gain": 0.12, "fx": [{"type": "highpass", "cutoff": 3000}, {"type": "lowpass", "cutoff": 7000}, {"type": "tremolo", "rate": 23, "depth": 0.8}]}
+    ], "fx": [{"type": "reverb", "mix": 0.15, "size": 0.35}]},
+    {"out": "abysse.wav", "duration": 2.2, "layers": [
+      {"type": "sfx", "kind": "tone", "params": {"freq": 55, "dur": 2.0}, "gain": 0.5, "fx": [{"type": "fade", "in": 0.4, "out": 0.8}]},
+      {"type": "synth", "inst": "warm_pad", "notes": "C2 G2", "dur": 1.6, "vel": 0.6, "gain": 0.5, "params": {"attack": 0.4, "cutoff": 500}},
+      {"type": "synth", "inst": "sine", "notes": "C6", "dur": 0.12, "vel": 0.5, "at": 0.35, "gain": 0.35, "fx": [{"type": "delay", "time": 0.32, "feedback": 0.45, "mix": 0.5}]}
+    ], "fx": [{"type": "reverb", "mix": 0.4, "size": 0.85}]},
+    {"out": "oeil.wav", "duration": 0.4, "layers": [
+      {"type": "sfx", "kind": "bubble", "params": {"freq": 140}, "gain": 0.5},
+      {"type": "sfx", "kind": "noise", "params": {"dur": 0.12, "color": "pink"}, "at": 0.03, "gain": 0.45, "fx": [{"type": "sweep", "kind": "bandpass", "start": 2500, "end": 600, "q": 4.0}]},
+      {"type": "sfx", "kind": "pop", "params": {"freq": 320}, "at": 0.16, "gain": 0.35},
+      {"type": "sfx", "kind": "noise", "params": {"dur": 0.08, "color": "pink"}, "at": 0.18, "gain": 0.3, "fx": [{"type": "sweep", "kind": "bandpass", "start": 700, "end": 2200, "q": 4.0}]}
+    ], "fx": [{"type": "reverb", "mix": 0.1, "size": 0.2}]},
+    {"out": "vague.wav", "duration": 1.7, "layers": [
+      {"type": "sfx", "kind": "noise", "params": {"dur": 1.6, "color": "pink", "attack": 0.6}, "gain": 0.8, "fx": [{"type": "sweep", "kind": "lowpass", "start": 400, "end": 3500, "q": 0.8}, {"type": "fade", "out": 0.8}]},
+      {"type": "sfx", "kind": "whoosh", "params": {"dur": 0.9, "low": 200, "high": 2000, "direction": "up"}, "at": 0.1, "gain": 0.35},
+      {"type": "sfx", "kind": "noise", "params": {"dur": 0.8}, "at": 0.7, "gain": 0.25, "fx": [{"type": "highpass", "cutoff": 2500}, {"type": "fade", "out": 0.6}]}
+    ], "fx": [{"type": "lowpass", "cutoff": 5500}, {"type": "reverb", "mix": 0.2, "size": 0.6}]},
+    {"out": "coquillage.wav", "duration": 1.8, "layers": [
+      {"type": "sfx", "kind": "door", "gain": 0.6, "fx": [{"type": "speed", "factor": 0.8}]},
+      {"type": "drum", "kind": "guiro", "params": {"dur": 0.5, "ridges": 18}, "at": 0.05, "gain": 0.3, "fx": [{"type": "lowpass", "cutoff": 2000}]},
+      {"type": "synth", "inst": "celesta", "notes": "E6", "dur": 0.4, "vel": 0.55, "at": 0.6, "gain": 0.4},
+      {"type": "seq", "inst": "glockenspiel", "steps": "G6:0.06 C7:0.06 E7:0.5", "vel": 0.4, "at": 0.65, "gain": 0.25},
+      {"type": "sfx", "kind": "magic", "params": {"dur": 0.9, "density": 12, "freq": "E6"}, "at": 0.62, "gain": 0.3}
+    ], "fx": [{"type": "reverb", "mix": 0.25, "size": 0.5}]},
+    {"out": "remous.wav", "duration": 1.6, "layers": [
+      {"type": "sfx", "kind": "noise", "params": {"dur": 1.2, "color": "pink", "attack": 0.3}, "gain": 0.6, "fx": [{"type": "sweep", "kind": "bandpass", "start": 300, "end": 2000, "q": 3.0}, {"type": "tremolo", "rate": 7, "depth": 0.6}]},
+      {"type": "sfx", "kind": "bubble", "params": {"freq": 300}, "at": 0.3, "gain": 0.35},
+      {"type": "sfx", "kind": "bubble", "params": {"freq": 420}, "at": 0.6, "gain": 0.3},
+      {"type": "sfx", "kind": "noise", "params": {"dur": 0.35, "color": "pink"}, "at": 1.05, "gain": 0.6, "fx": [{"type": "highpass", "cutoff": 700}, {"type": "lowpass", "cutoff": 5000}]},
+      {"type": "drum", "kind": "kick", "params": {"tune": 80, "decay": 0.15, "punch": 0.3}, "at": 1.05, "gain": 0.4}
+    ], "fx": [{"type": "reverb", "mix": 0.2, "size": 0.45}]},
+    {"out": "tresor.wav", "duration": 1.8, "layers": [
+      {"type": "sfx", "kind": "steel_ball", "params": {"surface": "metal", "force": 0.6}, "gain": 0.4, "repeat": 9, "every": 0.11},
+      {"type": "sfx", "kind": "coin", "params": {"freq": "B5"}, "at": 0.05, "gain": 0.25},
+      {"type": "sfx", "kind": "coin", "params": {"freq": "E6"}, "at": 0.4, "gain": 0.2},
+      {"type": "sfx", "kind": "coin", "params": {"freq": "G5"}, "at": 0.75, "gain": 0.2},
+      {"type": "seq", "inst": "glockenspiel", "steps": "E6:0.08 G6:0.08 C7:0.08 E7:0.5", "vel": 0.4, "at": 0.95, "gain": 0.25},
+      {"type": "sfx", "kind": "magic", "params": {"dur": 0.8, "density": 12, "freq": "C6"}, "at": 0.9, "gain": 0.25}
+    ], "fx": [{"type": "reverb", "mix": 0.18, "size": 0.4}]},
+    {"out": "prisme.wav", "duration": 1.6, "layers": [
+      {"type": "seq", "inst": "glass", "steps": "C5:0.1 E5:0.1 G5:0.1 B5:0.1 D6:0.1 G6:0.7", "vel": 0.55, "gain": 0.55},
+      {"type": "sfx", "kind": "sweep_up", "params": {"start": 300, "end": 1800, "dur": 0.8}, "gain": 0.12},
+      {"type": "synth", "inst": "strings", "notes": "G3 D4 B4", "dur": 1.0, "vel": 0.5, "gain": 0.3, "params": {"attack": 0.3}},
+      {"type": "sfx", "kind": "magic", "params": {"dur": 1.0, "density": 14, "freq": "G5"}, "at": 0.4, "gain": 0.25}
+    ], "fx": [{"type": "chorus", "mix": 0.4}, {"type": "reverb", "mix": 0.32, "size": 0.6}]}
+  ]
+}

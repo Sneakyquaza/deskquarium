@@ -892,8 +892,13 @@ pub fn eclosion(
         shiny: forme.shiny,
         modif: forme.modif,
     };
-    let mut ecl =
-        crate::eclosion::Eclosion::nouvelle(&f, oeuf.min(crate::jeu::OEUFS.len() - 1), 0.0, dore);
+    let mut ecl = crate::eclosion::Eclosion::nouvelle(
+        &f,
+        oeuf.min(crate::jeu::OEUFS.len() - 1),
+        0.0,
+        dore,
+        false,
+    );
     let duree = ecl.suspense() + 2.6;
     let k = 3usize;
     let (l, h) = (ecl.toile.lf() * k, ecl.toile.hf() * k);
@@ -920,10 +925,12 @@ pub fn eclosion(
         .map_err(|e| format!("{ffmpeg} : {e} (AQUARIUM_FFMPEG pour donner le chemin)"))?;
     let mut entree = enfant.stdin.take().ok_or("ffmpeg sans entrée")?;
     let mut cases = Vec::new();
+    let mut sons = Vec::new();
     let n = (duree * 60.0) as usize;
     for i in 0..n {
         let t = i as f64 / 60.0;
         ecl.dessiner(t);
+        sons.extend(ecl.sons.drain(..).map(|(s, h)| (t, s, h)));
         let img = ecl.toile.agrandie_rgba(k * crate::toile::FIN);
         entree.write_all(&img).map_err(|e| e.to_string())?;
         if i % 6 == 0 {
@@ -935,6 +942,7 @@ pub fn eclosion(
     if !s.success() {
         return Err(format!("ffmpeg : {s}"));
     }
+    ajouter_son(&ffmpeg, &sortie.with_extension("mp4"), &sons, duree)?;
     // Planche : 8 colonnes, temps au-dessus de chaque image.
     let (cl, ch) = (128i32, 96i32);
     let n_col = 8;
@@ -964,10 +972,39 @@ pub fn eclosion(
     enregistrer(&p, 2, &sortie.with_extension("png"))
 }
 
+/// Met la piste son (sons de l'Écloserie mixés hors ligne, `son::rendre_wav`) sur la vidéo.
+pub fn ajouter_son(
+    ffmpeg: &str,
+    video: &Path,
+    sons: &[(f64, crate::son::Son, f32)],
+    duree: f64,
+) -> Result<(), String> {
+    let wav = video.with_extension("wav");
+    crate::son::rendre_wav(sons, duree, 0.8, &wav).map_err(|e| e.to_string())?;
+    let tmp = video.with_extension("son.mp4");
+    let s = std::process::Command::new(ffmpeg)
+        .args(["-y", "-loglevel", "error", "-i"])
+        .arg(video)
+        .arg("-i")
+        .arg(&wav)
+        .args(["-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-shortest"])
+        .arg(&tmp)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !s.success() {
+        return Err(format!("ffmpeg (son) : {s}"));
+    }
+    std::fs::rename(&tmp, video).map_err(|e| e.to_string())?;
+    std::fs::rename(&wav, video.with_extension("son.wav")).map_err(|e| e.to_string())
+}
+
 /// Planche des œufs (v0.10) : chaque œuf (une ligne) à 6 instants de son animation au repos.
 pub fn planche_oeufs(sortie: &Path) -> Result<(), String> {
     let n = crate::jeu::OEUFS.len();
-    let (cl, ch) = (48i32, 52i32);
+    let (cl, ch) = (
+        crate::eclosion::VIGNETTE.0 as i32,
+        crate::eclosion::VIGNETTE.1 as i32,
+    );
     let mut p = Toile::new((cl * 6 + 70) as usize, ((ch + 2) * n as i32) as usize);
     p.rect(0, 0, p.l as i32, p.h as i32, [0x10, 0x32, 0x4a], 255);
     for i in 0..n {
