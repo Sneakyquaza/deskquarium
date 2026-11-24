@@ -1,0 +1,41 @@
+AQUARIUM v0.1 - fond d'écran aquarium pixel art + petit jeu idle (Windows 10/11, 64 bits)
+
+LANCER
+- Décompresse le dossier où tu veux (par exemple Documents\aquarium) et lance aquarium.exe.
+- L'aquarium se dessine derrière les icônes du bureau, par-dessus ton fond d'écran.
+- Windows peut afficher « Windows a protégé votre ordinateur » (exe non signé) :
+  « Informations complémentaires » puis « Exécuter quand même ».
+
+JOUER
+- Icône du poisson près de l'horloge (zone de notification, parfois dans la flèche ^) :
+  clic gauche = ouvrir l'Écloserie ; clic droit = Ouvrir l'Écloserie, Pause, Quitter.
+- Raccourci : Ctrl + Alt + A ouvre l'Écloserie.
+- Les poissons rapportent de l'argent (compteur en bas à gauche du bureau).
+  Avec l'argent, ouvre des œufs dans l'Écloserie : 4 œufs, 8 raretés
+  (Commun, Peu commun, Rare, Épique, Légendaire, Mythique, Céleste, Irréel).
+- 40 poissons nagent dans l'aquarium ; les autres vont en réserve (onglet Mon aquarium).
+  « Nourrir » monte le niveau d'un poisson ; « Relâcher » le revend.
+- Hors ligne : à la relance, tu gagnes ce que l'aquarium a rapporté pendant ton absence (8 h au plus).
+- Réglages : teinte de l'eau (0 % = fond d'écran intact), nombre de poissons dessinés,
+  30/60 images par seconde, lancer au démarrage de Windows, pause en plein écran.
+
+QUITTER
+- Clic droit sur l'icône du poisson > Quitter. Le fond d'écran normal revient.
+  (Si une image figée restait : clic droit sur le bureau > Personnaliser, ou change de fond d'écran.)
+
+DÉSINSTALLER
+- Décoche « Lancer au démarrage de Windows » dans les Réglages (ou supprime la valeur
+  « Aquarium » de HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run).
+- Quitte l'aquarium, puis supprime le dossier de l'exe.
+- Ta sauvegarde est dans %APPDATA%\aquarium (partie.json + partie.bak) : supprime ce dossier
+  pour tout effacer.
+
+CE QUI N'A PAS ÉTÉ TESTÉ (version préparée sur un serveur Linux, sans Windows réel)
+- Rien n'a encore tourné sur un vrai Windows : l'exe a seulement été compilé et vérifié.
+- Incrustation derrière les icônes (WorkerW), en particulier Windows 11 24H2 et plus récent.
+- Icône de notification, menu, raccourci Ctrl+Alt+A, démarrage avec Windows.
+- Détection du plein écran (jeux, vidéos), retour du fond d'écran à la fermeture.
+- Plusieurs écrans : l'aquarium couvre l'écran principal seulement.
+- Écrans à mise à l'échelle (125 %, 150 %), fonds d'écran en diaporama ou Windows à la une.
+- Consommation processeur réelle (mesurée seulement sous Linux, voir le message d'accompagnement).
+Si quelque chose ne marche pas, une capture d'écran et ta version de Windows aideront beaucoup.
