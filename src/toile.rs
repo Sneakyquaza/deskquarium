@@ -2,11 +2,16 @@
 
 pub type Rgb = [u8; 3];
 
+/// Finesse de la toile : chaque pixel « monde » (décor, texte, effets) fait FIN x FIN pixels
+/// fins ; les sprites des espèces sont posés au pixel fin (deux fois plus de détail).
+pub const FIN: usize = 2;
+
 #[derive(Clone)]
 pub struct Toile {
+    /// Taille en pixels monde.
     pub l: usize,
     pub h: usize,
-    /// RGBA prémultiplié, ligne par ligne.
+    /// RGBA prémultiplié, ligne par ligne, en pixels fins (`lf()` x `hf()`).
     pub px: Vec<[u8; 4]>,
 }
 
@@ -15,8 +20,17 @@ impl Toile {
         Toile {
             l,
             h,
-            px: vec![[0; 4]; l * h],
+            px: vec![[0; 4]; l * h * FIN * FIN],
         }
+    }
+
+    /// Largeur et hauteur en pixels fins.
+    pub fn lf(&self) -> usize {
+        self.l * FIN
+    }
+
+    pub fn hf(&self) -> usize {
+        self.h * FIN
     }
 
     pub fn effacer(&mut self) {
@@ -25,17 +39,33 @@ impl Toile {
 
     #[inline]
     fn idx(&self, x: i32, y: i32) -> Option<usize> {
-        (x >= 0 && y >= 0 && (x as usize) < self.l && (y as usize) < self.h)
-            .then(|| y as usize * self.l + x as usize)
+        (x >= 0 && y >= 0 && (x as usize) < self.lf() && (y as usize) < self.hf())
+            .then(|| y as usize * self.lf() + x as usize)
     }
 
-    /// Pose une couleur avec une opacité `a` (0..255), par-dessus (« source-over »).
+    /// Pose une couleur avec une opacité `a` (0..255), par-dessus (« source-over »), sur le
+    /// pixel monde (x, y).
     #[inline]
     pub fn poser(&mut self, x: i32, y: i32, c: Rgb, a: u8) {
+        let f = FIN as i32;
+        for dy in 0..f {
+            for dx in 0..f {
+                self.poser_fin(x * f + dx, y * f + dy, c, a);
+            }
+        }
+    }
+
+    /// Pose une couleur sur un pixel fin.
+    #[inline]
+    pub fn poser_fin(&mut self, x: i32, y: i32, c: Rgb, a: u8) {
         if a == 0 {
             return;
         }
         if let Some(i) = self.idx(x, y) {
+            if a == 255 {
+                self.px[i] = [c[0], c[1], c[2], 255];
+                return;
+            }
             let d = &mut self.px[i];
             let a16 = a as u16;
             let inv = 255 - a16;
@@ -46,9 +76,20 @@ impl Toile {
         }
     }
 
-    /// Ajoute de la lumière (lueurs) : additif plafonné, rend aussi le pixel plus opaque.
+    /// Ajoute de la lumière (lueurs) sur un pixel monde.
     #[inline]
     pub fn eclairer(&mut self, x: i32, y: i32, c: Rgb, a: u8) {
+        let f = FIN as i32;
+        for dy in 0..f {
+            for dx in 0..f {
+                self.eclairer_fin(x * f + dx, y * f + dy, c, a);
+            }
+        }
+    }
+
+    /// Ajoute de la lumière sur un pixel fin : additif plafonné, rend aussi le pixel plus opaque.
+    #[inline]
+    pub fn eclairer_fin(&mut self, x: i32, y: i32, c: Rgb, a: u8) {
         if a == 0 {
             return;
         }
@@ -88,12 +129,15 @@ impl Toile {
         }
     }
 
-    /// Image RGBA non prémultipliée agrandie `e` fois (au plus proche), pour les PNG.
+    /// Image RGBA non prémultipliée agrandie `e` fois (pixels monde, au plus proche), pour
+    /// les PNG. `e` multiple de FIN.
     pub fn agrandie_rgba(&self, e: usize) -> Vec<u8> {
-        let mut out = Vec::with_capacity(self.l * e * self.h * e * 4);
-        for y in 0..self.h * e {
-            for x in 0..self.l * e {
-                out.extend_from_slice(&demultiplier(self.px[(y / e) * self.l + x / e]));
+        let k = (e / FIN).max(1);
+        let lf = self.lf();
+        let mut out = Vec::with_capacity(lf * k * self.hf() * k * 4);
+        for y in 0..self.hf() * k {
+            for x in 0..lf * k {
+                out.extend_from_slice(&demultiplier(self.px[(y / k) * lf + x / k]));
             }
         }
         out
@@ -247,6 +291,23 @@ fn glyphe(c: char) -> &'static str {
 }
 
 /// Couleurs : outils HSV et mélanges.
+pub fn rgb_hsv(c: Rgb) -> (f32, f32, f32) {
+    let [r, g, b] = c.map(|k| k as f32 / 255.0);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let d = max - min;
+    let h = if d <= 1e-6 {
+        0.0
+    } else if max == r {
+        ((g - b) / d).rem_euclid(6.0) / 6.0
+    } else if max == g {
+        ((b - r) / d + 2.0) / 6.0
+    } else {
+        ((r - g) / d + 4.0) / 6.0
+    };
+    (h, if max <= 0.0 { 0.0 } else { d / max }, max)
+}
+
 pub fn hsv(h: f32, s: f32, v: f32) -> Rgb {
     let h = h.rem_euclid(1.0) * 6.0;
     let i = h.floor();
@@ -263,9 +324,11 @@ pub fn hsv(h: f32, s: f32, v: f32) -> Rgb {
     [(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8]
 }
 
+#[inline]
 pub fn melange(a: Rgb, b: Rgb, t: f32) -> Rgb {
-    let t = t.clamp(0.0, 1.0);
-    [0, 1, 2].map(|k| (a[k] as f32 + (b[k] as f32 - a[k] as f32) * t).round() as u8)
+    // Calcul entier (appelé pour chaque pixel des sprites) : t sur 256 crans.
+    let t = (t.clamp(0.0, 1.0) * 256.0) as u32;
+    [0, 1, 2].map(|k| ((a[k] as u32 * (256 - t) + b[k] as u32 * t + 128) >> 8) as u8)
 }
 
 /// Seuil de tramage ordonné (Bayer 4x4) dans [0, 1) : sert à quantifier les dégradés en pixels.
@@ -285,8 +348,10 @@ mod tests {
         t.poser(0, 0, [255, 0, 0], 255);
         assert_eq!(t.px[0], [255, 0, 0, 255]);
         t.poser(1, 0, [255, 255, 255], 128);
-        assert_eq!(t.px[1], [128, 128, 128, 128]);
-        assert_eq!(demultiplier(t.px[1]), [255, 255, 255, 128]);
+        // Pixel monde (1, 0) = pixels fins 2..4 de la première ligne.
+        assert_eq!(t.px[FIN], [128, 128, 128, 128]);
+        assert_eq!(t.px[1], [255, 0, 0, 255]);
+        assert_eq!(demultiplier(t.px[FIN]), [255, 255, 255, 128]);
         // Hors toile : ignoré.
         t.poser(-1, 5, [1, 2, 3], 255);
     }

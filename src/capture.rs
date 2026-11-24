@@ -38,6 +38,9 @@ pub fn partie_demo() -> Partie {
         "crabe",
         "carpe_comete",
         "dauphin",
+        "ichthyosaure",
+        "trilobite",
+        "anguille",
     ];
     for cle in voulues {
         let Some(e) = crate::especes::par_cle(cle) else {
@@ -206,9 +209,14 @@ pub fn planche(sortie: &Path, secondes: f32) -> Result<(), String> {
     let mut id = 1;
     for (j, ligne) in lignes.iter().enumerate() {
         for (i, e) in ligne.iter().enumerate() {
-            let m = 2.0 * crate::poisson::MARGE as f32;
-            let k = ((cl as f32 - 6.0 - m) / e.dims.0 as f32)
-                .min((ch as f32 - 16.0 - m) / e.dims.1 as f32)
+            // Case en pixels monde, sprite en pixels fins.
+            let (f, m) = (
+                crate::toile::FIN as f32,
+                2.0 * crate::poisson::MARGE as f32 + 40.0, // animées : débordent du dessin
+            );
+            let k = ((cl as f32 - 6.0) * f - m) / e.dims.0 as f32;
+            let k = k
+                .min(((ch as f32 - 16.0) * f - m) / e.dims.1 as f32)
                 .min(1.0);
             let s = Arc::new(crate::poisson::sprite(e, 0, k));
             let x = (gauche + i * cl + cl / 2) as f32;
@@ -260,7 +268,8 @@ pub fn planche_geantes(sortie: &Path, secondes: f32) -> Result<(), String> {
     let mut places = Vec::new();
     let (mut x, mut y, mut hl) = (0, 0, 0);
     for e in &geantes {
-        let (w, h) = (e.dims.0 as usize + 16, e.dims.1 as usize + 22);
+        let f = crate::toile::FIN;
+        let (w, h) = (e.dims.0 as usize / f + 16, e.dims.1 as usize / f + 22);
         if x + w > largeur {
             x = 0;
             y += hl;
@@ -339,6 +348,55 @@ fn rendre_planche(
     }
     t.superposer(&aq.toile);
     t
+}
+
+/// Images d'animation des espèces `cles` (variante de base, sans effets), une ligne par
+/// espèce, agrandies x`e` : pour relire la déformation image par image.
+pub fn planche_images(sortie: &Path, cles: &[&str], e: usize) -> Result<(), String> {
+    let mut lignes = Vec::new();
+    for cle in cles {
+        let esp = crate::especes::par_cle(cle).ok_or(format!("espèce inconnue : {cle}"))?;
+        lignes.push((esp.nom, crate::poisson::sprite(esp, 0, 1.0)));
+    }
+    let n_col = lignes
+        .iter()
+        .map(|l| l.1.images.len())
+        .max()
+        .unwrap_or(1)
+        .min(8);
+    // Cases en pixels monde ; le sprite y est posé au pixel fin.
+    let f = crate::toile::FIN as i32;
+    let case = |s: &crate::poisson::Sprite| ((s.l + f - 1) / f + 1, (s.h + f - 1) / f + 1);
+    let (mut lt, mut ht) = (0usize, 0usize);
+    for (_, s) in &lignes {
+        let (cl, ch) = case(s);
+        lt = lt.max(n_col * cl as usize);
+        ht += s.images.len().div_ceil(n_col) * ch as usize + 9;
+    }
+    let mut t = Toile::new(lt, ht);
+    t.rect(0, 0, lt as i32, ht as i32, [0x12, 0x22, 0x3a], 255);
+    let mut y0 = 0i32;
+    for (nom, s) in &lignes {
+        let (cl, ch) = case(s);
+        t.texte(2, y0 + 2, nom, [0xe8, 0xf0, 0xf4], 255, Some([0, 0, 0]));
+        y0 += 9;
+        for (k, im) in s.images.iter().enumerate() {
+            let (cx, cy) = ((k % n_col) as i32 * cl, y0 + (k / n_col) as i32 * ch);
+            if (k + k / n_col) % 2 == 0 {
+                t.rect(cx, cy, cl, ch, [0x18, 0x2c, 0x48], 255);
+            }
+            for y in 0..s.h {
+                for x in 0..s.l {
+                    let p = im.px((y * s.l + x) as usize);
+                    if p[3] > 0 {
+                        t.poser_fin(cx * f + x, cy * f + y, [p[0], p[1], p[2]], p[3]);
+                    }
+                }
+            }
+        }
+        y0 += s.images.len().div_ceil(n_col) as i32 * ch;
+    }
+    enregistrer(&t, e, sortie)
 }
 
 fn enregistrer(t: &Toile, e: usize, sortie: &Path) -> Result<(), String> {

@@ -1,0 +1,62 @@
+# clé	image IA retenue (out/brouillons/ia/)	options de tools/pixeliser.py
+clown	clown_a	
+neon	neon_d	
+guppy	guppy_a	
+rouge	rouge_a	
+sardine	sardine_a	
+gobie	gobie_c	
+chirurgien	chirurgien_c	
+ange	ange_a	
+globe	globe_b	
+hippocampe	hippocampe_c	
+crabe	crabe_a	--vue face
+kraken	kraken_a	--largeur 378 --vue face --yeux 142,101,9;235,100,9
+crevette	crevette_b	
+meduse	meduse_a	--yeux aucun
+poulpe	poulpe_b	--vue face
+murene	murene_b	--yeux 162,14,2
+anguille	anguille_e	
+rascasse	rascasse_a	
+tortue	tortue_a	
+calamar	calamar_b	--yeux 71,24,5
+manta	manta_f	--nb-yeux 2
+marteau	marteau_c	--yeux 212,35,2;221,74,2
+espadon	espadon_d	--yeux 166,43,4
+phoque	phoque_d	
+dauphin	dauphin_e	
+mola	mola_c	
+blanc	blanc_a	
+orque	orque_d	
+requin_baleine	requin_baleine_a	
+narval	narval_c	
+calamar_geant	calamar_geant_a	--yeux 223,39,10
+baudroie	baudroie_d	--yeux 116,32,3 --lumieres 166,39,5
+dragon_feuillu	dragon_feuillu_a	
+coelacanthe	coelacanthe_a	
+lutin	lutin_c	
+bosse	bosse_a	
+isopode	isopode_a	
+hydre	hydre_a	--yeux 99,32,2;117,32,2;20,55,2;192,56,2
+cadborosaure	cadborosaure_a	
+baleine_stellaire	baleine_stellaire_b	
+meduse_nebuleuse	meduse_nebuleuse_c	--yeux aucun
+raie_aurore	raie_aurore_a	--yeux 178,61,2;177,87,2
+carpe_comete	carpe_comete_b	--yeux 204,46,3
+cthulhu	cthulhu_a	--yeux 126,36,2;146,36,2
+leviathan	leviathan_c	--yeux 347,36,2
+oeil	oeil_a	--yeux 137,95,52
+bloop	bloop_c	--yeux 401,46,3 --lumieres 334,50,1;347,49,1;360,49,1;372,49,1
+grand_abyssal	grand_abyssal_b	--yeux 338,14,2
+lusca	lusca_b	
+jormungandr	jormungandr_a	--yeux 436,36,2
+loch_ness	loch_ness_c	--yeux 217,6,2
+megalodon	megalodon_a	--yeux 274,64,2
+mosasaure	mosasaure_a	--yeux 306,15,2
+liopleurodon	liopleurodon_a	
+ichthyosaure	ichthyosaure_a	--yeux 161,33,4
+dunkleosteus	dunkleosteus_a	
+helicoprion	helicoprion_d	
+anomalocaris	anomalocaris_a	--yeux 154,15,4;154,58,4
+ammonite	ammonite_a	
+basilosaurus	basilosaurus_d	--yeux 234,13,1
+trilobite	trilobite_e	--largeur 110 --yeux 82,17,3;83,48,3

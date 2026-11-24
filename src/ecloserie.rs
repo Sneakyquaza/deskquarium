@@ -180,11 +180,14 @@ impl Ecloserie {
                 let e = crate::scene::espece_de(&f);
                 let k = crate::poisson::echelle_individu(f.taille);
                 let m = 2.0 * crate::poisson::MARGE as f32;
-                let petit = e.dims.0 as f32 * k + m <= 62.0 && e.dims.1 as f32 * k + m <= 46.0;
+                // Tailles en pixels fins (FIN par pixel monde).
+                let fin = crate::toile::FIN as f32;
+                let petit =
+                    e.dims.0 as f32 * k + m <= 62.0 * fin && e.dims.1 as f32 * k + m <= 46.0 * fin;
                 let (s, zoom) = if petit {
                     (crate::scene::sprite_de(&f), 2)
                 } else {
-                    (sprite_ajuste(&f, 126, 90), 1)
+                    (sprite_ajuste(&f, 126 * 2, 90 * 2), 1)
                 };
                 let (al, ah) = (128 / zoom as usize, 96 / zoom as usize);
                 let mut aq = Aquarium::new(al, ah, 9);
@@ -321,7 +324,13 @@ impl Ecloserie {
             self.vue_eclosion(ui, p, maintenant);
             return;
         }
-        let colonnes = if ui.available_width() > 820.0 { 4 } else { 2 };
+        let colonnes = if ui.available_width() > 1000.0 {
+            5
+        } else if ui.available_width() > 620.0 {
+            3
+        } else {
+            2
+        };
         let mut achat = None;
         egui::ScrollArea::vertical().show(ui, |ui| {
             for debut in (0..OEUFS.len()).step_by(colonnes) {
@@ -489,7 +498,11 @@ impl Ecloserie {
             .entry(f.graine)
             .or_insert_with(|| {
                 let s = sprite_ajuste(f, 108, 48);
-                texture(ctx, &format!("p{}", f.graine), &toile_sprite(&s, None))
+                ctx.load_texture(
+                    format!("p{}", f.graine),
+                    image_sprite(&s, None),
+                    TextureOptions::NEAREST,
+                )
             })
             .clone()
     }
@@ -758,7 +771,8 @@ impl Ecloserie {
                     .min(1.0);
                 let s = crate::poisson::sprite(e, 0, k);
                 let ombre = (!vu).then_some([0x05, 0x14, 0x20]);
-                texture(ui.ctx(), &cle, &toile_sprite(&s, ombre))
+                ui.ctx()
+                    .load_texture(&cle, image_sprite(&s, ombre), TextureOptions::NEAREST)
             })
             .clone();
         let zone =
@@ -922,7 +936,7 @@ fn court_pct(c: f64) -> String {
 }
 
 /// Barre des chances : un segment par rareté, largeur ∝ probabilité (minimum visible).
-fn barre_chances(ui: &mut Ui, chances: &[f64; 8]) {
+fn barre_chances(ui: &mut Ui, chances: &[f64; 9]) {
     let (rect, _) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 10.0), egui::Sense::hover());
     let p = ui.painter();
@@ -950,7 +964,8 @@ fn barre_chances(ui: &mut Ui, chances: &[f64; 8]) {
     }
 }
 
-/// Nom de la rareté en grand ; Irréel : lettres arc-en-ciel qui défilent.
+/// Nom de la rareté en grand ; Irréel : lettres arc-en-ciel qui défilent ; Préhistorique :
+/// ambre qui luit par vagues.
 fn texte_rarete(r: Rarete, t: f64, taille: f32) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
     for (i, ch) in r.nom().chars().enumerate() {
@@ -960,6 +975,10 @@ fn texte_rarete(r: Rarete, t: f64, taille: f32) -> egui::text::LayoutJob {
                 0.55,
                 1.0,
             ))
+        } else if r == Rarete::Prehistorique {
+            // Ambre qui luit par vagues lentes, lettre après lettre.
+            let k = (0.5 + 0.5 * (t as f32 * 2.0 - i as f32 * 0.5).sin()) * 0.6;
+            c32(crate::toile::melange(r.couleur(), [0xff, 0xf0, 0xc0], k))
         } else {
             c32(r.couleur())
         };
@@ -999,18 +1018,22 @@ fn piece_ui(ui: &Ui, r: egui::Rect) {
     }
 }
 
-/// Image 0 d'un sprite dans une toile ; `ombre` = silhouette unie de cette couleur.
-fn toile_sprite(s: &crate::poisson::Sprite, ombre: Option<Rgb>) -> Toile {
-    let mut t = Toile::new(s.l as usize, s.h as usize);
-    for (i, px) in s.images[0].px.iter().enumerate() {
-        let c = ombre.unwrap_or([px[0], px[1], px[2]]);
-        t.poser(i as i32 % s.l, i as i32 / s.l, c, px[3]);
-    }
-    t
+/// Image 0 d'un sprite (un texel par pixel du sprite) ; `ombre` = silhouette unie de cette
+/// couleur, tirée de l'alpha du sprite.
+fn image_sprite(s: &crate::poisson::Sprite, ombre: Option<Rgb>) -> egui::ColorImage {
+    let im = &s.images[0];
+    let px: Vec<u8> = (0..im.idx.len())
+        .map(|i| im.px(i))
+        .flat_map(|p| {
+            let c = ombre.unwrap_or([p[0], p[1], p[2]]);
+            [c[0], c[1], c[2], p[3]]
+        })
+        .collect();
+    egui::ColorImage::from_rgba_unmultiplied([s.l as usize, s.h as usize], &px)
 }
 
 pub fn image_couleur(t: &Toile) -> egui::ColorImage {
-    egui::ColorImage::from_rgba_premultiplied([t.l, t.h], t.px.as_flattened())
+    egui::ColorImage::from_rgba_premultiplied([t.lf(), t.hf()], t.px.as_flattened())
 }
 
 fn texture(ctx: &egui::Context, nom: &str, t: &Toile) -> TextureHandle {
@@ -1214,17 +1237,19 @@ fn dessiner_eclosion(e: &mut Eclosion, t: f64) {
     e.poisson.dessiner(&Partie::nouvelle(0, 0));
     let src = &e.poisson.toile;
     let z = e.zoom;
-    let (ox, oy) = (cx - src.l as i32 * z / 2, cy - src.h as i32 * z / 2);
-    for y in 0..src.h as i32 {
-        for x in 0..src.l as i32 {
-            let p = src.px[(y * src.l as i32 + x) as usize];
+    let f = crate::toile::FIN as i32;
+    let (sl, sh) = (src.lf() as i32, src.hf() as i32);
+    let (ox, oy) = (cx * f - sl * z / 2, cy * f - sh * z / 2);
+    for y in 0..sh {
+        for x in 0..sl {
+            let p = src.px[(y * sl + x) as usize];
             if p[3] == 0 {
                 continue;
             }
             let c = crate::toile::demultiplier(p);
             for dy in 0..z {
                 for dx in 0..z {
-                    toile.poser(ox + x * z + dx, oy + y * z + dy, [c[0], c[1], c[2]], c[3]);
+                    toile.poser_fin(ox + x * z + dx, oy + y * z + dy, [c[0], c[1], c[2]], c[3]);
                 }
             }
         }

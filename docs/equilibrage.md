@@ -16,6 +16,7 @@ Toutes les valeurs sont dans `src/jeu.rs`. Méthode « tableur d'abord » (skill
 | Mythique | 1 500 | rouge #ff526e |
 | Céleste | 7 500 | turquoise #72f2e6 |
 | Irréel | 40 000 | rose + arc-en-ciel animé |
+| Préhistorique (lot 3) | 220 000 | ambre #e89a3a + sédiments qui coulent |
 
 Rapport ≈ ×4,5 par rareté (exponentielle douce). Taille : 0,6 à 1,5, tirée `0,6 + 0,9·u^1,5` (les petits sont plus fréquents, moyenne ≈ 0,96).
 
@@ -23,12 +24,13 @@ Rapport ≈ ×4,5 par rareté (exponentielle douce). Taille : 0,6 à 1,5, tirée
 
 `prix = prix de base × (1 + n/10)²`, n = œufs de ce type déjà ouverts (polynomial : chaque œuf monte, sans mur exponentiel pour la chasse aux raretés hautes).
 
-| Œuf | Prix de base | Commun | Peu c. | Rare | Épique | Légend. | Mythique | Céleste | Irréel |
-|---|---|---|---|---|---|---|---|---|---|
-| Rivière | 80 | 70 | 25 | 4,5 | 0,5 | | | | |
-| Lagon | 5 000 | 30 | 42 | 20 | 6,5 | 1,5 | | | |
-| Abysses | 1 000 000 | | 20 | 42 | 26 | 9,5 | 2,5 | | |
-| Cosmique | 500 000 000 | | | 22 | 36 | 26 | 11 | 4,5 | 0,5 |
+| Œuf | Prix de base | Commun | Peu c. | Rare | Épique | Légend. | Mythique | Céleste | Irréel | Préhist. |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Rivière | 80 | 70 | 25 | 4,5 | 0,5 | | | | | |
+| Lagon | 5 000 | 30 | 42 | 20 | 6,5 | 1,5 | | | | |
+| Abysses | 1 000 000 | | 20 | 42 | 26 | 9,5 | 2,5 | | | |
+| Cosmique | 500 000 000 | | | 22 | 36 | 26 | 11 | 4,5 | 0,5 | |
+| Ambre (lot 3) | 30 000 000 000 | | | | | | | 12 | 8 | 80 |
 
 Tables vérifiées par test (200 000 tirages par œuf, écart < 0,35 point).
 
@@ -65,3 +67,10 @@ Lecture : au rythme d'un PC allumé ~8 h par jour (+ 8 h hors ligne la nuit), le
 L'espèce et la variante d'un poisson sont tirées de sa graine (`especes::choisir`), après la rareté : le flux aléatoire des œufs est le même qu'au lot 1, donc toutes les courbes ci-dessus restent valables. Le revenu ne dépend pas de l'espèce (pas de bonus de taille). Dans une rareté, chaque espèce a le poids 1, sauf Jörmungandr (0,35).
 
 Affichage : la limite `max_affiches` (40) compte des places : créature énorme = 2, colossale = 4, deux colossales au plus. Tous les poissons de l'aquarium (40 au plus) rapportent, affichés ou non.
+
+## Lot 3 : rareté Préhistorique et œuf d'ambre
+
+- 9e rareté au-dessus d'Irréel : revenu de base 220 000/s (×5,5, le même pas que les autres). Ses 10 espèces (mégalodon, mosasaure, liopleurodon, ichthyosaure, dunkleosteus, hélicoprion, anomalocaris, ammonite, basilosaurus, trilobite) ne sortent que de l'œuf d'ambre.
+- Œuf d'ambre : 30 Md (3e10), 80 % Préhistorique, 12 % Céleste, 8 % Irréel. Gain moyen ≈ 180 k/s par œuf : un peu moins rentable que le cosmique neuf, beaucoup plus que le cosmique déjà ouvert des centaines de fois → objectif de fin de partie.
+- Sauvegardes : `oeufs_ouverts` et `eclos` sont des listes complétées par `migrer` (version 3) ; une sauvegarde v1/v2 se charge sans perte (test `sauvegarde_lot1_migree_sans_perte`).
+- Simulation (600 h = 25 jours de fond d'écran, le joueur glouton n'économise pas plus d'un jour pour un œuf) : partie 1 et 3 plafonnent à 150-190 k/s sans atteindre l'ambre en 25 jours ; partie 2 ouvre le 1er œuf d'ambre à 11 j 6 h, passe à 1 M/s dans l'heure et finit à 39 M/s. L'ambre est donc une chasse de 2 à 4 semaines ; levier si trop long : son prix.

@@ -151,12 +151,13 @@ pub fn lancer(o: Options) -> Result<(), String> {
 /// Icône 32x32 (fenêtres) : un poisson commun dessiné par le jeu.
 pub fn icone_rgba() -> Vec<u8> {
     let e = crate::especes::par_cle("clown").expect("poisson-clown au catalogue");
-    let s = crate::poisson::sprite(e, 0, 1.4);
+    // Réduit pour tenir dans 32x32 (marges du sprite comprises).
+    let s = crate::poisson::sprite(e, 0, 26.0 / e.dims.0 as f32);
     let mut out = vec![0u8; 32 * 32 * 4];
     let (ox, oy) = ((32 - s.l) / 2, (32 - s.h) / 2);
     for y in 0..s.h {
         for x in 0..s.l {
-            let p = s.images[0].px[(y * s.l + x) as usize];
+            let p = s.images[0].px((y * s.l + x) as usize);
             let (xx, yy) = (x + ox, y + oy);
             if (0..32).contains(&xx) && (0..32).contains(&yy) {
                 out[((yy * 32 + xx) * 4) as usize..][..4].copy_from_slice(&p);
@@ -269,8 +270,10 @@ impl Appli {
         let dossier = c.dossier.clone();
         match nom {
             "achat" => {
-                self.partie.argent = self.partie.argent.max(1e10);
-                self.ecloserie.acheter(ui, &mut self.partie, 3);
+                // Œuf d'ambre (le dernier) : montre une éclosion Préhistorique (le plus souvent).
+                self.partie.argent = self.partie.argent.max(1e12);
+                self.ecloserie
+                    .acheter(ui, &mut self.partie, crate::jeu::OEUFS.len() - 1);
             }
             "fin" => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
             _ => {

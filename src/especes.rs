@@ -1,14 +1,8 @@
-//! Catalogue des espèces : nom, rareté, classe de taille, façon de bouger, palette et variantes
-//! de couleur, et la fonction qui dessine chaque image de son sprite (sous-modules par rareté).
+//! Catalogue des espèces : nom, rareté, classe de taille, façon de bouger et variantes de
+//! couleur. Le dessin de chaque espèce est une image pixel art (`assets/especes/<clé>.png`,
+//! voir `poisson.rs`).
 
-mod abysses;
-mod grands;
-mod petits;
-mod recif;
-
-use crate::art::{lum, opaque, rampe, ton, Dessin, Px, Rampe, P};
 use crate::jeu::{Alea, Rarete};
-use crate::toile::{hsv, Rgb};
 
 /// Classe de taille : longueur typique sur la toile (~480 px de large) et place à l'écran.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -30,9 +24,11 @@ pub enum Taille {
 impl Taille {
     /// Places prises dans la limite des poissons affichés (lisibilité de l'écran).
     pub fn places(self) -> usize {
+        // Lot 3 : les dessins sont plus grands, les grosses bêtes comptent plus.
         match self {
-            Taille::Enorme => 2,
-            Taille::Colossale => 4,
+            Taille::Grande => 2,
+            Taille::Enorme => 3,
+            Taille::Colossale => 5,
             _ => 1,
         }
     }
@@ -96,14 +92,6 @@ const fn v(nom: &'static str, teinte: f32, sat: f32, val: f32) -> Variante {
     }
 }
 
-/// Palette d'une variante : 4 couleurs et leurs rampes.
-pub struct Pal {
-    pub c: [Rgb; 4],
-    pub r: [Rampe; 4],
-}
-
-pub type Art = fn(&mut Dessin, f32, &Pal);
-
 pub struct Espece {
     /// Identifiant stable (sauvegarde).
     pub cle: &'static str,
@@ -111,31 +99,14 @@ pub struct Espece {
     pub rarete: Rarete,
     pub taille: Taille,
     pub mouvement: Mouvement,
-    /// Taille du dessin à l'échelle 1 (sans la marge).
+    /// Taille du dessin en pixels fins (celle de son image).
     pub dims: (i32, i32),
-    pub images: u8,
-    pub couleurs: [Rgb; 4],
     pub variantes: &'static [Variante],
     /// Poids du tirage dans sa rareté (1 = normal).
     pub poids: f32,
-    pub art: Art,
 }
 
 impl Espece {
-    pub fn palette(&self, variante: usize) -> Pal {
-        let v = &self.variantes[variante.min(self.variantes.len() - 1)];
-        let mut c = self.couleurs;
-        for k in c.iter_mut().take(2) {
-            let (h, s, vv) = crate::art::rgb_hsv(*k);
-            *k = hsv(
-                h + v.teinte,
-                (s * v.sat).clamp(0.0, 1.0),
-                (vv * v.val).clamp(0.0, 1.0),
-            );
-        }
-        Pal { c, r: c.map(rampe) }
-    }
-
     /// Nom complet d'un individu (« Requin-marteau albinos »).
     pub fn nom_variante(&self, variante: usize) -> String {
         match self.variantes.get(variante).map(|v| v.nom) {
@@ -169,15 +140,747 @@ pub const V_COSMIQUE: &[Variante] = &[
     v("pourpre", 0.85, 1.0, 1.0),
 ];
 
+/// Préhistorique : couleurs d'origine, fossile (pierre pâle), ambre.
+pub const V_FOSSILE: &[Variante] = &[
+    v("", 0.0, 1.0, 1.0),
+    v("fossile", 0.0, 0.2, 1.1),
+    v("d'ambre", 0.08, 1.4, 1.05),
+];
+
 pub fn catalogue() -> &'static [Espece] {
     static CAT: std::sync::OnceLock<Vec<Espece>> = std::sync::OnceLock::new();
     CAT.get_or_init(|| {
-        let mut c = Vec::new();
-        c.extend(petits::especes());
-        c.extend(recif::especes());
-        c.extend(grands::especes());
-        c.extend(abysses::especes());
-        c
+        use Mouvement as M;
+        use Rarete as R;
+        use Taille as T;
+        let ep = |cle, nom, rarete, taille, mouvement, variantes, poids| {
+            let dims = crate::poisson::dims_png(cle);
+            Espece {
+                cle,
+                nom,
+                rarete,
+                taille,
+                mouvement,
+                dims,
+                variantes,
+                poids,
+            }
+        };
+        let e = |cle, nom, rarete, taille, mouvement, variantes| {
+            ep(cle, nom, rarete, taille, mouvement, variantes, 1.0)
+        };
+        // L'ordre compte : il fixe le tirage par graine (sauvegardes et équilibrage).
+        vec![
+            e(
+                "clown",
+                "Poisson-clown",
+                R::Commun,
+                T::Petite,
+                M::Nage,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("noir", 0.0, 0.6, 0.32),
+                        v("doré", 0.06, 0.9, 1.1),
+                        v("rose", -0.05, 0.55, 1.1),
+                    ]
+                },
+            ),
+            e("neon", "Néon", R::Commun, T::Minuscule, M::Banc, V_VIF),
+            e("guppy", "Guppy", R::Commun, T::Minuscule, M::Banc, V_VIF),
+            e(
+                "rouge",
+                "Poisson rouge",
+                R::Commun,
+                T::Petite,
+                M::Nage,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("blanc", 0.0, 0.12, 1.2),
+                        v("noir", 0.0, 0.4, 0.3),
+                        v("vermillon", -0.04, 1.1, 0.95),
+                    ]
+                },
+            ),
+            e(
+                "sardine",
+                "Sardine",
+                R::Commun,
+                T::Petite,
+                M::Banc,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("dorée", -0.4, 1.0, 1.0),
+                        v("argentée", 0.0, 0.3, 1.2),
+                    ]
+                },
+            ),
+            e(
+                "gobie",
+                "Gobie",
+                R::Commun,
+                T::Minuscule,
+                M::Fond,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("citron", -0.05, 2.2, 1.25),
+                        v("des récifs", 0.45, 1.0, 1.0),
+                    ]
+                },
+            ),
+            e(
+                "chirurgien",
+                "Chirurgien bleu",
+                R::PeuCommun,
+                T::Petite,
+                M::Nage,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("violet", 0.1, 1.0, 1.0),
+                        v("turquoise", -0.08, 1.0, 1.1),
+                    ]
+                },
+            ),
+            e(
+                "ange",
+                "Poisson-ange",
+                R::PeuCommun,
+                T::Petite,
+                M::Nage,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("royal", 0.12, 1.0, 1.0),
+                        v("flamme", 0.45, 1.0, 1.1),
+                    ]
+                },
+            ),
+            e(
+                "globe",
+                "Poisson-globe",
+                R::PeuCommun,
+                T::Petite,
+                M::Nage,
+                V_POISSON,
+            ),
+            e(
+                "hippocampe",
+                "Hippocampe",
+                R::PeuCommun,
+                T::Petite,
+                M::Debout,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("rose", -0.12, 0.8, 1.05),
+                        v("noir", 0.0, 0.4, 0.4),
+                        v("vert", 0.18, 0.9, 0.9),
+                    ]
+                },
+            ),
+            e(
+                "crabe",
+                "Crabe",
+                R::PeuCommun,
+                T::Petite,
+                M::Marche,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("bleu", 0.58, 0.8, 0.9),
+                        v("violet", 0.82, 0.7, 0.85),
+                        v("des sables", 0.08, 0.5, 1.15),
+                    ]
+                },
+            ),
+            e(
+                "crevette",
+                "Crevette",
+                R::PeuCommun,
+                T::Petite,
+                M::Fond,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("nettoyeuse", 0.0, 1.3, 0.95),
+                        v("fantôme", 0.0, 0.2, 1.2),
+                        v("bleue", 0.6, 0.9, 1.0),
+                    ]
+                },
+            ),
+            e(
+                "meduse",
+                "Méduse",
+                R::Rare,
+                T::Moyenne,
+                M::Pulse,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("lune", 0.55, 0.6, 1.0),
+                        v("dorée", 0.2, 0.9, 1.0),
+                        v("cristal", 0.0, 0.15, 1.1),
+                    ]
+                },
+            ),
+            e("poulpe", "Poulpe", R::Rare, T::Moyenne, M::Fond, V_VIF),
+            e(
+                "murene",
+                "Murène",
+                R::Rare,
+                T::Moyenne,
+                M::Ondule,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("léopard", -0.12, 1.1, 1.1),
+                        v("ruban", 0.4, 1.2, 1.0),
+                    ]
+                },
+            ),
+            e(
+                "anguille",
+                "Anguille",
+                R::Rare,
+                T::Moyenne,
+                M::Ondule,
+                V_SOMBRE,
+            ),
+            e(
+                "rascasse",
+                "Rascasse volante",
+                R::Rare,
+                T::Moyenne,
+                M::Lent,
+                V_POISSON,
+            ),
+            e(
+                "tortue",
+                "Tortue de mer",
+                R::Rare,
+                T::Moyenne,
+                M::Plane,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("verte", 0.15, 0.9, 0.95),
+                        v("imbriquée", -0.03, 1.2, 1.1),
+                    ]
+                },
+            ),
+            e(
+                "calamar",
+                "Calamar",
+                R::Rare,
+                T::Moyenne,
+                M::Jet,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("luciole", 0.5, 0.7, 1.0),
+                        v("rouge", 0.0, 1.8, 0.85),
+                    ]
+                },
+            ),
+            e(
+                "manta",
+                "Raie manta",
+                R::Epique,
+                T::Grande,
+                M::Plane,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("noire", 0.0, 0.6, 0.6),
+                        v("des récifs", 0.45, 2.0, 1.4),
+                    ]
+                },
+            ),
+            e(
+                "marteau",
+                "Requin-marteau",
+                R::Epique,
+                T::Grande,
+                M::Nage,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("bronze", -0.1, 2.0, 1.0),
+                        v("albinos", 0.0, 0.1, 1.35),
+                    ]
+                },
+            ),
+            e(
+                "espadon",
+                "Espadon",
+                R::Epique,
+                T::Grande,
+                M::Nage,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("pourpre", 0.12, 1.2, 1.0),
+                        v("d'acier", 0.0, 0.3, 1.2),
+                    ]
+                },
+            ),
+            e(
+                "phoque",
+                "Phoque",
+                R::Epique,
+                T::Grande,
+                M::Fonce,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("moine", 0.05, 1.5, 0.75),
+                        v("annelé", 0.0, 0.2, 1.15),
+                    ]
+                },
+            ),
+            e(
+                "dauphin",
+                "Dauphin",
+                R::Epique,
+                T::Grande,
+                M::Fonce,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("rose", -0.62, 1.6, 1.2),
+                        v("tacheté", 0.0, 0.9, 0.85),
+                    ]
+                },
+            ),
+            e(
+                "mola",
+                "Poisson-lune",
+                R::Epique,
+                T::Grande,
+                M::Lent,
+                V_POISSON,
+            ),
+            e(
+                "blanc",
+                "Grand requin blanc",
+                R::Legendaire,
+                T::Enorme,
+                M::Lent,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("ancien", 0.08, 1.5, 0.8),
+                        v("fantôme", 0.0, 0.3, 1.3),
+                    ]
+                },
+            ),
+            e(
+                "orque",
+                "Orque",
+                R::Legendaire,
+                T::Enorme,
+                M::Lent,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("blanche", 0.0, 0.0, 6.0),
+                        v("des glaces", 0.55, 4.0, 2.2),
+                    ]
+                },
+            ),
+            e(
+                "requin_baleine",
+                "Requin-baleine",
+                R::Legendaire,
+                T::Enorme,
+                M::Lent,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("doré", -0.45, 1.3, 1.2),
+                        v("nocturne", 0.1, 0.8, 0.6),
+                    ]
+                },
+            ),
+            e(
+                "narval",
+                "Narval",
+                R::Legendaire,
+                T::Grande,
+                M::Lent,
+                V_SOMBRE,
+            ),
+            e(
+                "calamar_geant",
+                "Calamar géant",
+                R::Legendaire,
+                T::Enorme,
+                M::Jet,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("des abysses", 0.75, 0.8, 0.8),
+                        v("opale", 0.0, 0.25, 1.3),
+                    ]
+                },
+            ),
+            e(
+                "baudroie",
+                "Baudroie abyssale",
+                R::Legendaire,
+                T::Moyenne,
+                M::Nage,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("d'encre", 0.6, 0.6, 0.6),
+                        v("rouille", 0.02, 1.8, 1.4),
+                    ]
+                },
+            ),
+            e(
+                "dragon_feuillu",
+                "Dragon de mer feuillu",
+                R::Mythique,
+                T::Moyenne,
+                M::Debout,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("corail", -0.1, 1.1, 1.0),
+                        v("algue", 0.15, 1.0, 0.85),
+                    ]
+                },
+            ),
+            e(
+                "coelacanthe",
+                "Cœlacanthe",
+                R::Mythique,
+                T::Grande,
+                M::Lent,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("brun", -0.55, 0.8, 0.8),
+                        v("fossile", 0.0, 0.2, 1.1),
+                    ]
+                },
+            ),
+            e(
+                "lutin",
+                "Requin-lutin",
+                R::Mythique,
+                T::Grande,
+                M::Lent,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("spectral", 0.6, 0.5, 1.1),
+                        v("sanguin", 0.0, 1.6, 0.85),
+                    ]
+                },
+            ),
+            e(
+                "bosse",
+                "Baleine à bosse",
+                R::Mythique,
+                T::Enorme,
+                M::Lent,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("blanche", 0.0, 0.1, 3.5),
+                        v("bleue", 0.02, 1.6, 1.3),
+                    ]
+                },
+            ),
+            e(
+                "isopode",
+                "Isopode géant",
+                R::Mythique,
+                T::Moyenne,
+                M::Marche,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("doré", -0.6, 1.5, 1.05),
+                        v("de jais", 0.0, 0.5, 0.45),
+                    ]
+                },
+            ),
+            e(
+                "hydre",
+                "Hydre",
+                R::Mythique,
+                T::Enorme,
+                M::Flotte,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("d'obsidienne", 0.4, 0.4, 0.5),
+                        v("pourpre", 0.5, 1.0, 1.1),
+                    ]
+                },
+            ),
+            e(
+                "cadborosaure",
+                "Cadborosaure",
+                R::Mythique,
+                T::Enorme,
+                M::Ondule,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("verdâtre", 0.15, 1.0, 0.9),
+                        v("cendré", 0.0, 0.2, 1.1),
+                    ]
+                },
+            ),
+            e(
+                "baleine_stellaire",
+                "Baleine stellaire",
+                R::Celeste,
+                T::Enorme,
+                M::Lent,
+                V_COSMIQUE,
+            ),
+            e(
+                "meduse_nebuleuse",
+                "Méduse nébuleuse",
+                R::Celeste,
+                T::Grande,
+                M::Pulse,
+                V_COSMIQUE,
+            ),
+            e(
+                "raie_aurore",
+                "Raie aurore",
+                R::Celeste,
+                T::Grande,
+                M::Plane,
+                V_COSMIQUE,
+            ),
+            e(
+                "carpe_comete",
+                "Carpe-comète",
+                R::Celeste,
+                T::Moyenne,
+                M::Nage,
+                V_COSMIQUE,
+            ),
+            e(
+                "kraken",
+                "Kraken",
+                R::Irreel,
+                T::Colossale,
+                M::Abysse,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("des glaces", 0.55, 0.5, 1.1),
+                        v("d'encre", 0.75, 0.6, 0.6),
+                    ]
+                },
+            ),
+            e(
+                "cthulhu",
+                "Cthulhu",
+                R::Irreel,
+                T::Colossale,
+                M::Flotte,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("abyssal", 0.3, 0.8, 0.8),
+                        v("de corail", -0.4, 1.0, 1.2),
+                    ]
+                },
+            ),
+            e(
+                "leviathan",
+                "Léviathan",
+                R::Irreel,
+                T::Colossale,
+                M::Traverse,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("de braise", -0.5, 1.4, 1.0),
+                        v("d'argent", 0.0, 0.2, 1.4),
+                    ]
+                },
+            ),
+            e(
+                "oeil",
+                "Œil des abysses",
+                R::Irreel,
+                T::Colossale,
+                M::Flotte,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("vert", 0.3, 1.0, 0.9),
+                        v("pâle", 0.0, 0.3, 1.4),
+                    ]
+                },
+            ),
+            e(
+                "bloop",
+                "Le Bloop",
+                R::Irreel,
+                T::Colossale,
+                M::Lent,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("spectral", 0.55, 2.0, 1.0),
+                        v("cendré", 0.0, 0.5, 0.75),
+                    ]
+                },
+            ),
+            e(
+                "grand_abyssal",
+                "Le Grand Abyssal",
+                R::Irreel,
+                T::Colossale,
+                M::Traverse,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("blême", 0.0, 0.5, 2.4),
+                        v("brun", 0.05, 3.0, 1.2),
+                    ]
+                },
+            ),
+            e(
+                "lusca",
+                "Lusca",
+                R::Irreel,
+                T::Enorme,
+                M::Nage,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("des trous bleus", 0.45, 1.6, 0.9),
+                        v("corail", -0.55, 1.3, 1.1),
+                    ]
+                },
+            ),
+            ep(
+                "jormungandr",
+                "Jörmungandr",
+                R::Irreel,
+                T::Colossale,
+                M::Traverse,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("de cendre", 0.0, 0.2, 0.9),
+                        v("de cuivre", -0.3, 1.2, 1.2),
+                    ]
+                },
+                0.35,
+            ),
+            // Lot 3 (ajoutées à la fin : l'ordre des espèces existantes ne bouge pas).
+            e(
+                "loch_ness",
+                "Monstre du Loch Ness",
+                R::Irreel,
+                T::Enorme,
+                M::Lent,
+                const {
+                    &[
+                        v("", 0.0, 1.0, 1.0),
+                        v("des brumes", 0.0, 0.3, 1.2),
+                        v("des tourbières", 0.08, 1.3, 0.8),
+                    ]
+                },
+            ),
+            e(
+                "megalodon",
+                "Mégalodon",
+                R::Prehistorique,
+                T::Colossale,
+                M::Lent,
+                V_FOSSILE,
+            ),
+            e(
+                "mosasaure",
+                "Mosasaure",
+                R::Prehistorique,
+                T::Colossale,
+                M::Lent,
+                V_FOSSILE,
+            ),
+            e(
+                "liopleurodon",
+                "Liopleurodon",
+                R::Prehistorique,
+                T::Enorme,
+                M::Lent,
+                V_FOSSILE,
+            ),
+            e(
+                "ichthyosaure",
+                "Ichthyosaure",
+                R::Prehistorique,
+                T::Grande,
+                M::Fonce,
+                V_FOSSILE,
+            ),
+            e(
+                "dunkleosteus",
+                "Dunkleosteus",
+                R::Prehistorique,
+                T::Grande,
+                M::Lent,
+                V_FOSSILE,
+            ),
+            e(
+                "helicoprion",
+                "Hélicoprion",
+                R::Prehistorique,
+                T::Grande,
+                M::Nage,
+                V_FOSSILE,
+            ),
+            e(
+                "anomalocaris",
+                "Anomalocaris",
+                R::Prehistorique,
+                T::Moyenne,
+                M::Plane,
+                V_FOSSILE,
+            ),
+            e(
+                "ammonite",
+                "Ammonite géante",
+                R::Prehistorique,
+                T::Moyenne,
+                M::Flotte,
+                V_FOSSILE,
+            ),
+            e(
+                "basilosaurus",
+                "Basilosaurus",
+                R::Prehistorique,
+                T::Colossale,
+                M::Traverse,
+                V_FOSSILE,
+            ),
+            e(
+                "trilobite",
+                "Trilobite géant",
+                R::Prehistorique,
+                T::Petite,
+                M::Marche,
+                V_FOSSILE,
+            ),
+        ]
     })
 }
 
@@ -213,187 +916,6 @@ pub fn choisir(r: Rarete, graine: u64) -> (&'static Espece, u8) {
     (e, var.min(e.variantes.len() as u8 - 1))
 }
 
-// ---------- outils communs aux dessins ----------
-
-/// Ondulation d'un corps de poisson : déplacement de la ligne médiane (forte vers la queue).
-pub fn plier(t: f32, b: f32, amp: f32) -> f32 {
-    let k = (1.0 - t / 0.65).max(0.0);
-    b * amp * k * k
-}
-
-/// Peinture d'un corps à contre-ombrage : dos (rampe `dos`) au-dessus de `seuil`, ventre clair.
-pub fn contre<'a>(dos: &'a Rampe, ventre: &'a Rampe, seuil: f32) -> impl Fn(&P) -> Option<Px> + 'a {
-    move |p| {
-        if p.v > seuil {
-            opaque(ton(ventre, lum(p.v) * 0.6 + 0.4, p.x, p.y))
-        } else {
-            opaque(ton(dos, lum(p.v), p.x, p.y))
-        }
-    }
-}
-
-/// Volume simple d'une seule rampe.
-pub fn volume(r: &Rampe) -> impl Fn(&P) -> Option<Px> + '_ {
-    move |p| opaque(ton(r, lum(p.v), p.x, p.y))
-}
-
-/// Nageoire translucide : plus claire et plus transparente vers le bord (`t` du polygone ou
-/// distance donnée), rayons d'un ton plus sombre une colonne sur `pas`.
-pub fn membrane(r: &Rampe, a: u8) -> impl Fn(&P) -> Option<Px> + '_ {
-    move |p| {
-        let c = ton(r, 0.35 + 0.4 * (1.0 - p.v.abs()), p.x, p.y);
-        Some([c[0], c[1], c[2], a])
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum Caudale {
-    Fourche,
-    Ronde,
-    Croissant,
-    Voile,
-}
-
-/// Contour d'une nageoire caudale qui part de `(bx, by)` vers la gauche ; `b` = battement -1..1.
-pub fn caudale(f: Caudale, bx: f32, by: f32, long: f32, ouv: f32, b: f32) -> Vec<(f32, f32)> {
-    let base = (ouv * 0.28).max(0.8);
-    let dy = b * long * 0.35;
-    let serre = 1.0 - 0.18 * b.abs();
-    let o = ouv * serre;
-    match f {
-        Caudale::Fourche => vec![
-            (bx + 0.5, by - base),
-            (bx - long, by - o + dy),
-            (bx - long * 0.55, by + dy * 0.6),
-            (bx - long, by + o + dy),
-            (bx + 0.5, by + base),
-        ],
-        Caudale::Croissant => vec![
-            (bx + 0.5, by - base * 0.6),
-            (bx - long * 0.55, by - o * 0.6 + dy * 0.5),
-            (bx - long, by - o + dy),
-            (bx - long * 0.62, by - o * 0.35 + dy * 0.7),
-            (bx - long * 0.35, by + dy * 0.5),
-            (bx - long * 0.62, by + o * 0.35 + dy * 0.7),
-            (bx - long, by + o + dy),
-            (bx - long * 0.55, by + o * 0.6 + dy * 0.5),
-            (bx + 0.5, by + base * 0.6),
-        ],
-        Caudale::Ronde | Caudale::Voile => {
-            let n = 9;
-            let mut v = vec![(bx + 0.5, by - base)];
-            let lg = if matches!(f, Caudale::Voile) {
-                long
-            } else {
-                long * 0.9
-            };
-            for i in 0..=n {
-                let a = -1.0 + 2.0 * i as f32 / n as f32;
-                let ondule = if matches!(f, Caudale::Voile) {
-                    1.0 - 0.18 * ((a * 3.0 + b) * 2.0).sin().abs()
-                } else {
-                    1.0
-                };
-                let r = lg * ondule * (1.0 - 0.12 * a * a);
-                v.push((
-                    bx - r * (a * 0.9).cos(),
-                    by + a * o + dy * (0.6 + 0.4 * ondule),
-                ));
-            }
-            v.push((bx + 0.5, by + base));
-            v
-        }
-    }
-}
-
-/// Rapproche les points de `ancre` (facteur `k` < 1) : sert au liseré des nageoires.
-pub fn retrecir(pts: &[(f32, f32)], ancre: (f32, f32), k: f32) -> Vec<(f32, f32)> {
-    pts.iter()
-        .map(|&(x, y)| (ancre.0 + (x - ancre.0) * k, ancre.1 + (y - ancre.1) * k))
-        .collect()
-}
-
-/// Nageoire à liseré : polygone dans la rampe `bord`, puis l'intérieur rétréci dans `fond`.
-pub fn bordee(
-    d: &mut Dessin,
-    pts: &[(f32, f32)],
-    ancre: (f32, f32),
-    fond: &Rampe,
-    bord: &Rampe,
-    k: f32,
-) {
-    use crate::poisson::NAGEOIRE;
-    d.poly(pts, NAGEOIRE, |q| opaque(ton(bord, 0.45, q.x, q.y)));
-    d.poly(&retrecir(pts, ancre, k), NAGEOIRE, |q| {
-        opaque(ton(fond, 0.4 + 0.35 * (1.0 - q.t), q.x, q.y))
-    });
-}
-
-/// Fiche d'espèce (poids de tirage 1).
-#[allow(clippy::too_many_arguments)]
-pub fn esp(
-    cle: &'static str,
-    nom: &'static str,
-    rarete: Rarete,
-    taille: Taille,
-    mouvement: Mouvement,
-    dims: (i32, i32),
-    images: u8,
-    couleurs: [Rgb; 4],
-    variantes: &'static [Variante],
-    art: Art,
-) -> Espece {
-    Espece {
-        cle,
-        nom,
-        rarete,
-        taille,
-        mouvement,
-        dims,
-        images,
-        couleurs,
-        variantes,
-        poids: 1.0,
-        art,
-    }
-}
-
-/// Point tourné de `ang` radians autour de `o`.
-pub fn tourner(o: (f32, f32), p: (f32, f32), ang: f32) -> (f32, f32) {
-    let (s, c) = ang.sin_cos();
-    let (dx, dy) = (p.0 - o.0, p.1 - o.1);
-    (o.0 + dx * c - dy * s, o.1 + dx * s + dy * c)
-}
-
-/// Ligne ondulante de `n` segments (tentacules) : départ, direction (angle), longueur,
-/// rayon de départ et de bout, amplitude et phase de la vague.
-#[allow(clippy::too_many_arguments)]
-pub fn tentacule(
-    depart: (f32, f32),
-    ang: f32,
-    long: f32,
-    r0: f32,
-    r1: f32,
-    amp: f32,
-    phase: f32,
-    boucle: f32,
-) -> Vec<(f32, f32, f32)> {
-    let n = ((long / 2.5) as usize).clamp(4, 40);
-    let mut pts = Vec::with_capacity(n + 1);
-    let (mut x, mut y) = depart;
-    let mut a = ang;
-    let pas = long / n as f32;
-    for i in 0..=n {
-        let u = i as f32 / n as f32;
-        pts.push((x, y, r0 + (r1 - r0) * u));
-        // La vague courbe le tentacule, `boucle` l'enroule vers le bout.
-        a += (u * 5.0 - phase).sin() * amp / n as f32 + boucle * u * u / n as f32;
-        x += a.cos() * pas;
-        y += a.sin() * pas;
-    }
-    pts
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,11 +940,7 @@ mod tests {
         assert_eq!(cles.len(), c.len(), "clés en double");
         assert_eq!(noms.len(), c.len(), "noms en double");
         for e in c {
-            assert!(
-                !e.variantes.is_empty() && e.images > 0 && e.poids > 0.0,
-                "{}",
-                e.cle
-            );
+            assert!(!e.variantes.is_empty() && e.poids > 0.0, "{}", e.cle);
         }
     }
 

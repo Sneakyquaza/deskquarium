@@ -67,16 +67,18 @@ pub fn composer(fond: &RgbaImage, toile: &crate::toile::Toile, e: usize) -> Rgba
     let mut out = fond.clone();
     let (l, h) = (out.width() as usize, out.height() as usize);
     for y in 0..h {
-        let ty = y / e;
-        if ty >= toile.h {
+        // `e` : pixels écran par pixel monde ; la toile est en pixels fins.
+        let k = (e / crate::toile::FIN).max(1);
+        let ty = y / k;
+        if ty >= toile.hf() {
             break;
         }
         for x in 0..l {
-            let tx = x / e;
-            if tx >= toile.l {
+            let tx = x / k;
+            if tx >= toile.lf() {
                 break;
             }
-            let s = toile.px[ty * toile.l + tx];
+            let s = toile.px[ty * toile.lf() + tx];
             if s[3] == 0 {
                 continue;
             }

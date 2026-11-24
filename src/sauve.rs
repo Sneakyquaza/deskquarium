@@ -213,6 +213,10 @@ mod tests {
             assert_eq!(f.actif, i % 3 != 0);
         }
         assert_eq!(q.vus.values().sum::<u64>(), n as u64);
+        // Version 3 : l'œuf d'ambre et la rareté Préhistorique s'ajoutent à zéro.
+        assert_eq!(q.oeufs_ouverts, vec![10, 5, 2, 1, 0]);
+        assert_eq!(q.eclos, vec![3, 3, 3, 3, 3, 3, 3, 3, 0]);
+        assert_eq!(q.prix_oeuf(4), crate::jeu::OEUFS[4].prix);
         // Déterministe et stable : relire puis réécrire ne change rien.
         ecrire(&d, &q).unwrap();
         let (r, _) = charger(&d);

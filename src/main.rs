@@ -2,7 +2,6 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod appli;
-mod art;
 mod capture;
 mod ecloserie;
 mod especes;
@@ -28,6 +27,7 @@ Options (tests) :
   --video X.mp4 --secondes N      vidéo 30 i/s (ffmpeg, AQUARIUM_FFMPEG)
   --planche X.png                 toutes les espèces, une ligne par rareté, x4
   --planche-geantes X.png         créatures énormes et colossales à taille réelle, x2
+  --planche-images X.png cle,cle  images d'animation des espèces données, x4
   --demo                          aquarium pré-rempli (raretés et espèces variées)
   --taille 1920x1080              taille de la capture / vidéo
   --fond image.png                fond d'écran sous l'aquarium (sinon fond factice)
@@ -58,7 +58,7 @@ fn lancer() -> Result<(), String> {
     if a("--simulation") {
         for graine in [1, 2, 3] {
             println!("partie {graine}");
-            for j in jeu::simuler(120.0, graine) {
+            for j in jeu::simuler(600.0, graine) {
                 println!("{:>12}  {}", jeu::duree(j.temps_s), j.texte);
             }
         }
@@ -95,6 +95,11 @@ fn lancer() -> Result<(), String> {
     }
     if let Some(f) = valeur("--planche-geantes") {
         return capture::planche_geantes(&PathBuf::from(f), o.secondes.min(3.0));
+    }
+    if let Some(f) = valeur("--planche-images") {
+        let cles = valeur(&f).unwrap_or_default();
+        let cles: Vec<&str> = cles.split(',').filter(|c| !c.is_empty()).collect();
+        return capture::planche_images(&PathBuf::from(&f), &cles, 4);
     }
     let fenetre = a("--fenetre") || !cfg!(windows);
     appli::lancer(appli::Options {

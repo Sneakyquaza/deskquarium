@@ -22,10 +22,12 @@ pub enum Rarete {
     Mythique,
     Celeste,
     Irreel,
+    /// Lot 3 : créatures disparues, seulement dans l'œuf d'ambre (au-dessus d'Irréel).
+    Prehistorique,
 }
 
 impl Rarete {
-    pub const TOUTES: [Rarete; 8] = [
+    pub const TOUTES: [Rarete; 9] = [
         Rarete::Commun,
         Rarete::PeuCommun,
         Rarete::Rare,
@@ -34,6 +36,7 @@ impl Rarete {
         Rarete::Mythique,
         Rarete::Celeste,
         Rarete::Irreel,
+        Rarete::Prehistorique,
     ];
 
     pub fn index(self) -> usize {
@@ -50,6 +53,7 @@ impl Rarete {
             "Mythique",
             "Céleste",
             "Irréel",
+            "Préhistorique",
         ][self.index()]
     }
 
@@ -64,12 +68,15 @@ impl Rarete {
             [0xff, 0x52, 0x6e],
             [0x72, 0xf2, 0xe6],
             [0xff, 0x8c, 0xf0],
+            [0xe8, 0x9a, 0x3a],
         ][self.index()]
     }
 
     /// Revenu par seconde d'un poisson de taille 1 au niveau 1.
     pub fn revenu_base(self) -> f64 {
-        [1.0, 4.0, 16.0, 70.0, 320.0, 1_500.0, 7_500.0, 40_000.0][self.index()]
+        [
+            1.0, 4.0, 16.0, 70.0, 320.0, 1_500.0, 7_500.0, 40_000.0, 220_000.0,
+        ][self.index()]
     }
 }
 
@@ -78,39 +85,46 @@ pub struct Oeuf {
     pub description: &'static str,
     pub prix: f64,
     /// Probabilités (en %) par rareté, dans l'ordre de [`Rarete::TOUTES`] ; somme = 100.
-    pub chances: [f64; 8],
+    pub chances: [f64; 9],
     /// Couleurs de la coquille (base, taches).
     pub coquille: [[u8; 3]; 2],
 }
 
-pub const OEUFS: [Oeuf; 4] = [
+pub const OEUFS: [Oeuf; 5] = [
     Oeuf {
         nom: "Œuf de rivière",
         description: "Pondu entre deux galets. Souvent des poissons communs.",
         prix: 80.0,
-        chances: [70.0, 25.0, 4.5, 0.5, 0.0, 0.0, 0.0, 0.0],
+        chances: [70.0, 25.0, 4.5, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0],
         coquille: [[0xd9, 0xe8, 0xc8], [0x7f, 0xa8, 0x6a]],
     },
     Oeuf {
         nom: "Œuf de lagon",
         description: "Tiède et nacré, il sent le corail.",
         prix: 5_000.0,
-        chances: [30.0, 42.0, 20.0, 6.5, 1.5, 0.0, 0.0, 0.0],
+        chances: [30.0, 42.0, 20.0, 6.5, 1.5, 0.0, 0.0, 0.0, 0.0],
         coquille: [[0xa8, 0xee, 0xf0], [0xff, 0xb0, 0xc8]],
     },
     Oeuf {
         nom: "Œuf des abysses",
         description: "Remonté de très loin. Il luit faiblement dans le noir.",
         prix: 1_000_000.0,
-        chances: [0.0, 20.0, 42.0, 26.0, 9.5, 2.5, 0.0, 0.0],
+        chances: [0.0, 20.0, 42.0, 26.0, 9.5, 2.5, 0.0, 0.0, 0.0],
         coquille: [[0x2c, 0x3c, 0x6e], [0x5c, 0xf0, 0xd8]],
     },
     Oeuf {
         nom: "Œuf cosmique",
         description: "Tombé du ciel une nuit d'étoiles, encore tiède.",
         prix: 500_000_000.0,
-        chances: [0.0, 0.0, 22.0, 36.0, 26.0, 11.0, 4.5, 0.5],
+        chances: [0.0, 0.0, 22.0, 36.0, 26.0, 11.0, 4.5, 0.5, 0.0],
         coquille: [[0x30, 0x1c, 0x58], [0xff, 0xe8, 0x9c]],
+    },
+    Oeuf {
+        nom: "Œuf d'ambre",
+        description: "Pris dans l'ambre depuis des millions d'années. Quelque chose bouge dedans.",
+        prix: 30_000_000_000.0,
+        chances: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 12.0, 8.0, 80.0],
+        coquille: [[0xe8, 0x9a, 0x3a], [0x7a, 0x46, 0x1c]],
     },
 ];
 
@@ -224,10 +238,10 @@ pub struct Partie {
     pub prochain_id: u64,
     pub alea: Alea,
     pub poissons: Vec<Poisson>,
-    /// Œufs ouverts, par œuf.
-    pub oeufs_ouverts: [u64; 4],
-    /// Poissons éclos, par rareté (Poissodex).
-    pub eclos: [u64; 8],
+    /// Œufs ouverts, par œuf (complété par `migrer` quand un œuf s'ajoute).
+    pub oeufs_ouverts: Vec<u64>,
+    /// Poissons éclos, par rareté (Poissodex ; complété par `migrer`).
+    pub eclos: Vec<u64>,
     /// Poissons éclos par espèce (Poissodex, depuis la version 2).
     #[serde(default)]
     pub vus: BTreeMap<String, u64>,
@@ -235,8 +249,8 @@ pub struct Partie {
     pub reglages: Reglages,
 }
 
-/// Version du format de sauvegarde (2 = espèces).
-pub const VERSION: u32 = 2;
+/// Version du format de sauvegarde (2 = espèces, 3 = rareté Préhistorique et œuf d'ambre).
+pub const VERSION: u32 = 3;
 
 #[derive(Debug, PartialEq)]
 pub enum Refus {
@@ -257,8 +271,8 @@ impl Partie {
             prochain_id: 1,
             alea: Alea(graine),
             poissons: Vec::new(),
-            oeufs_ouverts: [0; 4],
-            eclos: [0; 8],
+            oeufs_ouverts: vec![0; OEUFS.len()],
+            eclos: vec![0; Rarete::TOUTES.len()],
             vus: BTreeMap::new(),
             reglages: Reglages::default(),
         };
@@ -292,6 +306,11 @@ impl Partie {
     /// Met une sauvegarde ancienne au format courant : chaque poisson sans espèce connue (lot 1,
     /// ou espèce disparue) reçoit une espèce de même rareté tirée de sa graine ; rien n'est perdu.
     pub fn migrer(&mut self) {
+        // Version 3 : un œuf et une rareté de plus (les anciennes sauvegardes en ont moins).
+        self.oeufs_ouverts
+            .resize(OEUFS.len().max(self.oeufs_ouverts.len()), 0);
+        self.eclos
+            .resize(Rarete::TOUTES.len().max(self.eclos.len()), 0);
         let mut ajout = false;
         for f in &mut self.poissons {
             let connue = crate::especes::par_cle(&f.espece).is_some_and(|e| e.rarete == f.rarete);
@@ -506,10 +525,10 @@ pub struct Jalon {
 pub fn simuler(heures: f64, graine: u64) -> Vec<Jalon> {
     let mut p = Partie::nouvelle(0, graine);
     let mut jalons = Vec::new();
-    let mut vu_oeuf = [false; 4];
-    let mut vu_rarete = [false; 8];
+    let mut vu_oeuf = [false; OEUFS.len()];
+    let mut vu_rarete = [false; Rarete::TOUTES.len()];
     vu_rarete[0] = true;
-    let mut paliers_revenu = [10.0, 100.0, 1e3, 1e4, 1e5, 1e6, 1e7]
+    let mut paliers_revenu = [10.0, 100.0, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8]
         .into_iter()
         .peekable();
     let fin = heures * 3600.0;
@@ -540,7 +559,9 @@ pub fn simuler(heures: f64, graine: u64) -> Vec<Jalon> {
                 })
                 .sum();
             let ratio = gain / p.prix_oeuf(i);
-            if meilleur.is_none_or(|m| ratio > m.0) {
+            // Un joueur n'économise pas plus d'un jour pour un œuf (sinon il achète autre chose).
+            let trop_loin = p.prix_oeuf(i) > p.argent + p.revenu_par_s() * 24.0 * 3600.0;
+            if !trop_loin && meilleur.is_none_or(|m| ratio > m.0) {
                 meilleur = Some((ratio, true, i as u64));
             }
         }
@@ -634,7 +655,7 @@ mod tests {
         let mut a = Alea(42);
         for o in &OEUFS {
             let n = 200_000;
-            let mut c = [0u32; 8];
+            let mut c = [0u32; Rarete::TOUTES.len()];
             for _ in 0..n {
                 c[Partie::tirer_rarete(&mut a, o).index()] += 1;
             }

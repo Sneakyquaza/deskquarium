@@ -12,8 +12,11 @@ cp livraison/LISEZMOI.txt "$L/"
 {
   echo "AQUARIUM - licences"
   echo
-  echo "Le programme aquarium est sous licence MIT. Les poissons, œufs et décors sont"
-  echo "générés par le programme (aucune image externe)."
+  echo "Le programme aquarium est sous licence MIT. Les œufs et décors sont dessinés par"
+  echo "le programme. Les sprites des 61 espèces (assets/especes) ont été générés pour ce"
+  echo "projet avec un modèle d'image (ChatGPT, OpenAI) puis nettoyés au pixel près et animés"
+  echo "par le programme ; designs originaux (Cthulhu et le monstre du Loch Ness : folklore et"
+  echo "domaine public, rendus originaux)."
   echo
   echo "Polices embarquées (SIL Open Font License 1.1, textes complets plus bas) :"
   echo "- Pixelify Sans, Copyright 2021 The Pixelify Sans Project Authors"
