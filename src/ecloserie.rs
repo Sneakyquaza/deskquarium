@@ -2,8 +2,9 @@
 //! Style : verre d'aquarium biseauté en pixels, polices pixel OFL (Silkscreen pour les titres,
 //! Pixelify Sans pour le texte), images pixel art agrandies en entier au plus proche.
 
+use crate::especes::{de_rarete, Espece};
 use crate::jeu::{court, duree, Partie, Poisson, Rarete, Refus, CAPACITE, OEUFS};
-use crate::scene::{sprite_de, Aquarium, Nageur};
+use crate::scene::{nom_de, sprite_ajuste, Aquarium, Nageur};
 use crate::toile::{bayer, melange, Rgb, Toile};
 use eframe::egui::{
     self, Color32, CornerRadius, FontFamily, FontId, Margin, RichText, Stroke, TextureHandle,
@@ -125,6 +126,8 @@ struct Eclosion {
     poisson: Aquarium,
     texture: Option<TextureHandle>,
     eclats: Vec<(f32, f32, f32, f32, Rgb)>,
+    /// Agrandissement du poisson révélé (x2 s'il est petit, x1 sinon).
+    zoom: i32,
 }
 
 /// Durée du suspense avant la révélation.
@@ -134,6 +137,7 @@ pub struct Ecloserie {
     pub onglet: Onglet,
     eclosion: Option<Eclosion>,
     vignettes: HashMap<u64, TextureHandle>,
+    vignettes_dex: HashMap<String, TextureHandle>,
     oeufs: Vec<TextureHandle>,
     confirmer: Option<u64>,
     reserve: bool,
@@ -151,6 +155,7 @@ impl Ecloserie {
             onglet: Onglet::Oeufs,
             eclosion: None,
             vignettes: HashMap::new(),
+            vignettes_dex: HashMap::new(),
             oeufs: Vec::new(),
             confirmer: None,
             reserve: false,
@@ -171,16 +176,27 @@ impl Ecloserie {
                     .find(|f| f.id == id)
                     .cloned()
                     .expect("poisson éclos");
-                let mut aq = Aquarium::new(64, 48, 9);
+                // Petit poisson : x2 dans une toile 64x48 ; gros : x1, réduit pour tenir.
+                let e = crate::scene::espece_de(&f);
+                let k = crate::poisson::echelle_individu(f.taille);
+                let m = 2.0 * crate::poisson::MARGE as f32;
+                let petit = e.dims.0 as f32 * k + m <= 62.0 && e.dims.1 as f32 * k + m <= 46.0;
+                let (s, zoom) = if petit {
+                    (crate::scene::sprite_de(&f), 2)
+                } else {
+                    (sprite_ajuste(&f, 126, 90), 1)
+                };
+                let (al, ah) = (128 / zoom as usize, 96 / zoom as usize);
+                let mut aq = Aquarium::new(al, ah, 9);
                 aq.decor = false;
                 aq.avec_compteur = false;
                 let mut a = crate::jeu::Alea(id);
                 let mut n = Nageur::new(
                     id,
                     f.rarete,
-                    Arc::new(sprite_de(f.graine, f.rarete, f.taille)),
-                    32.0,
-                    24.0,
+                    Arc::new(s),
+                    al as f32 / 2.0,
+                    ah as f32 / 2.0,
                     &mut a,
                 );
                 n.fixe = true;
@@ -195,6 +211,7 @@ impl Ecloserie {
                     poisson: aq,
                     texture: None,
                     eclats: Vec::new(),
+                    zoom,
                 });
             }
             Err(Refus::PasAssez) => {
@@ -415,7 +432,7 @@ impl Ecloserie {
                 fini = true;
                 return;
             };
-            let nom = sprite_de(f.graine, f.rarete, f.taille).nom;
+            let nom = nom_de(f);
             ui.label(texte_rarete(e.rarete, maintenant, 34.0));
             ui.label(RichText::new(nom).size(22.0));
             ui.label(
@@ -471,12 +488,8 @@ impl Ecloserie {
         self.vignettes
             .entry(f.graine)
             .or_insert_with(|| {
-                let s = sprite_de(f.graine, f.rarete, f.taille);
-                let mut t = Toile::new(s.l as usize, s.h as usize);
-                for (i, px) in s.images[0].px.iter().enumerate() {
-                    t.poser(i as i32 % s.l, i as i32 / s.l, [px[0], px[1], px[2]], px[3]);
-                }
-                texture(ctx, &format!("p{}", f.graine), &t)
+                let s = sprite_ajuste(f, 108, 48);
+                texture(ctx, &format!("p{}", f.graine), &toile_sprite(&s, None))
             })
             .clone()
     }
@@ -571,10 +584,7 @@ impl Ecloserie {
                             );
                             ui.vertical(|ui| {
                                 ui.spacing_mut().item_spacing.y = 2.0;
-                                ui.label(
-                                    RichText::new(sprite_de(f.graine, f.rarete, f.taille).nom)
-                                        .size(17.0),
-                                );
+                                ui.label(RichText::new(nom_de(f)).size(17.0));
                                 ui.horizontal(|ui| {
                                     ui.label(
                                         RichText::new(f.rarete.nom())
@@ -665,9 +675,15 @@ impl Ecloserie {
     }
 
     fn onglet_dex(&mut self, ui: &mut Ui, p: &Partie) {
-        let vus = p.eclos.iter().filter(|&&n| n > 0).count();
+        let total = crate::especes::catalogue().len();
+        let vues = crate::especes::catalogue()
+            .iter()
+            .filter(|e| p.vus.get(e.cle).copied().unwrap_or(0) > 0)
+            .count();
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("{vus} raretés sur 8 découvertes")).font(titre(16.0)));
+            ui.label(
+                RichText::new(format!("{vues} espèces sur {total} découvertes")).font(titre(16.0)),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     RichText::new(format!(
@@ -679,82 +695,109 @@ impl Ecloserie {
                 );
             });
         });
-        ui.add_space(8.0);
-        for ligne in Rarete::TOUTES.chunks(4) {
-            ui.columns(4, |cols| {
-                for (ui, &r) in cols.iter_mut().zip(ligne) {
-                    self.carte_dex(ui, p, r);
-                }
-            });
-            ui.add_space(10.0);
-        }
+        ui.add_space(6.0);
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            for r in Rarete::TOUTES {
+                let especes: Vec<&Espece> = de_rarete(r).collect();
+                let n = especes
+                    .iter()
+                    .filter(|e| p.vus.get(e.cle).copied().unwrap_or(0) > 0)
+                    .count();
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(r.nom())
+                            .font(titre(15.0))
+                            .color(c32(r.couleur())),
+                    );
+                    ui.label(
+                        RichText::new(format!(
+                            "{n}/{} · {}/s de base",
+                            especes.len(),
+                            court(r.revenu_base())
+                        ))
+                        .color(BRUME)
+                        .font(titre(12.0)),
+                    );
+                });
+                ui.horizontal_wrapped(|ui| {
+                    for e in especes {
+                        self.carte_espece(ui, p, e);
+                    }
+                });
+                ui.add_space(8.0);
+            }
+        });
     }
 
-    fn carte_dex(&mut self, ui: &mut Ui, p: &Partie, r: Rarete) {
-        let n = p.eclos[r.index()];
-        let meilleur = p
-            .poissons
-            .iter()
-            .filter(|f| f.rarete == r)
-            .max_by(|a, b| a.revenu().total_cmp(&b.revenu()))
-            .cloned();
-        let bord = if n > 0 {
-            r.couleur()
+    /// Case d'une espèce : dessin (silhouette si jamais éclose), nom, nombre d'éclos.
+    fn carte_espece(&mut self, ui: &mut Ui, p: &Partie, e: &'static Espece) {
+        let n = p.vus.get(e.cle).copied().unwrap_or(0);
+        let vu = n > 0;
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(128.0, 96.0), egui::Sense::hover());
+        let peintre = ui.painter();
+        let bord = if vu {
+            e.rarete.couleur()
         } else {
             [0x24, 0x40, 0x54]
         };
-        biseau(bord).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.set_height(170.0);
-            ui.vertical_centered(|ui| {
-                if n > 0 {
-                    ui.label(
-                        RichText::new(r.nom())
-                            .font(titre(16.0))
-                            .color(c32(r.couleur())),
-                    );
-                } else {
-                    ui.label(RichText::new("???").font(titre(16.0)).color(BRUME));
-                }
-                let (rect, _) = ui.allocate_exact_size(
-                    Vec2::new(ui.available_width(), 84.0),
-                    egui::Sense::hover(),
-                );
-                match (&meilleur, n > 0) {
-                    (Some(f), true) => {
-                        let tex = self.vignette(ui.ctx(), f);
-                        let e = ((rect.width() / tex.size_vec2().x)
-                            .min(rect.height() / tex.size_vec2().y))
-                        .floor()
-                        .clamp(1.0, 3.0);
-                        ui.painter().image(
-                            tex.id(),
-                            egui::Rect::from_center_size(
-                                rect.center().round(),
-                                tex.size_vec2() * e,
-                            ),
-                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                            Color32::WHITE,
-                        );
-                    }
-                    _ => {
-                        // Silhouette : poisson inconnu ou plus dans la collection.
-                        let c = if n > 0 {
-                            BRUME
-                        } else {
-                            Color32::from_rgb(0x0a, 0x22, 0x33)
-                        };
-                        silhouette(ui.painter(), rect.center(), c);
-                    }
-                }
-                let texte = if n > 0 {
-                    format!("{n} éclos · {}/s de base", court(r.revenu_base()))
-                } else {
-                    "Pas encore éclos".into()
-                };
-                ui.label(RichText::new(texte).color(BRUME).font(titre(12.0)));
-            });
-        });
+        peintre.rect_filled(rect, 0.0, VERRE_FONCE);
+        peintre.rect_stroke(
+            rect.shrink(0.5),
+            0.0,
+            Stroke::new(1.0, c32(bord)),
+            egui::StrokeKind::Inside,
+        );
+        let cle = format!("dex/{}/{vu}", e.cle);
+        let tex = self
+            .vignettes_dex
+            .entry(cle.clone())
+            .or_insert_with(|| {
+                let m = 2.0 * crate::poisson::MARGE as f32;
+                let k = ((112.0 - m) / e.dims.0 as f32)
+                    .min((54.0 - m) / e.dims.1 as f32)
+                    .min(1.0);
+                let s = crate::poisson::sprite(e, 0, k);
+                let ombre = (!vu).then_some([0x05, 0x14, 0x20]);
+                texture(ui.ctx(), &cle, &toile_sprite(&s, ombre))
+            })
+            .clone();
+        let zone =
+            egui::Rect::from_min_size(rect.min + Vec2::new(4.0, 4.0), Vec2::new(120.0, 58.0));
+        let taille = tex.size_vec2();
+        let z = (zone.width() / taille.x)
+            .min(zone.height() / taille.y)
+            .floor()
+            .clamp(1.0, 2.0);
+        peintre.image(
+            tex.id(),
+            egui::Rect::from_center_size(zone.center().round(), taille * z),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+        let (nom, c) = if vu {
+            (e.nom.to_string(), Color32::WHITE)
+        } else {
+            ("???".to_string(), BRUME)
+        };
+        peintre.text(
+            egui::pos2(rect.center().x, rect.top() + 70.0),
+            egui::Align2::CENTER_CENTER,
+            nom,
+            FontId::proportional(13.0),
+            c,
+        );
+        let bas = if vu {
+            format!("{n} éclos")
+        } else {
+            "Pas encore éclos".into()
+        };
+        peintre.text(
+            egui::pos2(rect.center().x, rect.top() + 86.0),
+            egui::Align2::CENTER_CENTER,
+            bas,
+            titre(10.0),
+            BRUME,
+        );
     }
 
     fn onglet_reglages(&mut self, ui: &mut Ui, p: &mut Partie) {
@@ -956,37 +999,14 @@ fn piece_ui(ui: &Ui, r: egui::Rect) {
     }
 }
 
-fn silhouette(p: &egui::Painter, c: egui::Pos2, couleur: Color32) {
-    let motif = [
-        "......####.....",
-        "....########...",
-        "#..##########..",
-        "##############.",
-        "###############",
-        "##############.",
-        "#..##########..",
-        "....########...",
-        "......####.....",
-    ];
-    let u = 5.0;
-    let o = c - Vec2::new(
-        motif[0].len() as f32 * u / 2.0,
-        motif.len() as f32 * u / 2.0,
-    );
-    for (j, l) in motif.iter().enumerate() {
-        for (i, b) in l.bytes().enumerate() {
-            if b == b'#' {
-                p.rect_filled(
-                    egui::Rect::from_min_size(
-                        o.round() + Vec2::new(i as f32 * u, j as f32 * u),
-                        Vec2::splat(u),
-                    ),
-                    0.0,
-                    couleur,
-                );
-            }
-        }
+/// Image 0 d'un sprite dans une toile ; `ombre` = silhouette unie de cette couleur.
+fn toile_sprite(s: &crate::poisson::Sprite, ombre: Option<Rgb>) -> Toile {
+    let mut t = Toile::new(s.l as usize, s.h as usize);
+    for (i, px) in s.images[0].px.iter().enumerate() {
+        let c = ombre.unwrap_or([px[0], px[1], px[2]]);
+        t.poser(i as i32 % s.l, i as i32 / s.l, c, px[3]);
     }
+    t
 }
 
 pub fn image_couleur(t: &Toile) -> egui::ColorImage {
@@ -1189,11 +1209,12 @@ fn dessiner_eclosion(e: &mut Eclosion, t: f64) {
         toile.rect(x, y, 2, 2, c, 255);
         toile.poser(x, y, [255, 255, 255], 120);
     }
-    // Poisson révélé, agrandi x2 (pixels entiers).
+    // Poisson révélé, agrandi en entier (x2 ou x1).
     e.poisson.avancer(1.0 / 60.0);
     e.poisson.dessiner(&Partie::nouvelle(0, 0));
     let src = &e.poisson.toile;
-    let (ox, oy) = (cx - src.l as i32, cy - src.h as i32);
+    let z = e.zoom;
+    let (ox, oy) = (cx - src.l as i32 * z / 2, cy - src.h as i32 * z / 2);
     for y in 0..src.h as i32 {
         for x in 0..src.l as i32 {
             let p = src.px[(y * src.l as i32 + x) as usize];
@@ -1201,8 +1222,10 @@ fn dessiner_eclosion(e: &mut Eclosion, t: f64) {
                 continue;
             }
             let c = crate::toile::demultiplier(p);
-            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                toile.poser(ox + x * 2 + dx, oy + y * 2 + dy, [c[0], c[1], c[2]], c[3]);
+            for dy in 0..z {
+                for dx in 0..z {
+                    toile.poser(ox + x * z + dx, oy + y * z + dy, [c[0], c[1], c[2]], c[3]);
+                }
             }
         }
     }

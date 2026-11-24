@@ -2,8 +2,10 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod appli;
+mod art;
 mod capture;
 mod ecloserie;
+mod especes;
 mod fond;
 mod jeu;
 mod poisson;
@@ -24,8 +26,9 @@ Options (tests) :
   --fenetre                       fenêtre normale (aquarium + Écloserie)
   --capture X.png --secondes N    rendu sans écran après N secondes
   --video X.mp4 --secondes N      vidéo 30 i/s (ffmpeg, AQUARIUM_FFMPEG)
-  --planche X.png                 les 8 raretés agrandies x4
-  --demo                          aquarium pré-rempli (une rareté de chaque)
+  --planche X.png                 toutes les espèces, une ligne par rareté, x4
+  --planche-geantes X.png         créatures énormes et colossales à taille réelle, x2
+  --demo                          aquarium pré-rempli (raretés et espèces variées)
   --taille 1920x1080              taille de la capture / vidéo
   --fond image.png                fond d'écran sous l'aquarium (sinon fond factice)
   --captures-ecloserie DOSSIER    (avec --fenetre) captures de chaque onglet puis quitte
@@ -89,6 +92,9 @@ fn lancer() -> Result<(), String> {
     }
     if let Some(f) = valeur("--planche") {
         return capture::planche(&PathBuf::from(f), o.secondes.min(3.0));
+    }
+    if let Some(f) = valeur("--planche-geantes") {
+        return capture::planche_geantes(&PathBuf::from(f), o.secondes.min(3.0));
     }
     let fenetre = a("--fenetre") || !cfg!(windows);
     appli::lancer(appli::Options {

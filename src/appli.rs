@@ -150,7 +150,8 @@ pub fn lancer(o: Options) -> Result<(), String> {
 
 /// Icône 32x32 (fenêtres) : un poisson commun dessiné par le jeu.
 pub fn icone_rgba() -> Vec<u8> {
-    let s = crate::scene::sprite_de(7, crate::jeu::Rarete::Rare, 0.9);
+    let e = crate::especes::par_cle("clown").expect("poisson-clown au catalogue");
+    let s = crate::poisson::sprite(e, 0, 1.4);
     let mut out = vec![0u8; 32 * 32 * 4];
     let (ox, oy) = ((32 - s.l) / 2, (32 - s.h) / 2);
     for y in 0..s.h {

@@ -43,7 +43,9 @@ pub fn charger(d: &Path) -> (Partie, Option<String>) {
     let f = fichier(d);
     let lire = |p: &Path| -> Result<Partie, String> {
         let octets = std::fs::read(p).map_err(|e| e.to_string())?;
-        serde_json::from_slice::<Partie>(&octets).map_err(|e| e.to_string())
+        let mut p = serde_json::from_slice::<Partie>(&octets).map_err(|e| e.to_string())?;
+        p.migrer();
+        Ok(p)
     };
     match lire(&f) {
         Ok(p) => (p, None),
@@ -174,5 +176,49 @@ mod tests {
         assert!(cote);
         // Le fichier abîmé d'origine est toujours là (pas de perte).
         assert_eq!(std::fs::read(fichier(&d)).unwrap(), b"pas du json");
+    }
+
+    #[test]
+    fn sauvegarde_lot1_migree_sans_perte() {
+        // Format exact du lot 1 (version 1, sans espèce ni `vus`).
+        let d = dossier_test("lot1");
+        let mut json = String::from(
+            r#"{"version":1,"argent":123456.5,"total_gagne":9e9,"horodatage":1700000000,
+            "prochain_id":40,"alea":77,"poissons":["#,
+        );
+        let n = 24;
+        for i in 0..n {
+            let r = crate::jeu::Rarete::TOUTES[i % 8];
+            json += &format!(
+                r#"{}{{"id":{},"graine":{},"rarete":"{r:?}","taille":1.1,"niveau":3,"actif":{},"oeuf":2}}"#,
+                if i == 0 { "" } else { "," },
+                i + 1,
+                1000 + i * 7919,
+                i % 3 != 0
+            );
+        }
+        json += r#"],"oeufs_ouverts":[10,5,2,1],"eclos":[3,3,3,3,3,3,3,3],
+            "reglages":{"teinte":0.3,"max_affiches":40,"ips":30,"demarrage_windows":false,"pause_plein_ecran":true}}"#;
+        std::fs::write(fichier(&d), &json).unwrap();
+        let (q, msg) = charger(&d);
+        assert!(msg.is_none(), "{msg:?}");
+        assert_eq!(q.version, crate::jeu::VERSION);
+        assert_eq!(q.argent, 123456.5);
+        assert_eq!(q.poissons.len(), n);
+        for (i, f) in q.poissons.iter().enumerate() {
+            let e = crate::especes::par_cle(&f.espece).expect("espèce connue");
+            assert_eq!(e.rarete, f.rarete, "même rareté");
+            assert!((f.variante as usize) < e.variantes.len());
+            assert_eq!(f.niveau, 3);
+            assert_eq!(f.actif, i % 3 != 0);
+        }
+        assert_eq!(q.vus.values().sum::<u64>(), n as u64);
+        // Déterministe et stable : relire puis réécrire ne change rien.
+        ecrire(&d, &q).unwrap();
+        let (r, _) = charger(&d);
+        for (a, b) in q.poissons.iter().zip(&r.poissons) {
+            assert_eq!((&a.espece, a.variante), (&b.espece, b.variante));
+        }
+        assert_eq!(r.vus, q.vus);
     }
 }

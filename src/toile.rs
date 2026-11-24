@@ -211,6 +211,8 @@ fn glyphe(c: char) -> &'static str {
         ' ' => "..|..|..|..|..",
         'É' | 'é' => "..#|###|#..|##.|#..|###",
         'È' | 'è' => "#..|###|#..|##.|#..|###",
+        'Œ' | 'œ' => ".####|#.#..|#.##.|#.#..|.####",
+        'Ö' | 'ö' => "#.#|.#.|#.#|#.#|#.#|.#.",
         'Ê' | 'ê' => ".#.|###|#..|##.|#..|###",
         'À' | 'à' => "#..|.#.|#.#|###|#.#|#.#",
         c if c.is_ascii_lowercase() => glyphe(c.to_ascii_uppercase()),
@@ -291,7 +293,7 @@ mod tests {
 
     #[test]
     fn police_couvre_le_compteur() {
-        for c in "0123456789,.+-/: kMdBnTQe!'ABCDEFGHIJKLMNOPQRSTUVWXYZéèêàç".chars() {
+        for c in "0123456789,.+-/: kMdBnTQe!'ABCDEFGHIJKLMNOPQRSTUVWXYZéèêàçœö".chars() {
             assert_ne!(glyphe(c), glyphe('\u{1}'), "glyphe manquant : {c}");
         }
         assert_eq!(largeur_texte("1"), 3);

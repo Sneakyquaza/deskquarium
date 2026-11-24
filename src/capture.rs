@@ -1,15 +1,17 @@
 //! Rendu sans écran (Linux) : capture PNG, vidéo via ffmpeg, planche des raretés, mesures.
 
+use crate::especes::{Espece, Taille};
 use crate::fond;
 use crate::jeu::{Alea, Partie, Rarete, CAPACITE};
-use crate::scene::{echelle_pour, sprite_de, Aquarium, Nageur};
+use crate::scene::{echelle_pour, Aquarium, Nageur};
 use crate::toile::Toile;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-/// Aquarium pré-rempli : au moins un poisson de chaque rareté.
+/// Aquarium pré-rempli : au moins un poisson de chaque rareté, et un mélange de créatures
+/// remarquables (raie manta, requins, murène, méduse, kraken, léviathan…).
 pub fn partie_demo() -> Partie {
     let mut p = Partie::nouvelle(crate::sauve::maintenant(), 2024);
     p.argent = 1e15;
@@ -22,32 +24,69 @@ pub fn partie_demo() -> Partie {
         }
     }
     let mut a = Alea(99);
-    for r in Rarete::TOUTES {
-        if !p.poissons.iter().any(|f| f.rarete == r && f.actif) {
-            // Remplace le plus faible pour garder la limite.
-            if p.nb_actifs() >= CAPACITE {
-                let id = p
-                    .poissons
-                    .iter()
-                    .filter(|f| f.actif)
-                    .min_by(|x, y| x.revenu().total_cmp(&y.revenu()))
-                    .unwrap()
-                    .id;
-                let _ = p.basculer(id);
-            }
-            let id = p.prochain_id;
-            p.prochain_id += 1;
-            p.poissons.push(crate::jeu::Poisson {
-                id,
-                graine: a.suivant(),
-                rarete: r,
-                taille: 1.2,
-                niveau: 3,
-                actif: true,
-                oeuf: 3,
-            });
-            p.eclos[r.index()] += 1;
+    let voulues = [
+        "kraken",
+        "leviathan",
+        "manta",
+        "marteau",
+        "blanc",
+        "murene",
+        "meduse",
+        "tortue",
+        "baudroie",
+        "hippocampe",
+        "crabe",
+        "carpe_comete",
+        "dauphin",
+    ];
+    for cle in voulues {
+        let Some(e) = crate::especes::par_cle(cle) else {
+            continue;
+        };
+        if p.poissons.iter().any(|f| f.espece == cle && f.actif) {
+            continue;
         }
+        // Remplace le plus faible pour garder la limite.
+        if p.nb_actifs() >= CAPACITE {
+            let id = p
+                .poissons
+                .iter()
+                .filter(|f| f.actif && crate::scene::espece_de(f).taille < Taille::Enorme)
+                .min_by(|x, y| x.revenu().total_cmp(&y.revenu()))
+                .unwrap()
+                .id;
+            let _ = p.basculer(id);
+        }
+        let id = p.prochain_id;
+        p.prochain_id += 1;
+        p.poissons.push(crate::jeu::Poisson {
+            id,
+            graine: a.suivant(),
+            rarete: e.rarete,
+            taille: 1.2,
+            niveau: 3,
+            actif: true,
+            oeuf: 3,
+            espece: cle.to_string(),
+            variante: 0,
+        });
+        p.eclos[e.rarete.index()] += 1;
+        *p.vus.entry(cle.to_string()).or_default() += 1;
+    }
+    // Les autres créatures colossales vont dans la réserve (deux à l'écran au plus).
+    let gardees: Vec<u64> = p
+        .poissons
+        .iter()
+        .filter(|f| {
+            f.actif
+                && crate::scene::espece_de(f).taille == Taille::Colossale
+                && f.espece != "kraken"
+                && f.espece != "leviathan"
+        })
+        .map(|f| f.id)
+        .collect();
+    for id in gardees {
+        let _ = p.basculer(id);
     }
     p.argent = 1_234_567.0;
     p
@@ -149,56 +188,166 @@ pub fn video(o: &Options, sortie: &Path) -> Result<(), String> {
         .ok_or_else(|| format!("ffmpeg : {s}"))
 }
 
-/// Planche des 8 raretés (un poisson chacune, immobiles, effets actifs), agrandie x4.
+/// Planche des espèces agrandie x4 : une ligne par rareté, chaque espèce (variante de base)
+/// immobile avec ses effets, son nom dessous. Les très grandes sont réduites pour tenir dans la
+/// case (elles sont à taille réelle sur `planche_geantes`).
 pub fn planche(sortie: &Path, secondes: f32) -> Result<(), String> {
-    let (cl, ch) = (120, 64);
-    let mut aq = Aquarium::new(cl * 4, ch * 2, 3);
+    let (cl, ch, gauche) = (124usize, 90usize, 56usize);
+    let lignes: Vec<Vec<&Espece>> = Rarete::TOUTES
+        .iter()
+        .map(|r| crate::especes::de_rarete(*r).collect())
+        .collect();
+    let n_col = lignes.iter().map(Vec::len).max().unwrap_or(1);
+    let (lt, htt) = (gauche + cl * n_col, ch * lignes.len());
+    let mut aq = Aquarium::new(lt, htt, 3);
     aq.avec_compteur = false;
     aq.decor = false;
     let mut a = Alea(5);
-    for (i, r) in Rarete::TOUTES.iter().enumerate() {
-        let graine = 1000 + i as u64 * 17;
-        let s = Arc::new(sprite_de(graine, *r, 1.3));
-        let x = (i % 4 * cl + cl / 2) as f32;
-        let y = (i / 4 * ch + ch / 2 - 4) as f32;
-        let mut n = Nageur::new(i as u64 + 1, *r, s, x, y, &mut a);
+    let mut id = 1;
+    for (j, ligne) in lignes.iter().enumerate() {
+        for (i, e) in ligne.iter().enumerate() {
+            let m = 2.0 * crate::poisson::MARGE as f32;
+            let k = ((cl as f32 - 6.0 - m) / e.dims.0 as f32)
+                .min((ch as f32 - 16.0 - m) / e.dims.1 as f32)
+                .min(1.0);
+            let s = Arc::new(crate::poisson::sprite(e, 0, k));
+            let x = (gauche + i * cl + cl / 2) as f32;
+            let y = (j * ch + (ch - 10) / 2) as f32;
+            let mut n = Nageur::new(id, e.rarete, s, x, y, &mut a);
+            id += 1;
+            n.fixe = true;
+            n.gauche = false;
+            aq.nageurs.push(n);
+        }
+    }
+    let mut t = rendre_planche(&mut aq, secondes, n_col, lignes.len(), (cl, ch, gauche));
+    for (j, ligne) in lignes.iter().enumerate() {
+        let r = Rarete::TOUTES[j];
+        let y = (j * ch) as i32;
+        t.texte(
+            4,
+            y + ch as i32 / 2 - 3,
+            r.nom(),
+            r.couleur(),
+            255,
+            Some([0, 0, 0]),
+        );
+        for (i, e) in ligne.iter().enumerate() {
+            let x = (gauche + i * cl) as i32;
+            let nom = e.nom;
+            let w = crate::toile::largeur_texte(nom);
+            t.texte(
+                x + (cl as i32 - w) / 2,
+                y + ch as i32 - 9,
+                nom,
+                [0xe8, 0xf0, 0xf4],
+                255,
+                Some([0, 0, 0]),
+            );
+        }
+    }
+    enregistrer(&t, 4, sortie)
+}
+
+/// Créatures énormes et colossales à leur vraie taille, agrandies x2.
+pub fn planche_geantes(sortie: &Path, secondes: f32) -> Result<(), String> {
+    let geantes: Vec<&Espece> = crate::especes::catalogue()
+        .iter()
+        .filter(|e| e.taille >= Taille::Enorme)
+        .collect();
+    // Rangement en lignes de 900 pixels.
+    let largeur = 900;
+    let mut places = Vec::new();
+    let (mut x, mut y, mut hl) = (0, 0, 0);
+    for e in &geantes {
+        let (w, h) = (e.dims.0 as usize + 16, e.dims.1 as usize + 22);
+        if x + w > largeur {
+            x = 0;
+            y += hl;
+            hl = 0;
+        }
+        places.push((x, y, w, h));
+        x += w;
+        hl = hl.max(h);
+    }
+    let ht = y + hl;
+    let mut aq = Aquarium::new(largeur, ht, 3);
+    aq.avec_compteur = false;
+    aq.decor = false;
+    let mut a = Alea(8);
+    for (i, (e, &(x, y, w, h))) in geantes.iter().zip(&places).enumerate() {
+        let s = Arc::new(crate::poisson::sprite(e, 0, 1.0));
+        let mut n = Nageur::new(
+            i as u64 + 1,
+            e.rarete,
+            s,
+            (x + w / 2) as f32,
+            (y + (h - 10) / 2) as f32,
+            &mut a,
+        );
         n.fixe = true;
         n.gauche = false;
         aq.nageurs.push(n);
     }
-    let partie = Partie::nouvelle(0, 1);
-    let mut p2 = partie.clone();
+    let mut t = Toile::new(largeur, ht);
+    t.rect(0, 0, largeur as i32, ht as i32, [0x12, 0x22, 0x3a], 255);
+    for _ in 0..(secondes * 30.0) as usize {
+        aq.avancer(1.0 / 30.0);
+    }
+    let mut p2 = Partie::nouvelle(0, 1);
+    p2.reglages.teinte = 0.0;
+    aq.dessiner(&p2);
+    t.superposer(&aq.toile);
+    for (e, &(x, y, w, h)) in geantes.iter().zip(&places) {
+        let nom = format!("{} - {}", e.nom, e.rarete.nom());
+        let tw = crate::toile::largeur_texte(&nom);
+        t.texte(
+            (x + w / 2) as i32 - tw / 2,
+            (y + h) as i32 - 9,
+            &nom,
+            e.rarete.couleur(),
+            255,
+            Some([0, 0, 0]),
+        );
+    }
+    enregistrer(&t, 2, sortie)
+}
+
+fn rendre_planche(
+    aq: &mut Aquarium,
+    secondes: f32,
+    n_col: usize,
+    n_lig: usize,
+    (cl, ch, gauche): (usize, usize, usize),
+) -> Toile {
+    let mut p2 = Partie::nouvelle(0, 1);
     p2.reglages.teinte = 0.0;
     for _ in 0..(secondes * 30.0) as usize {
         aq.avancer(1.0 / 30.0);
     }
     aq.dessiner(&p2);
-    let mut t = Toile::new(cl * 4, ch * 2);
-    t.rect(
-        0,
-        0,
-        (cl * 4) as i32,
-        (ch * 2) as i32,
-        [0x12, 0x22, 0x3a],
-        255,
-    );
-    for i in 0..8 {
-        let (x, y) = ((i % 4 * cl) as i32, (i / 4 * ch) as i32);
-        if (i % 4 + i / 4) % 2 == 0 {
-            t.rect(x, y, cl as i32, ch as i32, [0x18, 0x2c, 0x48], 255);
+    let (lt, ht) = (gauche + cl * n_col, ch * n_lig);
+    let mut t = Toile::new(lt, ht);
+    t.rect(0, 0, lt as i32, ht as i32, [0x12, 0x22, 0x3a], 255);
+    for j in 0..n_lig {
+        for i in 0..n_col {
+            if (i + j) % 2 == 0 {
+                let (x, y) = ((gauche + i * cl) as i32, (j * ch) as i32);
+                t.rect(x, y, cl as i32, ch as i32, [0x18, 0x2c, 0x48], 255);
+            }
         }
     }
     t.superposer(&aq.toile);
-    for (i, r) in Rarete::TOUTES.iter().enumerate() {
-        let (x, y) = ((i % 4 * cl) as i32 + 4, (i / 4 * ch) as i32 + ch as i32 - 8);
-        t.texte(x, y, r.nom(), r.couleur(), 255, Some([0, 0, 0]));
-    }
+    t
+}
+
+fn enregistrer(t: &Toile, e: usize, sortie: &Path) -> Result<(), String> {
     creer_dossier(sortie)?;
     image::save_buffer(
         sortie,
-        &t.agrandie_rgba(4),
-        (t.l * 4) as u32,
-        (t.h * 4) as u32,
+        &t.agrandie_rgba(e),
+        (t.l * e) as u32,
+        (t.h * e) as u32,
         image::ColorType::Rgba8,
     )
     .map_err(|e| e.to_string())

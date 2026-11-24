@@ -59,3 +59,9 @@ Rentabilité d'un niveau = 600 s au niveau 1, ≈ 6 h 30 au niveau 9 : puits d'a
 | Revenu après 120 h | 49 k/s | 202 k/s | 94 k/s |
 
 Lecture : au rythme d'un PC allumé ~8 h par jour (+ 8 h hors ligne la nuit), les abysses arrivent le 1er jour, le cosmique vers le 2e-3e jour, Céleste et Irréel restent des chasses sur la semaine et au-delà. Un vrai joueur, moins optimal, sera plus lent : à revoir avec ses retours (leviers : prix des œufs, `revenu_base`, pente du prix `n/10`).
+
+## Espèces (lot 2)
+
+L'espèce et la variante d'un poisson sont tirées de sa graine (`especes::choisir`), après la rareté : le flux aléatoire des œufs est le même qu'au lot 1, donc toutes les courbes ci-dessus restent valables. Le revenu ne dépend pas de l'espèce (pas de bonus de taille). Dans une rareté, chaque espèce a le poids 1, sauf Jörmungandr (0,35).
+
+Affichage : la limite `max_affiches` (40) compte des places : créature énorme = 2, colossale = 4, deux colossales au plus. Tous les poissons de l'aquarium (40 au plus) rapportent, affichés ou non.

@@ -1,4 +1,4 @@
-AQUARIUM v0.1 - fond d'écran aquarium pixel art + petit jeu idle (Windows 10/11, 64 bits)
+AQUARIUM v0.2 - fond d'écran aquarium pixel art + petit jeu idle (Windows 10/11, 64 bits)
 
 LANCER
 - Décompresse le dossier où tu veux (par exemple Documents\aquarium) et lance aquarium.exe.
@@ -13,7 +13,13 @@ JOUER
 - Les poissons rapportent de l'argent (compteur en bas à gauche du bureau).
   Avec l'argent, ouvre des œufs dans l'Écloserie : 4 œufs, 8 raretés
   (Commun, Peu commun, Rare, Épique, Légendaire, Mythique, Céleste, Irréel).
+- 50 espèces à collectionner (poisson-clown, hippocampe, crabe, méduse, raie manta, requins,
+  orque, baleine à bosse… jusqu'au kraken, au léviathan et à Jörmungandr), chacune avec
+  plusieurs variantes de couleur. Le Poissodex montre les espèces trouvées.
 - 40 poissons nagent dans l'aquarium ; les autres vont en réserve (onglet Mon aquarium).
+  Pour que l'écran reste lisible, une créature énorme (baleine, orque…) compte pour 2 places
+  d'affichage et une colossale (kraken, léviathan…) pour 4, deux colossales au plus à l'écran ;
+  elles nagent au fond, derrière les plantes. Tous les poissons de l'aquarium rapportent.
   « Nourrir » monte le niveau d'un poisson ; « Relâcher » le revend.
 - Hors ligne : à la relance, tu gagnes ce que l'aquarium a rapporté pendant ton absence (8 h au plus).
 - Réglages : teinte de l'eau (0 % = fond d'écran intact), nombre de poissons dessinés,
@@ -31,6 +37,8 @@ DÉSINSTALLER
   pour tout effacer.
 
 CE QUI N'A PAS ÉTÉ TESTÉ (version préparée sur un serveur Linux, sans Windows réel)
+- Les sauvegardes de la v0.1 sont reprises : chaque ancien poisson devient une espèce de la
+  même rareté (aucun poisson ni argent perdu).
 - Rien n'a encore tourné sur un vrai Windows : l'exe a seulement été compilé et vérifié.
 - Incrustation derrière les icônes (WorkerW), en particulier Windows 11 24H2 et plus récent.
 - Icône de notification, menu, raccourci Ctrl+Alt+A, démarrage avec Windows.

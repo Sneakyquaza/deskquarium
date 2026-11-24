@@ -2,6 +2,7 @@
 //! Toutes les valeurs d'équilibrage sont ici (courbes documentées dans `docs/equilibrage.md`).
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Poissons qui nagent (et rapportent) en même temps ; au-delà, ils vont dans la réserve.
 pub const CAPACITE: usize = 40;
@@ -156,6 +157,11 @@ pub struct Poisson {
     /// Index de l'œuf d'origine.
     #[serde(default)]
     pub oeuf: u8,
+    /// Clé de l'espèce (`especes.rs`) ; vide dans les sauvegardes du lot 1 → `Partie::migrer`.
+    #[serde(default)]
+    pub espece: String,
+    #[serde(default)]
+    pub variante: u8,
 }
 
 impl Poisson {
@@ -222,9 +228,15 @@ pub struct Partie {
     pub oeufs_ouverts: [u64; 4],
     /// Poissons éclos, par rareté (Poissodex).
     pub eclos: [u64; 8],
+    /// Poissons éclos par espèce (Poissodex, depuis la version 2).
+    #[serde(default)]
+    pub vus: BTreeMap<String, u64>,
     #[serde(default)]
     pub reglages: Reglages,
 }
+
+/// Version du format de sauvegarde (2 = espèces).
+pub const VERSION: u32 = 2;
 
 #[derive(Debug, PartialEq)]
 pub enum Refus {
@@ -238,7 +250,7 @@ impl Partie {
     /// Nouvelle partie : un petit poisson commun offert pour démarrer.
     pub fn nouvelle(maintenant: u64, graine: u64) -> Partie {
         let mut p = Partie {
-            version: 1,
+            version: VERSION,
             argent: 0.0,
             total_gagne: 0.0,
             horodatage: maintenant,
@@ -247,6 +259,7 @@ impl Partie {
             poissons: Vec::new(),
             oeufs_ouverts: [0; 4],
             eclos: [0; 8],
+            vus: BTreeMap::new(),
             reglages: Reglages::default(),
         };
         p.ajouter(Rarete::Commun, 1.0, 0);
@@ -258,6 +271,8 @@ impl Partie {
         self.prochain_id += 1;
         let graine = self.alea.suivant();
         let actif = self.nb_actifs() < CAPACITE;
+        // L'espèce vient de la graine : le tirage des raretés (et l'équilibrage) ne change pas.
+        let (e, variante) = crate::especes::choisir(rarete, graine);
         self.poissons.push(Poisson {
             id,
             graine,
@@ -266,9 +281,39 @@ impl Partie {
             niveau: 1,
             actif,
             oeuf,
+            espece: e.cle.to_string(),
+            variante,
         });
         self.eclos[rarete.index()] += 1;
+        *self.vus.entry(e.cle.to_string()).or_default() += 1;
         id
+    }
+
+    /// Met une sauvegarde ancienne au format courant : chaque poisson sans espèce connue (lot 1,
+    /// ou espèce disparue) reçoit une espèce de même rareté tirée de sa graine ; rien n'est perdu.
+    pub fn migrer(&mut self) {
+        let mut ajout = false;
+        for f in &mut self.poissons {
+            let connue = crate::especes::par_cle(&f.espece).is_some_and(|e| e.rarete == f.rarete);
+            if !connue {
+                let (e, v) = crate::especes::choisir(f.rarete, f.graine);
+                f.espece = e.cle.to_string();
+                f.variante = v;
+                ajout = true;
+            }
+        }
+        // Poissodex par espèce : au moins les poissons possédés.
+        if ajout || self.vus.is_empty() {
+            let mut n: BTreeMap<String, u64> = BTreeMap::new();
+            for f in &self.poissons {
+                *n.entry(f.espece.clone()).or_default() += 1;
+            }
+            for (k, c) in n {
+                let v = self.vus.entry(k).or_default();
+                *v = (*v).max(c);
+            }
+        }
+        self.version = self.version.max(VERSION);
     }
 
     pub fn nb_actifs(&self) -> usize {
