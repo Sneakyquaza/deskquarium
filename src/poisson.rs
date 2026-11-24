@@ -108,7 +108,14 @@ fn recolorer_shiny(src: &mut [[u8; 4]], cle: &str) {
     for p in src.iter_mut().filter(|p| p[3] == 255) {
         let (hh, s, v) = rgb_hsv([p[0], p[1], p[2]]);
         let c = if s >= 0.3 {
-            hsv(hh + pas, (s * 1.08).min(1.0), v)
+            // Saturation un peu baissée (pas de vert ou bleu fluo), verts un peu plus sombres.
+            let h2 = (hh + pas).rem_euclid(1.0);
+            let v2 = if (0.2..0.47).contains(&h2) {
+                v * 0.88
+            } else {
+                v
+            };
+            hsv(h2, s * 0.88, v2)
         } else if (0.2..0.93).contains(&v) {
             // Gris et couleurs pâles du corps : teintés franchement, l'ombrage gardé.
             hsv(gris, 0.34 + s * 0.5, v)
@@ -135,7 +142,8 @@ fn recolorer_modif(src: &mut [[u8; 4]], m: Modif, w: i32) {
             Modif::Diamant => {
                 let facette = (x + y).rem_euclid(9) == 0 || (x - y).rem_euclid(13) == 0;
                 let b = melange(c, [0xd8, 0xf4, 0xff], 0.38);
-                if facette && v > 0.25 {
+                // Facettes seulement sur les parties claires (le dessin reste lisible).
+                if facette && lum > 0.55 {
                     melange(b, [255, 255, 255], 0.35)
                 } else {
                     b
@@ -157,8 +165,8 @@ fn recolorer_modif(src: &mut [[u8; 4]], m: Modif, w: i32) {
             // Cristal : pâle et froid (posé translucide au rendu), facettes.
             Modif::Cristal => {
                 let facette = (x * 2 + y).rem_euclid(11) == 0;
-                let b = melange(c, [0xc0, 0xf0, 0xf8], 0.5);
-                if facette {
+                let b = melange(c, [0xd0, 0xc8, 0xff], 0.5);
+                if facette && lum > 0.5 {
                     melange(b, [255, 255, 255], 0.45)
                 } else {
                     b

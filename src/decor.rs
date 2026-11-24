@@ -110,8 +110,9 @@ pub fn ombre(t: &mut Toile, cx: i32, l: i32, sol: &[i32]) {
         }
         // v0.8 : ombre de contact plus marquée (la relecture la voyait à peine).
         let k = 1.0 - (dx as f32 / r).powi(2);
-        for dy in -1..5 {
-            let a = (150.0 * k.sqrt() * (1.0 - (dy + 1) as f32 / 6.0)) as u8;
+        // Bande sombre pleine sur 4 lignes puis fondu : visible sous chaque élément à 1080p.
+        for dy in -2..9 {
+            let a = (165.0 * k.sqrt() * (1.0 - (dy - 2).max(0) as f32 / 7.0)) as u8;
             if a > 0 {
                 t.poser_fin(x, s + dy, [0x08, 0x0e, 0x16], a);
             }

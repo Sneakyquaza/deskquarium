@@ -104,8 +104,12 @@ struct Particule {
 }
 
 struct Gain {
+    /// Poisson suivi et décalage (le « +x » reste au-dessus de lui pendant qu'il nage).
+    id: u64,
     x: f32,
     y: f32,
+    dx: f32,
+    dy: f32,
     texte: String,
     vie: f32,
 }
@@ -321,8 +325,9 @@ impl Aquarium {
                     .collect();
                 let pied = cols.iter().sum::<i32>() / cols.len().max(1) as i32 + enf;
                 // Ombre de contact plus large que l'élément : visible sur le sable de chaque côté.
-                crate::decor::ombre(t, cx * fi, img.l * 6 / 5, &sol);
                 crate::decor::poser(t, img, (x0, pied - img.h), m, (EAU_LOIN, eau), &sol);
+                // Après l'élément : assombrit aussi sa base (ombre de contact bien visible).
+                crate::decor::ombre(t, cx * fi, img.l * 7 / 5, &sol);
                 (pied - img.h) / fi
             };
         let mut algue = |a: &mut Alea, x: i32, devant: bool| {
@@ -667,7 +672,7 @@ impl Aquarium {
         for (k, &i) in grands.iter().enumerate() {
             let b = (k % nb) as f32 / nb as f32;
             self.nageurs[i].bande =
-                Some(((b - 0.1).max(0.0), (b + 1.0 / nb as f32 + 0.1).min(1.0)));
+                Some(((b - 0.03).max(0.0), (b + 1.0 / nb as f32 + 0.03).min(1.0)));
         }
         // Bancs lâches d'une même espèce : 5 au plus pour les poissons de banc, 3 pour les
         // autres petits communs ; le premier de chaque groupe mène.
@@ -730,6 +735,13 @@ impl Aquarium {
             .filter_map(Nageur::zone_yeux)
             .collect();
         let pousses = separation(&self.nageurs);
+        // Corps du premier plan (les « +x » ne se posent pas dessus).
+        let corps_devant: Vec<(f32, f32, f32, f32)> = self
+            .nageurs
+            .iter()
+            .filter(|m| m.sprite.taille.profondeur() == 0.0)
+            .map(|m| (m.x, m.y, m.sprite.lw() / 2.0, m.sprite.hw() / 2.0))
+            .collect();
         // Places prises (positions et cibles) : les nouvelles cibles vont vers l'eau libre.
         let occupes: Vec<(f32, f32)> = self
             .nageurs
@@ -765,9 +777,26 @@ impl Aquarium {
                     if let Some((_, y0, _, _)) = n.zone_yeux() {
                         gy = gy.min(y0 - 9.0);
                     }
+                    // Pas sur un autre poisson du premier plan : au-dessus de lui.
+                    for _ in 0..2 {
+                        for &(mx, my, lw, hw) in &corps_devant {
+                            if (mx - gx).abs() < lw + 12.0 && gy + 6.0 > my - hw && gy < my + hw {
+                                gy = my - hw - 8.0;
+                            }
+                        }
+                    }
+                    // Deux « +x » proches : le nouveau se pose au-dessus de l'autre.
+                    for g in &self.gains {
+                        if (g.x - gx).abs() < 26.0 && (g.y - gy).abs() < 8.0 {
+                            gy = g.y - 8.0;
+                        }
+                    }
                     self.gains.push(Gain {
+                        id: n.id,
                         x: gx,
                         y: gy,
+                        dx: gx - n.x,
+                        dy: gy - n.y,
                         texte: format!("+{}", court(montant)),
                         vie: 0.0,
                     });
@@ -838,7 +867,11 @@ impl Aquarium {
         self.particules.retain(|p| p.vie < p.duree);
         for g in &mut self.gains {
             g.vie += dt;
-            g.y -= 6.0 * dt;
+            g.dy -= 6.0 * dt;
+            match self.nageurs.iter().find(|n| n.id == g.id) {
+                Some(n) => (g.x, g.y) = (n.x + g.dx, n.y + g.dy),
+                None => g.y -= 6.0 * dt,
+            }
         }
         self.gains.retain(|g| g.vie < 2.2);
     }
@@ -929,8 +962,8 @@ impl Aquarium {
             plante(&mut self.toile, p, t, true, &self.bassin.sol, ab);
         }
         for g in &self.gains {
-            // Apparaît en fondu, reste un instant, s'efface en montant.
-            let a = (230.0 * (g.vie / 0.2).min(1.0) * (1.0 - ((g.vie - 1.1) / 1.1).max(0.0))) as u8;
+            // Net et opaque (contour lisible), puis court fondu à la fin en montant.
+            let a = (255.0 * (1.0 - ((g.vie - 1.7) / 0.5).clamp(0.0, 1.0))) as u8;
             let w = largeur_texte(&g.texte) + 5;
             let x = g.x.round() as i32 - w / 2;
             let y = g.y.round() as i32;
@@ -939,9 +972,9 @@ impl Aquarium {
                 x + 5,
                 y,
                 &g.texte,
-                [0xff, 0xe4, 0x8c],
+                [0xff, 0xf0, 0xb0],
                 a,
-                Some([0x2a, 0x1a, 0x08]),
+                Some([0x10, 0x0a, 0x04]),
             );
         }
         if self.avec_compteur {
@@ -1406,6 +1439,13 @@ impl Nageur {
             // Trop serré : la cible s'écarte en hauteur (pas de demi-tour).
             self.cible.1 += pousse.1 * dt * 6.0;
         }
+        // Grande créature : la cible ne quitte jamais sa bande.
+        if let Some((b0, b1)) = self.bande {
+            let (y0, y1) = (haut + (bas - haut) * b0, haut + (bas - haut) * b1);
+            if y1 > y0 {
+                self.cible.1 = self.cible.1.clamp(y0, y1);
+            }
+        }
         // Passage d'un écran à l'autre : seulement s'il y a de l'eau à cette hauteur.
         let nx = (self.x + self.vx * dt).clamp(marge_x - 2.0, l - marge_x + 2.0);
         match b.eau(nx - sl / 2.0, nx + sl / 2.0) {
@@ -1417,6 +1457,9 @@ impl Nageur {
                 self.minuteur = self.minuteur.min(0.2);
             }
         }
+        // Chevauchement : il s'écarte aussi directement (en hauteur surtout), sans attendre que
+        // sa vitesse change ; deux corps ne restent jamais l'un dans l'autre.
+        self.y += pousse.1 * dt * 1.4;
         self.y = (self.y + self.vy * dt).clamp(haut - 4.0, bas.max(haut) + 2.0);
         // Retournement avec hystérésis et image écrasée pendant le demi-tour.
         if (self.vx < -3.0 && !self.gauche) || (self.vx > 3.0 && self.gauche) {
@@ -1616,7 +1659,7 @@ impl Nageur {
         };
         let (taux, genre, c, v): (f32, Genre, Rgb, (f32, f32)) = match m {
             Modif::Dore => (3.0, Genre::Poussiere, [255, 214, 90], (-4.0, -1.5)),
-            Modif::Diamant => (2.5, Genre::Scintille, [230, 252, 255], (0.0, 0.0)),
+            Modif::Diamant => (6.0, Genre::Scintille, [230, 252, 255], (0.0, 0.0)),
             Modif::Electrique => (0.0, Genre::Eclat, [0, 0, 0], (0.0, 0.0)),
             Modif::ArcEnCiel => (
                 3.0,
@@ -1624,8 +1667,8 @@ impl Nageur {
                 hsv(t * 0.3 + a.f() * 0.3, 0.7, 1.0),
                 (-3.0, 3.0),
             ),
-            Modif::Ombre => (9.0, Genre::Fumee, [0x1c, 0x0c, 0x2c], (-6.0, -2.0)),
-            Modif::Cristal => (1.5, Genre::Scintille, [200, 250, 255], (0.0, 0.0)),
+            Modif::Ombre => (18.0, Genre::Fumee, [0x1c, 0x0c, 0x2c], (-6.0, -2.0)),
+            Modif::Cristal => (4.0, Genre::Scintille, [210, 190, 255], (0.0, 0.0)),
             Modif::Galaxie => (3.0, Genre::Scintille, [210, 190, 255], (0.0, 0.0)),
         };
         if a.f() < dt * taux {
@@ -1670,12 +1713,15 @@ impl Nageur {
         let (etroit, mi) = if long { (0.5, 0.85) } else { (0.4, 0.72) };
         let d = self.duree_tour();
         let ecart = (self.tourne - d * 0.5).abs();
+        // Trois images au milieu : ~70 %, étroite, ~70 % (à 30 i/s).
         let ratio = if self.tourne <= 0.0 {
             1.0
-        } else if ecart < 0.05 {
+        } else if ecart < 0.02 {
             etroit
+        } else if ecart < 0.055 {
+            (etroit + mi) / 2.0
         } else {
-            mi + (1.0 - mi) * ((ecart - 0.05) / (d * 0.5 - 0.05).max(0.01)).clamp(0.0, 1.0)
+            mi + (1.0 - mi) * ((ecart - 0.055) / (d * 0.5 - 0.055).max(0.01)).clamp(0.0, 1.0)
         };
         let cx = s.l as f32 / 2.0;
         // Pendant la première moitié du demi-tour, l'ancien sens.
@@ -1689,6 +1735,49 @@ impl Nageur {
         let tx = |x: i32| -> i32 { colonnes[x as usize] };
         // Pas de rotation du pixel art (scintillement) : le corps reste horizontal.
         let ty = |_x: i32, y: i32| -> i32 { y0 + y };
+        // Images du milieu du demi-tour : vue « de face » fabriquée avec la tête (le bout du
+        // museau au centre, les côtés de la tête et les deux yeux de part et d'autre).
+        let frontal = self.tourne > 0.0 && ecart < 0.055 && s.mouvement != Mouvement::Pulse;
+        // Colonnes dessinées : (colonne du dessin, colonne de la toile).
+        let paires: Vec<(i32, i32)> = if frontal {
+            let oeil = {
+                let (mut sx, mut n) = (0i64, 0i64);
+                for (i, &c) in im.classe.iter().enumerate() {
+                    if c == OEIL {
+                        sx += i as i64 % s.l as i64;
+                        n += 1;
+                    }
+                }
+                if n > 0 {
+                    (sx / n) as f32
+                } else {
+                    s.bouche.0 as f32 - s.l as f32 * 0.15
+                }
+            };
+            let museau = s.bouche.0 as f32;
+            // Centre : la colonne la plus haute du corps ; bords : un peu au-delà de l'œil (les
+            // deux yeux de part et d'autre, silhouette ovale).
+            let milieu = (0..s.l)
+                .max_by_key(|&x| {
+                    (0..s.h)
+                        .filter(|&y| im.classe[(y * s.l + x) as usize] != VIDE)
+                        .count()
+                })
+                .unwrap_or(s.l / 2) as f32;
+            let bord = oeil + (museau - oeil) * 0.3;
+            let large = if ecart < 0.02 { 0.8 } else { 1.0 };
+            let n = ((s.h as f32 * 0.75 * large).min(s.l as f32 * 0.5) as i32).max(6);
+            (0..n)
+                .map(|j| {
+                    let k = ((j as f32 + 0.5 - n as f32 / 2.0) / (n as f32 / 2.0)).abs();
+                    let src = (milieu + k * (bord - milieu)).round() as i32;
+                    (src.clamp(0, s.l - 1), x0 + (cx as i32 - n / 2) + j)
+                })
+                .collect()
+        } else {
+            (0..s.l).map(|x| (x, colonnes[x as usize])).collect()
+        };
+        let avec_halo = avec_halo && !frontal;
         let r = self.rarete;
         let pouls = 0.75 + 0.25 * (t * 2.4 + self.phase).sin();
         // Immobile (éclosion, planches) : couleurs vraies, sans l'eau du lointain. Sinon l'eau
@@ -1754,7 +1843,7 @@ impl Nageur {
         // Halos (lueurs), pixels fins. L'Irréel n'a pas d'anneau : son contour est irisé.
         // Abysses : fine lueur de contre-jour autour du corps (le poisson se détache du noir).
         // Les dessins sombres (baudroie, clown des grands fonds…) ont un contre-jour plus fort.
-        if self.contre_jour {
+        if self.contre_jour && !frontal {
             let a = 70.0 + 120.0 * s.sombre;
             for &(x, y) in &im.halo1 {
                 toile.eclairer_fin(tx(x), ty(x, y), [0x58, 0xa8, 0xc8], a as u8);
@@ -1833,7 +1922,7 @@ impl Nageur {
         }
 
         // Copies décalées (Irréel, pendant un glitch).
-        if r == Rarete::Irreel && self.glitch > 0.0 {
+        if r == Rarete::Irreel && self.glitch > 0.0 && !frontal {
             for (dx, c) in [(-2, [255, 40, 200]), (2, [40, 230, 255])] {
                 for y in 0..s.h {
                     for x in 0..s.l {
@@ -1894,12 +1983,18 @@ impl Nageur {
             } else {
                 0
             };
-            for x in 0..s.l {
+            for (jp, &(x, dest)) in paires.iter().enumerate() {
                 let i = (y * s.l + x) as usize;
                 let cl = im.classe[i];
                 if cl == VIDE {
                     continue;
                 }
+                // Vue de face : les bords de la tête prennent le trait du contour.
+                let cl = if frontal && (jp == 0 || jp + 1 == paires.len()) {
+                    CONTOUR
+                } else {
+                    cl
+                };
                 let p = im.px(i);
                 let mut c = [p[0], p[1], p[2]];
                 if cligne && cl == OEIL {
@@ -1983,7 +2078,12 @@ impl Nageur {
                 } else {
                     p[3]
                 };
-                toile.poser_fin(tx(x) + decal_ligne, ty(x, y), c, a);
+                let c = if frontal && cl == CONTOUR && im.classe[i] != CONTOUR {
+                    melange(c, [0x08, 0x06, 0x0c], 0.6)
+                } else {
+                    c
+                };
+                toile.poser_fin(dest + decal_ligne, ty(x, y), c, a);
             }
         }
         // Leurre lumineux (baudroie…) : point vif et lueur tramée qui pulse (pixels monde).
@@ -2012,7 +2112,9 @@ impl Nageur {
             }
         }
         // Étoiles (Galaxie) et facettes (Diamant, Cristal) qui scintillent sur le corps.
-        if let Some(m @ (Modif::Galaxie | Modif::Diamant | Modif::Cristal)) = modif {
+        if let (Some(m @ (Modif::Galaxie | Modif::Diamant | Modif::Cristal)), false) =
+            (modif, frontal)
+        {
             for &(x, y, ph) in &s.etoiles {
                 let v = (t * if m == Modif::Galaxie { 2.0 } else { 1.1 } + ph * TAU).sin();
                 let (xx, yy) = (tx(x), ty(x, y));
@@ -2033,7 +2135,7 @@ impl Nageur {
             }
         }
         // Étoiles du corps (Céleste) qui scintillent.
-        if r == Rarete::Celeste {
+        if r == Rarete::Celeste && !frontal {
             for &(x, y, ph) in &s.etoiles {
                 let v = (t * 2.6 + ph * TAU).sin();
                 if v > 0.1 {
@@ -2077,40 +2179,46 @@ impl Nageur {
                     };
                     toile.eclairer_fin(tx(x), ty(x, y), c, a as u8);
                 }
+                anneau2(toile, im, (tx, ty), [255, 190, 70], 55.0 * pouls);
             }
             Modif::Diamant | Modif::Cristal => {
                 let (c, a, rare) = if m == Modif::Diamant {
-                    ([0xc0, 0xf0, 0xff], 100.0, 11)
+                    ([0xc0, 0xf0, 0xff], 120.0, 7)
                 } else {
-                    ([0xb0, 0xf4, 0xf0], 70.0, 19)
+                    ([0xc8, 0xa8, 0xff], 100.0, 11)
                 };
                 for &(x, y) in &im.halo1 {
-                    if m == Modif::Cristal && bayer(x, y) > 0.5 {
-                        continue;
-                    }
+                    // Cristal : prisme, violet et cyan en alternance.
+                    let c = if m == Modif::Cristal && bayer(x, y) > 0.5 {
+                        [0x80, 0xf0, 0xff]
+                    } else {
+                        c
+                    };
                     // Facettes : points qui s'allument tour à tour.
                     let facette = hache(x, y, pas).is_multiple_of(rare);
                     let (cc, aa) = if facette {
-                        ([255, 255, 255], 240.0)
+                        ([255, 255, 255], 255.0)
                     } else {
                         (c, a * pouls)
                     };
                     toile.eclairer_fin(tx(x), ty(x, y), cc, aa as u8);
                 }
+                anneau2(toile, im, (tx, ty), c, a * 0.45 * pouls);
             }
             Modif::Electrique => {
                 // Anneau qui grésille, et deux ou trois arcs brefs qui partent du bord.
                 let gresille = 0.6 + 0.4 * (t * 37.0).sin() * (t * 23.0 + 1.0).sin();
                 for &(x, y) in &im.halo1 {
-                    let a = 110.0 * gresille * (0.6 + 0.4 * bayer(x + pas, y));
+                    let a = 150.0 * gresille * (0.6 + 0.4 * bayer(x + pas, y));
                     toile.eclairer_fin(tx(x), ty(x, y), [0x60, 0xe8, 0xff], a as u8);
                 }
+                anneau2(toile, im, (tx, ty), [0x40, 0xc0, 0xff], 50.0 * gresille);
                 if im.halo1.is_empty() {
                     return;
                 }
                 let pas_arc = (t * 9.0) as i32;
                 let (cx, cy) = (l / 2.0, self.sprite.h as f32 / 2.0);
-                for k in 0..4 {
+                for k in 0..7 {
                     let h = hache(self.id as i32, k, pas_arc);
                     if h.is_multiple_of(3) {
                         continue;
@@ -2216,6 +2324,13 @@ impl Nageur {
     }
 }
 
+/// Second anneau d'aura (`halo2`), tramé une case sur deux : l'aura se lit à 1080p.
+fn anneau2(toile: &mut Toile, im: &poisson::Image, (tx, ty): Projection, c: Rgb, a: f32) {
+    for &(x, y) in im.halo2.iter().filter(|p| (p.0 + p.1).rem_euclid(2) == 0) {
+        toile.eclairer_fin(tx(x), ty(x, y), c, a as u8);
+    }
+}
+
 /// Position sur la toile d'un pixel du sprite : colonne, puis (colonne, ligne).
 type Projection<'a> = (&'a dyn Fn(i32) -> i32, &'a dyn Fn(i32, i32) -> i32);
 
@@ -2291,13 +2406,13 @@ fn separation(nageurs: &[Nageur]) -> Vec<(f32, f32)> {
             }
             let meme_banc = groupe_a == b.banc.map_or(b.id, |c| c.0);
             let k = if grands {
-                1.0
+                1.15
             } else if autre_plan {
-                0.65
+                0.95
             } else if meme_banc {
                 0.55
             } else {
-                0.85
+                0.95
             };
             let rx = (a.sprite.lw() + b.sprite.lw()) * 0.5 * k + 3.0;
             let ry = (a.sprite.hw() + b.sprite.hw()) * 0.5 * k + 2.0;
@@ -2322,8 +2437,8 @@ fn separation(nageurs: &[Nageur]) -> Vec<(f32, f32)> {
             let (fa, fb) = if autre_plan {
                 let a_devant = a.sprite.taille.profondeur() == 0.0;
                 (
-                    if a_devant { f * 0.7 } else { 0.0 },
-                    if a_devant { 0.0 } else { f * 0.7 },
+                    if a_devant { f * 1.6 } else { 0.0 },
+                    if a_devant { 0.0 } else { f * 1.6 },
                 )
             } else {
                 (f * mb / (ma + mb), f * ma / (ma + mb))
@@ -2370,13 +2485,13 @@ fn dessiner_particules(toile: &mut Toile, parts: &[Particule]) {
             }
             Genre::Fumee => {
                 // Volute sombre qui grossit et s'efface (posée, pas additive).
-                let a = (110.0 * (1.0 - f)) as u8;
+                let a = (150.0 * (1.0 - f)) as u8;
                 toile.poser(x, y, p.c, a);
-                if f > 0.3 {
-                    for (dx, dy) in [(1, 0), (0, -1)] {
-                        toile.poser(x + dx, y + dy, p.c, a / 2);
-                    }
+                for (dx, dy) in [(1, 0), (0, -1), (-1, 0), (1, -1)] {
+                    toile.poser(x + dx, y + dy, p.c, a / 2);
                 }
+                // Bord violet à peine éclairé : la fumée se voit aussi sur l'eau sombre.
+                toile.eclairer(x, y - 1, [0x50, 0x20, 0x70], a / 4);
             }
             Genre::Poussiere | Genre::Braise | Genre::Eclat => {
                 // Scintillement : une image sur trois plus faible.

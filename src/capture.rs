@@ -247,8 +247,8 @@ pub fn video(o: &Options, sortie: &Path) -> Result<(), String> {
         .map_err(|e| format!("{ffmpeg} : {e} (AQUARIUM_FFMPEG pour donner le chemin)"))?;
     let mut entree = enfant.stdin.take().ok_or("ffmpeg sans entrée")?;
     let dt = 1.0 / 30.0;
-    // Une seconde d'avance : bulles et particules déjà en place.
-    for _ in 0..30 {
+    // 30 s d'avance : bulles, particules et nageurs déjà répartis (comme un fond allumé).
+    for _ in 0..30 * 30 {
         aq.avancer(dt);
     }
     for _ in 0..(o.secondes * 30.0) as usize {
@@ -465,7 +465,7 @@ pub fn planche_formes(
     let f = crate::toile::FIN;
     // Cases à la taille réelle du plus grand dessin (jamais réduit) + place pour l'aura.
     let (cl, ch, gauche) = (lmax as usize / f + 30, hmax as usize / f + 34, 0usize);
-    let (lt, ht) = (cl * colonnes.len(), ch * especes.len() + 10);
+    let (lt, ht) = (cl * colonnes.len(), ch * especes.len());
     let mut aq = Aquarium::new(lt, ht, 3);
     aq.avec_compteur = false;
     aq.decor = false;
@@ -475,7 +475,7 @@ pub fn planche_formes(
         for (i, (_, forme)) in colonnes.iter().enumerate() {
             let s = Arc::new(crate::poisson::sprite_forme(e, 0, 1.0, *forme));
             let x = (i * cl + cl / 2) as f32;
-            let y = (10 + j * ch + (ch - 8) / 2) as f32;
+            let y = (j * ch + ch / 2) as f32;
             let mut n = Nageur::new(id, e.rarete, s, x, y, &mut a);
             id += 1;
             n.fixe = true;
@@ -484,17 +484,14 @@ pub fn planche_formes(
             aq.nageurs.push(n);
         }
     }
-    let t = rendre_planche(
+    // Noms des colonnes en haut de la première ligne, noms des espèces en bas de chaque ligne.
+    let mut t = rendre_planche(
         &mut aq,
         secondes,
         colonnes.len(),
         especes.len(),
         (cl, ch, gauche),
     );
-    let mut t2 = Toile::new(lt, ht);
-    t2.rect(0, 0, lt as i32, 10, [0x0a, 0x14, 0x24], 255);
-    t2.superposer(&t);
-    let mut t = t2;
     for (i, (nom, _)) in colonnes.iter().enumerate() {
         let w = crate::toile::largeur_texte(nom);
         t.texte(
@@ -509,7 +506,7 @@ pub fn planche_formes(
     for (j, e) in especes.iter().enumerate() {
         t.texte(
             2,
-            (10 + j * ch + ch - 9) as i32,
+            (j * ch + ch - 8) as i32,
             e.nom,
             [0xe8, 0xf0, 0xf4],
             255,

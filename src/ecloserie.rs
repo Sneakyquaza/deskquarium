@@ -835,6 +835,7 @@ impl Ecloserie {
                         p.index_complets(),
                         court_pct(p.index_complets() as f64 * BONUS_INDEX * 100.0)
                     ))
+                    .font(titre(12.0))
                     .color(OR),
                 );
             });
@@ -897,7 +898,8 @@ impl Ecloserie {
     fn carte_espece(&mut self, ui: &mut Ui, p: &Partie, e: &'static Espece, k: usize) {
         let n = p.vus.get(e.cle).copied().unwrap_or(0);
         let vu = p.dans_index(e.cle, k);
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(128.0, 96.0), egui::Sense::hover());
+        // 122 px : 7 cases par ligne dans la fenêtre de 960 px.
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(122.0, 96.0), egui::Sense::hover());
         let peintre = ui.painter();
         let bord = if vu {
             e.rarete.couleur()
@@ -917,7 +919,7 @@ impl Ecloserie {
             .entry(cle.clone())
             .or_insert_with(|| {
                 let m = 2.0 * crate::poisson::MARGE as f32;
-                let z = ((112.0 - m) / e.dims.0 as f32)
+                let z = ((108.0 - m) / e.dims.0 as f32)
                     .min((54.0 - m) / e.dims.1 as f32)
                     .min(1.0);
                 let forme = forme_index(k);
@@ -928,7 +930,7 @@ impl Ecloserie {
             })
             .clone();
         let zone =
-            egui::Rect::from_min_size(rect.min + Vec2::new(4.0, 4.0), Vec2::new(120.0, 58.0));
+            egui::Rect::from_min_size(rect.min + Vec2::new(4.0, 4.0), Vec2::new(114.0, 58.0));
         let taille = tex.size_vec2();
         let z = (zone.width() / taille.x)
             .min(zone.height() / taille.y)
