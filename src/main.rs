@@ -2,6 +2,8 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod appli;
+#[cfg(windows)]
+mod calque;
 mod capture;
 mod ecloserie;
 mod ecrans;

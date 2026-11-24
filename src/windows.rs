@@ -15,7 +15,7 @@ use std::sync::{mpsc, Mutex, OnceLock};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, S_OK, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, GetSysColor, MapWindowPoints, MonitorFromWindow,
-    COLOR_DESKTOP, HDC, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    COLOR_DESKTOP, HDC, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY,
 };
 use windows_sys::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
@@ -61,16 +61,19 @@ const WM_ICONE: u32 = WM_APP + 1;
 pub struct Systeme {
     recu: mpsc::Receiver<Commande>,
     fil: Option<std::thread::JoinHandle<()>>,
-    fenetre: HWND,
-    /// Parent actuel (Progman ou WorkerW) ; nul en mode fenêtre.
+    /// Calque du fond d'écran : fenêtre Win32 à nous, dessinée en GDI (voir `calque.rs`).
+    calque: crate::calque::Calque,
+    /// Parent actuel du calque (Progman ou WorkerW) ; nul en mode fenêtre.
     parent: HWND,
+    methode: u8,
 }
 
 static MODE_FENETRE: AtomicBool = AtomicBool::new(false);
 
 impl Systeme {
-    /// Lance le fil de l'icône de notification, puis incruste la fenêtre racine derrière les
-    /// icônes (ou la laisse en fenêtre au fond si `mode_fenetre` ou si l'incrustation échoue).
+    /// Cache la fenêtre eframe (elle ne sert plus qu'à faire tourner l'appli et l'Écloserie),
+    /// crée le calque du fond, lance le fil de l'icône de notification, puis incruste le calque
+    /// derrière les icônes (ou le met en fenêtre au fond si `mode_fenetre` ou si ça échoue).
     pub fn demarrer(
         frame: &eframe::Frame,
         ctx: &egui::Context,
@@ -84,8 +87,9 @@ impl Systeme {
         let RawWindowHandle::Win32(w) = h.as_raw() else {
             return Err("fenêtre : pas une fenêtre Win32".into());
         };
-        let fenetre = w.hwnd.get() as HWND;
         journal_version();
+        unsafe { cacher_racine(w.hwnd.get() as HWND) };
+        let calque = crate::calque::Calque::creer()?;
         let (tx, rx) = mpsc::channel();
         let _ = CANAL.set(Mutex::new(tx));
         let _ = CTX.set(ctx.clone());
@@ -93,20 +97,23 @@ impl Systeme {
         let mut s = Systeme {
             recu: rx,
             fil: Some(fil),
-            fenetre,
+            calque,
             parent: null_mut(),
+            methode,
         };
         s.appliquer(mode_fenetre, methode);
         Ok(s)
     }
 
-    /// Incruste (méthode 0 = auto, 1 = Progman + calque, 2 = Progman sans calque, 3 = WorkerW)
-    /// ou passe en mode fenêtre. Un échec d'incrustation donne le mode fenêtre : on voit
-    /// toujours l'aquarium, et le journal dit pourquoi. Renvoie le message d'erreur éventuel.
+    /// Incruste le calque (méthode 0 = auto, 1 = Progman + calque WS_EX_LAYERED, 2 = Progman
+    /// sans, 3 = WorkerW) ou le passe en mode fenêtre. Un échec d'incrustation donne le mode
+    /// fenêtre : on voit toujours l'aquarium, et le journal dit pourquoi. Renvoie l'erreur.
     pub fn appliquer(&mut self, mode_fenetre: bool, methode: u8) -> Option<String> {
         let mut erreur = None;
+        let h = self.calque.hwnd;
+        self.methode = methode;
         if !mode_fenetre {
-            match incruster(self.fenetre, methode) {
+            match incruster(h, methode) {
                 Ok(p) => {
                     self.parent = p;
                     MODE_FENETRE.store(false, Ordering::Relaxed);
@@ -118,22 +125,60 @@ impl Systeme {
                 }
             }
         }
-        unsafe { en_fenetre(self.fenetre) };
+        unsafe { en_fenetre(h) };
         self.parent = null_mut();
         MODE_FENETRE.store(true, Ordering::Relaxed);
         erreur
     }
 
-    /// Les écrans ont changé (branché, débranché, déplacé) : la fenêtre recouvre le nouveau
+    /// Écrans couverts par le calque : tout le bureau virtuel, ou en mode fenêtre la zone de
+    /// travail de l'écran principal (jamais la barre des tâches).
+    pub fn disposition(&self) -> Option<Disposition> {
+        if self.parent.is_null() {
+            let t = zone_travail()?;
+            return Disposition::nouvelle(vec![Ecran {
+                x: t.left,
+                y: t.top,
+                l: t.right - t.left,
+                h: t.bottom - t.top,
+                principal: true,
+            }]);
+        }
+        disposition()
+    }
+
+    /// Les écrans ont changé (branché, débranché, déplacé) : le calque recouvre le nouveau
     /// bureau virtuel.
     pub fn recaler(&self) {
         unsafe {
             if self.parent.is_null() {
-                en_fenetre(self.fenetre);
+                en_fenetre(self.calque.hwnd);
             } else {
-                placer(self.fenetre, self.parent, None);
+                placer(self.calque.hwnd, self.parent, None);
             }
         }
+    }
+
+    pub fn presenter(&self, toile: &crate::toile::Toile, e: usize) {
+        self.calque.presenter(toile, e);
+    }
+
+    pub fn fond(&self, img: &image::RgbaImage) {
+        self.calque.fond(img);
+    }
+
+    /// Mire de couleurs 5 s sur le calque (le voit-on ?).
+    pub fn tester(&self) {
+        let nom = if self.parent.is_null() {
+            "mode fenêtre".to_string()
+        } else {
+            format!(
+                "méthode {} (parent {})",
+                self.methode,
+                classe_de(self.parent)
+            )
+        };
+        self.calque.tester(&nom);
     }
 
     pub fn commandes(&self) -> Vec<Commande> {
@@ -144,8 +189,9 @@ impl Systeme {
         EN_PAUSE.store(p, Ordering::Relaxed);
     }
 
-    /// Retire l'icône, attend le fil, puis redessine le fond d'écran (pas d'image figée).
+    /// Retire l'icône et le calque, attend le fil, puis redessine le fond d'écran.
     pub fn arreter(mut self) {
+        self.calque.detruire();
         let h = FENETRE_SYS.load(Ordering::Acquire);
         if !h.is_null() {
             unsafe {
@@ -159,16 +205,60 @@ impl Systeme {
     }
 }
 
+/// La fenêtre eframe ne montre plus rien : 1 pixel, transparente, sans clic, tout au fond.
+unsafe fn cacher_racine(h: HWND) {
+    unsafe {
+        let ex = GetWindowLongPtrW(h, GWL_EXSTYLE) as u32;
+        SetWindowLongPtrW(
+            h,
+            GWL_EXSTYLE,
+            (ex | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT) as isize,
+        );
+        SetLayeredWindowAttributes(h, 0, 0, LWA_ALPHA);
+        SetWindowPos(
+            h,
+            HWND_BOTTOM,
+            0,
+            0,
+            1,
+            1,
+            SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        );
+        crate::journal::ecrire(&format!(
+            "fenêtre eframe cachée : {h:?} rect {} exstyle {:#x}",
+            rect_de(h),
+            GetWindowLongPtrW(h, GWL_EXSTYLE) as u32
+        ));
+    }
+}
+
+/// Zone de travail de l'écran principal (sans la barre des tâches).
+fn zone_travail() -> Option<RECT> {
+    unsafe {
+        let pt = POINT { x: 0, y: 0 };
+        let m = windows_sys::Win32::Graphics::Gdi::MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = size_of::<MONITORINFO>() as u32;
+        (GetMonitorInfoW(m, &mut info) != 0).then_some(info.rcWork)
+    }
+}
+
 /// Version de Windows dans le journal (le numéro de build décide de la disposition du bureau).
 fn journal_version() {
     let cle = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion";
     let v = |n| lire_registre_dans(HKEY_LOCAL_MACHINE, cle, n).unwrap_or_default();
+    // ProductName dit encore « Windows 10 » sous Windows 11 : le build tranche.
+    let build = v("CurrentBuild");
+    let nom = if build.parse::<u32>().is_ok_and(|b| b >= 22000) {
+        "Windows 11"
+    } else {
+        "Windows 10"
+    };
     crate::journal::ecrire(&format!(
-        "--- aquarium {} : {} {} build {} ---",
+        "--- aquarium {} : {nom} {} {} build {build} ---",
         env!("CARGO_PKG_VERSION"),
-        v("ProductName"),
+        v("EditionID"),
         v("DisplayVersion"),
-        v("CurrentBuild"),
     ));
 }
 
@@ -240,21 +330,38 @@ fn incruster(hwnd: HWND, methode: u8) -> Result<HWND, String> {
         let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
         let style =
             (style & !(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU)) | WS_CHILD | WS_VISIBLE;
+        use windows_sys::Win32::Foundation::{GetLastError, SetLastError};
+        SetLastError(0);
         SetWindowLongPtrW(hwnd, GWL_STYLE, style as isize);
-        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        let e_style = GetLastError();
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 & !WS_EX_TOOLWINDOW;
         let ex = if m == 1 {
             ex | WS_EX_LAYERED
         } else {
             ex & !WS_EX_LAYERED
         };
+        SetLastError(0);
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex as isize);
-        if m == 1 {
-            SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
-        }
-        if SetParent(hwnd, parent).is_null() {
+        let e_ex = GetLastError();
+        // Calque WS_EX_LAYERED réappliqué à chaque incrustation (opaque : alpha 255).
+        let e_calque = if m == 1 {
+            if SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA) == 0 {
+                GetLastError()
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        let ancien = SetParent(hwnd, parent);
+        let e_parent = GetLastError();
+        crate::journal::ecrire(&format!(
+            "erreurs : style {e_style}, exstyle {e_ex}, calque {e_calque}, SetParent {e_parent} \
+             (ancien parent {ancien:?})"
+        ));
+        if GetParent(hwnd) != parent {
             return Err(format!(
-                "Rattachement au bureau refusé (SetParent, erreur {}).",
-                windows_sys::Win32::Foundation::GetLastError()
+                "Rattachement au bureau refusé (SetParent, erreur {e_parent})."
             ));
         }
         // Sous les icônes : juste après SHELLDLL_DefView dans l'ordre des enfants de Progman.
@@ -280,12 +387,28 @@ fn incruster(hwnd: HWND, methode: u8) -> Result<HWND, String> {
             GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32,
             IsWindowVisible(hwnd) != 0,
         ));
+        // Ordre des enfants de Progman, du haut vers le bas (le calque doit être juste sous
+        // SHELLDLL_DefView, le WorkerW en dessous).
+        let mut c = GetWindow(progman, GW_CHILD);
+        let mut i = 0;
+        while !c.is_null() && i < 20 {
+            crate::journal::ecrire(&format!(
+                "  enfant {i} de Progman : {c:?} {} {} visible {} exstyle {:#x}{}",
+                classe_de(c),
+                rect_de(c),
+                IsWindowVisible(c) != 0,
+                GetWindowLongPtrW(c, GWL_EXSTYLE) as u32,
+                if c == hwnd { " <- aquarium" } else { "" }
+            ));
+            c = GetWindow(c, GW_HWNDNEXT);
+            i += 1;
+        }
         Ok(parent)
     }
 }
 
-/// Mode fenêtre : fenêtre sans bord de premier niveau sur tout le bureau, au fond de la pile
-/// (au-dessus du bureau, sous les autres applis).
+/// Mode fenêtre : fenêtre sans bord de premier niveau sur la zone de travail de l'écran
+/// principal, au fond de la pile (au-dessus du bureau, sous les autres applis et la barre).
 unsafe fn en_fenetre(hwnd: HWND) {
     unsafe {
         if !GetParent(hwnd).is_null() {
@@ -298,8 +421,27 @@ unsafe fn en_fenetre(hwnd: HWND) {
             ((style & !(WS_CHILD | WS_CAPTION | WS_THICKFRAME)) | WS_POPUP | WS_VISIBLE) as isize,
         );
         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, (ex & !WS_EX_LAYERED) as isize);
-        placer(hwnd, null_mut(), Some(HWND_BOTTOM));
+        SetWindowLongPtrW(
+            hwnd,
+            GWL_EXSTYLE,
+            ((ex & !WS_EX_LAYERED) | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) as isize,
+        );
+        // Zone de travail de l'écran principal : la barre des tâches reste visible.
+        let t = zone_travail().unwrap_or(RECT {
+            left: 0,
+            top: 0,
+            right: GetSystemMetrics(SM_CXSCREEN),
+            bottom: GetSystemMetrics(SM_CYSCREEN) - 48,
+        });
+        SetWindowPos(
+            hwnd,
+            HWND_BOTTOM,
+            t.left,
+            t.top,
+            t.right - t.left,
+            t.bottom - t.top,
+            SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED,
+        );
         crate::journal::ecrire(&format!("mode fenêtre : rect {}", rect_de(hwnd)));
     }
 }
@@ -830,6 +972,12 @@ fn menu(h: HWND) {
             5,
             large("Autre méthode d'incrustation").as_ptr(),
         );
+        AppendMenuW(
+            m,
+            MF_STRING,
+            7,
+            large("Test d'incrustation (couleurs)").as_ptr(),
+        );
         AppendMenuW(m, MF_STRING, 6, large("Ouvrir le journal").as_ptr());
         AppendMenuW(m, MF_SEPARATOR, 0, null());
         AppendMenuW(m, MF_STRING, 3, large("Quitter").as_ptr());
@@ -854,6 +1002,7 @@ fn menu(h: HWND) {
             3 => envoyer(Commande::Quitter),
             4 => envoyer(Commande::ModeFenetre),
             5 => envoyer(Commande::AutreMethode),
+            7 => envoyer(Commande::Tester),
             6 => {
                 let f = large(&crate::journal::chemin().display().to_string());
                 ShellExecuteW(

@@ -1,4 +1,4 @@
-AQUARIUM v0.4 - fond d'écran aquarium pixel art + petit jeu idle (Windows 10/11, 64 bits)
+AQUARIUM v0.5 - fond d'écran aquarium pixel art + petit jeu idle (Windows 10/11, 64 bits)
 
 LANCER
 - Décompresse le dossier où tu veux (par exemple Documents\aquarium) et lance aquarium.exe.
@@ -36,10 +36,13 @@ JOUER
   30/60 images par seconde, lancer au démarrage de Windows, pause en plein écran.
 
 SI L'AQUARIUM N'APPARAÎT PAS SUR LE BUREAU
-- Clic droit sur l'icône du poisson > « Autre méthode d'incrustation » (4 méthodes, essaie-les
-  l'une après l'autre ; le choix est gardé).
+- Clic droit sur l'icône du poisson > « Test d'incrustation (couleurs) » : pendant 5 s, des
+  bandes de couleur vives et le nom de la méthode doivent couvrir le bureau.
+- Sinon « Autre méthode d'incrustation » (4 méthodes, refais le test après chacune ; le choix
+  est gardé).
 - Ou « Mode fenêtre » (menu ou Réglages) : l'aquarium s'affiche dans une fenêtre sans bord, au
-  fond, sous tes autres fenêtres (il cache alors les icônes du bureau).
+  fond, sous tes autres fenêtres, sur l'écran principal sans la barre des tâches (il cache
+  alors les icônes du bureau).
 - « Ouvrir le journal » : envoie ce fichier (journal.log) pour qu'on voie ce qui bloque.
 
 QUITTER

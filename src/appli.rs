@@ -33,6 +33,8 @@ pub enum Commande {
     AutreMethode,
     /// L'Explorateur a redémarré : réincruster.
     Rattacher,
+    /// Mire de couleurs 5 s sur le calque du fond.
+    Tester,
 }
 
 struct Appli {
@@ -116,7 +118,9 @@ pub fn lancer(o: Options) -> Result<(), String> {
             .with_title("Aquarium (fond)")
             .with_decorations(false)
             .with_taskbar(false)
-            .with_inner_size([640.0, 360.0])
+            // Ne montre rien : le calque GDI (calque.rs) dessine l'aquarium.
+            .with_inner_size([1.0, 1.0])
+            .with_position([0.0, 0.0])
             .with_icon(icone)
     };
     let options = eframe::NativeOptions {
@@ -231,6 +235,13 @@ impl Appli {
                 r.incrustation = (r.incrustation + 1) % 4;
             }
             Commande::Rattacher => self.affichage_applique = None,
+            Commande::Tester =>
+            {
+                #[cfg(windows)]
+                if let Some(s) = &self.systeme {
+                    s.tester();
+                }
+            }
         }
     }
 
@@ -240,7 +251,7 @@ impl Appli {
         #[cfg(windows)]
         if !self.fenetre {
             if self.disposition.is_none() {
-                self.disposition = crate::windows::disposition();
+                self.disposition = self.systeme.as_ref().and_then(|s| s.disposition());
             }
             if let Some(d) = &self.disposition {
                 return d.clone();
@@ -258,6 +269,14 @@ impl Appli {
             taille.y.round().max(64.0) as u32,
         );
         let disp = self.disposition(lp, hp);
+        // Windows : la toile suit le calque du fond (la boîte des écrans), pas la fenêtre eframe.
+        #[cfg(windows)]
+        let (lp, hp) = if self.systeme.is_some() {
+            let (_, _, l, h) = disp.boite();
+            (l as u32, h as u32)
+        } else {
+            (lp, hp)
+        };
         let e = disp.echelle() as usize;
         let (l, h) = ((lp as usize).div_ceil(e), (hp as usize).div_ceil(e));
         let refaire = self
@@ -274,7 +293,12 @@ impl Appli {
             self.echelle = e;
             self.fond_tex = None;
             if self.fond_img.is_none() {
-                self.fond_img = Some(self.charger_fond(&disp, lp, hp));
+                let img = self.charger_fond(&disp, lp, hp);
+                #[cfg(windows)]
+                if let Some(s) = &self.systeme {
+                    s.fond(&img);
+                }
+                self.fond_img = Some(img);
             }
         }
         (lp as f32, hp as f32)
@@ -402,6 +426,8 @@ impl eframe::App for Appli {
                     if let Some(e) = s.appliquer(voulu.0, voulu.1) {
                         self.ecloserie.bandeau = Some(e);
                     }
+                    self.disposition = None;
+                    self.fond_img = None;
                     self.aquarium = None;
                     self.fond_tex = None;
                     self.toile_tex = None;
@@ -469,7 +495,7 @@ impl eframe::App for Appli {
         #[cfg(windows)]
         if !self.fenetre && self.verif_ecrans.elapsed() > Duration::from_secs(3) {
             self.verif_ecrans = Instant::now();
-            let d = crate::windows::disposition();
+            let d = self.systeme.as_ref().and_then(|s| s.disposition());
             if d.is_some() && d != self.disposition {
                 // Écran branché, débranché ou déplacé : nouvelle place, nouveaux fonds.
                 self.disposition = d;
@@ -503,6 +529,10 @@ impl eframe::App for Appli {
                             Some(ctx.load_texture("toile", img, TextureOptions::NEAREST))
                     }
                 }
+                #[cfg(windows)]
+                if let Some(s) = &self.systeme {
+                    s.presenter(&aq.toile, e);
+                }
                 if !self.premiere_image {
                     self.premiere_image = true;
                     crate::journal::ecrire(&format!(
@@ -516,7 +546,12 @@ impl eframe::App for Appli {
                 }
             }
         }
-        if self.fond_tex.is_none() {
+        // Windows : le calque GDI montre l'aquarium, la fenêtre eframe (cachée) ne dessine rien.
+        #[cfg(windows)]
+        let calque = self.systeme.is_some();
+        #[cfg(not(windows))]
+        let calque = false;
+        if self.fond_tex.is_none() && !calque {
             if let Some(img) = &self.fond_img {
                 let ci = egui::ColorImage::from_rgba_unmultiplied(
                     [img.width() as usize, img.height() as usize],
@@ -529,7 +564,7 @@ impl eframe::App for Appli {
         let ppp = ctx.pixels_per_point();
         let p = ui.painter();
         let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-        if let Some(t) = &self.fond_tex {
+        if let (Some(t), false) = (&self.fond_tex, calque) {
             p.image(
                 t.id(),
                 egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(lp, hp) / ppp),
@@ -537,7 +572,7 @@ impl eframe::App for Appli {
                 Color32::WHITE,
             );
         }
-        if let (Some(t), Some(aq)) = (&self.toile_tex, &self.aquarium) {
+        if let (Some(t), Some(aq), false) = (&self.toile_tex, &self.aquarium, calque) {
             let taille = Vec2::new((aq.toile.l * e) as f32, (aq.toile.h * e) as f32) / ppp;
             p.image(
                 t.id(),
