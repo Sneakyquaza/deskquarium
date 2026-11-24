@@ -11,6 +11,8 @@ pub struct Ecran {
     pub l: i32,
     pub h: i32,
     pub principal: bool,
+    /// Zone de travail (sans la barre des tâches) : x, y, l, h ; None = tout l'écran.
+    pub travail: Option<(i32, i32, i32, i32)>,
 }
 
 impl Ecran {
@@ -35,17 +37,23 @@ impl Disposition {
                 l: l as i32,
                 h: h as i32,
                 principal: true,
+                travail: None,
             }],
         }
     }
 
     /// « 1920x1080+0+0,1920x1080+1920+0 » (le premier est le principal) : disposition
-    /// simulée pour les tests et captures sous Linux.
+    /// simulée pour les tests et captures sous Linux ; « /48 » à la fin d'un écran = barre des
+    /// tâches de 48 px en bas.
     pub fn depuis_texte(t: &str) -> Result<Disposition, String> {
         let mut ecrans = Vec::new();
         for (i, morceau) in t.split(',').filter(|m| !m.trim().is_empty()).enumerate() {
-            let err = || format!("--ecrans : « {morceau} » (attendu LxH+X+Y)");
-            let (taille, pos) = morceau.trim().split_once('+').ok_or_else(err)?;
+            let err = || format!("--ecrans : « {morceau} » (attendu LxH+X+Y[/barre])");
+            let (morceau_, barre) = match morceau.trim().split_once('/') {
+                Some((m, b)) => (m, Some(b.trim().parse::<i32>().map_err(|_| err())?)),
+                None => (morceau.trim(), None),
+            };
+            let (taille, pos) = morceau_.split_once('+').ok_or_else(err)?;
             let (l, h) = taille.split_once('x').ok_or_else(err)?;
             // Positions négatives : « +-1920+0 ».
             let (x, y) = pos.split_once('+').ok_or_else(err)?;
@@ -56,11 +64,13 @@ impl Disposition {
                 l: n(l)?,
                 h: n(h)?,
                 principal: i == 0,
+                travail: None,
             };
             if e.l < 64 || e.h < 64 {
                 return Err(err());
             }
-            ecrans.push(e);
+            let travail = barre.map(|b| (e.x, e.y, e.l, e.h - b));
+            ecrans.push(Ecran { travail, ..e });
         }
         Disposition::nouvelle(ecrans).ok_or_else(|| "--ecrans : aucun écran".to_string())
     }
@@ -142,6 +152,28 @@ impl Disposition {
         z
     }
 
+    /// Zones de travail (sans barre des tâches) en pixels monde, même ordre que `zones`.
+    pub fn travail(&self, e: u32) -> Vec<(i32, i32, i32, i32)> {
+        let (bx, by, _, _) = self.boite();
+        let e = e as i32;
+        let mut z: Vec<_> = self
+            .ecrans
+            .iter()
+            .map(|c| {
+                let (x, y, l, h) = c.travail.unwrap_or((c.x, c.y, c.l, c.h));
+                (
+                    (x - bx) / e,
+                    (y - by) / e,
+                    (x - bx + l) / e,
+                    (y - by + h) / e,
+                )
+            })
+            .collect();
+        let p = self.ecrans.iter().position(|c| c.principal).unwrap_or(0);
+        z.swap(0, p);
+        z
+    }
+
     /// Échelle entière toile → écran : celle de l'écran principal (pas de la boîte entière).
     pub fn echelle(&self) -> u32 {
         crate::scene::echelle_pour(self.principal().l as u32)
@@ -181,6 +213,14 @@ mod tests {
         assert_eq!(z[0], (640, 50, 1120, 320));
         assert_eq!(z[1], (0, 0, 640, 360));
         assert!(!d.ecrans[1].principal && d.principal().l == 1920);
+    }
+
+    #[test]
+    fn barre_des_taches() {
+        let d = Disposition::depuis_texte("1920x1080+0+0/48,1920x1080+1920+0").unwrap();
+        assert_eq!(d.travail(4)[0], (0, 0, 480, 258));
+        assert_eq!(d.travail(4)[1], (480, 0, 960, 270));
+        assert!(Disposition::depuis_texte("1920x1080+0+0/x").is_err());
     }
 
     #[test]

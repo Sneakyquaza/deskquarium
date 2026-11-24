@@ -24,11 +24,10 @@ pub enum Taille {
 impl Taille {
     /// Places prises dans la limite des poissons affichés (lisibilité de l'écran).
     pub fn places(self) -> usize {
-        // Lot 4 : tailles relatives crédibles (petits poissons bien plus petits), les grosses
-        // bêtes comptent un peu moins qu'au lot 3.
+        // Lot 4 : la place à l'écran est surtout réglée par la surface des dessins (voir
+        // `Aquarium::synchroniser`) ; une colossale compte double.
         match self {
-            Taille::Enorme => 2,
-            Taille::Colossale => 4,
+            Taille::Colossale => 2,
             _ => 1,
         }
     }
@@ -112,51 +111,6 @@ impl Espece {
         match self.variantes.get(variante).map(|v| v.nom) {
             Some(n) if !n.is_empty() => format!("{} {n}", self.nom),
             _ => self.nom.to_string(),
-        }
-    }
-
-    /// Longueur voulue à l'écran en 1920x1080 (pixels écran = 2 pixels fins), plus grande
-    /// dimension du dessin : tailles relatives crédibles. Les dessins sont réduits à cette taille
-    /// à la source (`tools/pixeliser.py --reduire`, facteurs dans `tools/choix.tsv`) : tous les
-    /// pixels du dessin ont la même taille à l'écran, sauf les colossales doublées (`zoom_espece`).
-    pub fn longueur_ecran(&self) -> i32 {
-        match self.cle {
-            // Petits poissons de récif.
-            "neon" => 50,
-            "guppy" => 54,
-            "gobie" => 56,
-            "clown" | "globe" => 60,
-            "rouge" => 64,
-            "sardine" => 66,
-            "chirurgien" | "ange" => 70,
-            // Crabe, hippocampe, crevette, isopode, trilobite.
-            "crevette" => 70,
-            "crabe" | "hippocampe" | "trilobite" => 76,
-            "isopode" => 84,
-            // Rares : tortue, poulpe, rascasse…
-            "dragon_feuillu" => 110,
-            "meduse" | "anomalocaris" => 120,
-            "rascasse" => 130,
-            "poulpe" | "calamar" | "ammonite" => 140,
-            "baudroie" => 150,
-            "tortue" => 170,
-            "carpe_comete" => 180,
-            "anguille" => 200,
-            "meduse_nebuleuse" => 200,
-            "murene" => 220,
-            "coelacanthe" | "mola" => 220,
-            // Requins, dauphins, phoques, raies.
-            "phoque" => 200,
-            "dauphin" => 240,
-            "marteau" => 270,
-            "espadon" | "manta" | "helicoprion" | "ichthyosaure" => 290,
-            "raie_aurore" | "lutin" => 300,
-            "blanc" => 320,
-            "orque" => 326,
-            "narval" | "dunkleosteus" => 340,
-            "calamar_geant" => 560,
-            // Baleines, géants et créatures de légende : la taille du dessin.
-            _ => 2 * self.dims.0.max(self.dims.1),
         }
     }
 }
@@ -991,33 +945,28 @@ mod tests {
 
     #[test]
     fn tailles_relatives() {
-        // Chaque dessin a la taille voulue (à 15 % près) et reste dans sa classe de taille.
-        for e in catalogue() {
-            let (l, c) = (2 * e.dims.0.max(e.dims.1), e.longueur_ecran());
+        // Échelle « de jeu » : dessins en pleine finesse (jamais réduits), hiérarchie tassée mais
+        // lisible (un poisson-clown fait environ un quart d'un requin).
+        let lg = |k| {
+            let d = par_cle(k).unwrap().dims;
+            d.0.max(d.1)
+        };
+        for petit in [
+            "clown",
+            "neon",
+            "gobie",
+            "sardine",
+            "crabe",
+            "hippocampe",
+            "crevette",
+        ] {
             assert!(
-                (l - c).abs() as f32 <= 0.15 * c as f32 + 4.0,
-                "{} : dessin {l} px, voulu {c}",
-                e.cle
-            );
-            let (min, max) = match e.taille {
-                Taille::Minuscule | Taille::Petite => (40, 90),
-                Taille::Moyenne => (80, 230),
-                Taille::Grande => (180, 360),
-                Taille::Enorme => (300, 700),
-                Taille::Colossale => (500, 2000),
-            };
-            assert!(
-                (min..=max).contains(&c),
-                "{} : {c} px hors de sa classe",
-                e.cle
+                lg(petit) * 5 / 2 <= lg("marteau"),
+                "{petit} : {}",
+                lg(petit)
             );
         }
-        let lg = |k| par_cle(k).unwrap().longueur_ecran();
-        assert!(lg("crabe") * 3 < lg("marteau"));
-        assert!(lg("hippocampe") * 3 < lg("marteau"));
-        assert!(lg("meduse") * 2 < lg("marteau"));
-        assert!(lg("globe") * 4 < lg("marteau"));
-        assert!(lg("marteau") < lg("blanc") && lg("blanc") < lg("requin_baleine"));
+        assert!(lg("marteau") < lg("requin_baleine") && lg("requin_baleine") < lg("bosse"));
         assert!(lg("clown") < lg("tortue") && lg("tortue") < lg("dauphin"));
     }
 

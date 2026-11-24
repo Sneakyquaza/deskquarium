@@ -184,7 +184,12 @@ impl Ecloserie {
                 let fin = crate::toile::FIN as f32;
                 let petit =
                     e.dims.0 as f32 * k + m <= 62.0 * fin && e.dims.1 as f32 * k + m <= 46.0 * fin;
-                let (s, zoom) = if petit {
+                // Très petit : x3 (la révélation remplit sa case).
+                let tres_petit =
+                    e.dims.0 as f32 * k + m <= 41.0 * fin && e.dims.1 as f32 * k + m <= 30.0 * fin;
+                let (s, zoom) = if tres_petit {
+                    (crate::scene::sprite_de(&f), 3)
+                } else if petit {
                     (crate::scene::sprite_de(&f), 2)
                 } else {
                     (sprite_ajuste(&f, 126 * 2, 90 * 2), 1)
@@ -781,7 +786,7 @@ impl Ecloserie {
         let z = (zone.width() / taille.x)
             .min(zone.height() / taille.y)
             .floor()
-            .clamp(1.0, 2.0);
+            .clamp(1.0, 3.0);
         peintre.image(
             tex.id(),
             egui::Rect::from_center_size(zone.center().round(), taille * z),

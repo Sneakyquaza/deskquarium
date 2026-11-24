@@ -5,6 +5,7 @@ mod appli;
 #[cfg(windows)]
 mod calque;
 mod capture;
+mod decor;
 mod ecloserie;
 mod ecrans;
 mod especes;

@@ -284,7 +284,8 @@ impl Appli {
             .as_ref()
             .is_none_or(|a| a.toile.l != l || a.toile.h != h || self.echelle != e);
         if refaire {
-            let mut aq = Aquarium::avec_zones(l, h, 1, &disp.zones(e as u32));
+            let mut aq =
+                Aquarium::avec_zones(l, h, 1, &disp.zones(e as u32), &disp.travail(e as u32));
             if let Some(m) = &self.message_depart {
                 aq.message = Some((m.clone(), 15.0));
             }
@@ -348,8 +349,13 @@ impl Appli {
             "achat" => {
                 // Œuf d'ambre (le dernier) : montre une éclosion Préhistorique (le plus souvent).
                 self.partie.argent = self.partie.argent.max(1e12);
-                self.ecloserie
-                    .acheter(ui, &mut self.partie, crate::jeu::OEUFS.len() - 1);
+                // AQUARIUM_OEUF=0 : œuf commun (petites espèces à l'éclosion).
+                let oeuf = std::env::var("AQUARIUM_OEUF")
+                    .ok()
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .filter(|&i| i < crate::jeu::OEUFS.len())
+                    .unwrap_or(crate::jeu::OEUFS.len() - 1);
+                self.ecloserie.acheter(ui, &mut self.partie, oeuf);
             }
             "fin" => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
             _ => {

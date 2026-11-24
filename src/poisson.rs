@@ -147,7 +147,7 @@ fn png_espece(cle: &str) -> &'static [u8] {
 /// (l'image IA ne tient pas assez de cases pour leur taille à l'écran).
 fn zoom_espece(cle: &str) -> i32 {
     match cle {
-        "leviathan" | "grand_abyssal" | "jormungandr" | "megalodon" | "mosasaure"
+        "orque" | "leviathan" | "grand_abyssal" | "jormungandr" | "megalodon" | "mosasaure"
         | "basilosaurus" => 2,
         _ => 1,
     }

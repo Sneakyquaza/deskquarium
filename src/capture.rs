@@ -126,6 +126,7 @@ fn preparer(o: &Options) -> Result<Prepare, String> {
         (hp as usize).div_ceil(e),
         1,
         &d.zones(e as u32),
+        &d.travail(e as u32),
     );
     aq.synchroniser(&partie);
     let image_fond = match &o.fond {
@@ -191,7 +192,7 @@ pub fn video(o: &Options, sortie: &Path) -> Result<(), String> {
         ])
         .arg(format!("{lp}x{hp}"))
         .args([
-            "-r", "30", "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "21",
+            "-r", "30", "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "24",
         ])
         .arg(sortie)
         .stdin(std::process::Stdio::piped())
@@ -296,7 +297,7 @@ pub fn planche_geantes(sortie: &Path, secondes: f32) -> Result<(), String> {
 /// l'aquarium en 1920x1080 (toile x4), avec une règle de 100 pixels écran : tailles relatives.
 pub fn alignement(sortie: &Path, secondes: f32) -> Result<(), String> {
     let mut toutes: Vec<&Espece> = crate::especes::catalogue().iter().collect();
-    toutes.sort_by_key(|e| e.longueur_ecran());
+    toutes.sort_by_key(|e| e.dims.0.max(e.dims.1));
     planche_a_taille(sortie, secondes, &toutes, 480, 4)
 }
 

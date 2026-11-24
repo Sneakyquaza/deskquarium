@@ -142,6 +142,7 @@ impl Systeme {
                 l: t.right - t.left,
                 h: t.bottom - t.top,
                 principal: true,
+                travail: None,
             }]);
         }
         disposition()
@@ -492,6 +493,13 @@ pub fn disposition() -> Option<Disposition> {
                     l: r.right - r.left,
                     h: r.bottom - r.top,
                     principal: info.dwFlags & MONITORINFOF_PRIMARY != 0,
+                    // Zone de travail : le compteur et le sable restent au-dessus de la barre.
+                    travail: Some((
+                        info.rcWork.left,
+                        info.rcWork.top,
+                        info.rcWork.right - info.rcWork.left,
+                        info.rcWork.bottom - info.rcWork.top,
+                    )),
                 });
             }
         }
