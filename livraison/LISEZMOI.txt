@@ -1,4 +1,4 @@
-AQUARIUM v0.6 - fond d'écran aquarium pixel art + petit jeu idle (Windows 10/11, 64 bits)
+AQUARIUM v0.7 - fond d'écran aquarium pixel art + petit jeu idle (Windows 10/11, 64 bits)
 
 LANCER
 - Décompresse le dossier où tu veux (par exemple Documents\aquarium) et lance aquarium.exe.
@@ -18,7 +18,10 @@ JOUER
 - 61 espèces à collectionner, en pixel art détaillé et animé (poisson-clown, hippocampe, crabe,
   méduse, raie manta, requins, orque, baleine à bosse… jusqu'au kraken, au léviathan, au
   monstre du Loch Ness et à Jörmungandr), chacune avec plusieurs variantes de couleur.
-- Nouveau (v0.6) : nouveau décor en pixel art (sable, rochers, coraux, algues qui ondulent,
+- Nouveau (v0.7) : décor posé dans le sable en petits groupes, nage calme et naturelle,
+  « Mode Abysses » (menu de l'icône ou Réglages : aquarium des grands fonds), bouton
+  « Équiper les meilleurs » (onglet Mon aquarium, option auto).
+- v0.6 : nouveau décor en pixel art (sable, rochers, coraux, algues qui ondulent,
   récif au loin), compteur au-dessus de la barre des tâches, dessins en pleine finesse, petites espèces redessinées à leur petite taille
   (néon, gobie, sardine, crabe, hippocampe, crevette…), nage plus vivante (coups de queue et glissés,
   virages, corps qui s'incline), poissons répartis sur tout l'écran, 9 espèces redessinées,

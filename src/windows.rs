@@ -69,6 +69,7 @@ pub struct Systeme {
 }
 
 static MODE_FENETRE: AtomicBool = AtomicBool::new(false);
+static ABYSSES: AtomicBool = AtomicBool::new(false);
 
 impl Systeme {
     /// Cache la fenêtre eframe (elle ne sert plus qu'à faire tourner l'appli et l'Écloserie),
@@ -188,6 +189,11 @@ impl Systeme {
 
     pub fn signaler_pause(&self, p: bool) {
         EN_PAUSE.store(p, Ordering::Relaxed);
+    }
+
+    /// État du mode Abysses pour la coche du menu.
+    pub fn signaler_abysses(&self, a: bool) {
+        ABYSSES.store(a, Ordering::Relaxed);
     }
 
     /// Retire l'icône et le calque, attend le fil, puis redessine le fond d'écran.
@@ -967,6 +973,12 @@ fn menu(h: HWND) {
             0
         };
         AppendMenuW(m, MF_STRING | pause, 2, large("Pause").as_ptr());
+        let abysses = if ABYSSES.load(Ordering::Relaxed) {
+            MF_CHECKED
+        } else {
+            0
+        };
+        AppendMenuW(m, MF_STRING | abysses, 8, large("Mode Abysses").as_ptr());
         AppendMenuW(m, MF_SEPARATOR, 0, null());
         let fenetre = if MODE_FENETRE.load(Ordering::Relaxed) {
             MF_CHECKED
@@ -1011,6 +1023,7 @@ fn menu(h: HWND) {
             4 => envoyer(Commande::ModeFenetre),
             5 => envoyer(Commande::AutreMethode),
             7 => envoyer(Commande::Tester),
+            8 => envoyer(Commande::Abysses),
             6 => {
                 let f = large(&crate::journal::chemin().display().to_string());
                 ShellExecuteW(

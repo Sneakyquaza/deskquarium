@@ -104,16 +104,44 @@ pub struct Options {
     pub fond: Option<String>,
     /// Écrans simulés (« 1920x1080+0+0,1920x1080+1920+0 ») : remplace `largeur`x`hauteur`.
     pub ecrans: Option<String>,
+    /// Mode Abysses.
+    pub abysses: bool,
 }
 
-type Prepare = (Partie, Aquarium, image::RgbaImage, usize, (u32, u32));
+type Prepare = (
+    Partie,
+    Aquarium,
+    image::RgbaImage,
+    usize,
+    (u32, u32),
+    Disposition,
+);
+
+/// Barres des tâches simulées (`--ecrans …/48`) dessinées par-dessus l'image, comme Windows.
+fn barres(img: &mut image::RgbaImage, d: &Disposition) {
+    let (bx, by, _, _) = d.boite();
+    for e in &d.ecrans {
+        let Some((x, y, l, h)) = e.travail else {
+            continue;
+        };
+        for py in (y + h)..(e.y + e.h) {
+            for px in x..x + l {
+                let (u, v) = ((px - bx) as u32, (py - by) as u32);
+                if u < img.width() && v < img.height() {
+                    img.put_pixel(u, v, image::Rgba([0x1c, 0x20, 0x2a, 255]));
+                }
+            }
+        }
+    }
+}
 
 fn preparer(o: &Options) -> Result<Prepare, String> {
-    let partie = if o.demo {
+    let mut partie = if o.demo {
         partie_demo()
     } else {
         crate::sauve::charger(&crate::sauve::dossier()).0
     };
+    partie.reglages.abysses |= o.abysses;
     let d = match &o.ecrans {
         Some(t) => Disposition::depuis_texte(t)?,
         None => Disposition::simple(o.largeur, o.hauteur),
@@ -150,11 +178,11 @@ fn preparer(o: &Options) -> Result<Prepare, String> {
         }
         image::imageops::replace(&mut fond, &img, (c.x - bx) as i64, (c.y - by) as i64);
     }
-    Ok((partie, aq, fond, e, (lp, hp)))
+    Ok((partie, aq, fond, e, (lp, hp), d))
 }
 
 pub fn capture(o: &Options, sortie: &Path) -> Result<(), String> {
-    let (mut partie, mut aq, fond, e, _) = preparer(o)?;
+    let (mut partie, mut aq, fond, e, _, d) = preparer(o)?;
     let dt = 1.0 / 30.0;
     let n = (o.secondes / dt) as usize;
     let debut = Instant::now();
@@ -170,13 +198,14 @@ pub fn capture(o: &Options, sortie: &Path) -> Result<(), String> {
         aq.toile.h,
         aq.nageurs.len()
     );
-    let img = fond::composer(&fond, &aq.toile, e);
+    let mut img = fond::composer(&fond, &aq.toile, e);
+    barres(&mut img, &d);
     creer_dossier(sortie)?;
     img.save(sortie).map_err(|e| e.to_string())
 }
 
 pub fn video(o: &Options, sortie: &Path) -> Result<(), String> {
-    let (mut partie, mut aq, fond, e, (lp, hp)) = preparer(o)?;
+    let (mut partie, mut aq, fond, e, (lp, hp), d) = preparer(o)?;
     creer_dossier(sortie)?;
     let ffmpeg = std::env::var("AQUARIUM_FFMPEG").unwrap_or_else(|_| "ffmpeg".into());
     let mut enfant = std::process::Command::new(&ffmpeg)
@@ -208,7 +237,8 @@ pub fn video(o: &Options, sortie: &Path) -> Result<(), String> {
         partie.avancer(dt as f64);
         aq.avancer(dt);
         aq.dessiner(&partie);
-        let img = fond::composer(&fond, &aq.toile, e);
+        let mut img = fond::composer(&fond, &aq.toile, e);
+        barres(&mut img, &d);
         entree.write_all(img.as_raw()).map_err(|e| e.to_string())?;
     }
     drop(entree);

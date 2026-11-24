@@ -37,6 +37,7 @@ Options (tests) :
   --demo                          aquarium pré-rempli (raretés et espèces variées)
   --taille 1920x1080              taille de la capture / vidéo
   --ecrans 1920x1080+0+0,...      écrans simulés (capture / vidéo), le premier est le principal
+  --abysses                       mode Abysses (capture / vidéo)
   --fond image.png                fond d'écran sous l'aquarium (sinon fond factice)
   --captures-ecloserie DOSSIER    (avec --fenetre) captures de chaque onglet puis quitte
   --simulation                    jalons de l'équilibrage (docs/equilibrage.md)";
@@ -91,6 +92,7 @@ fn lancer() -> Result<(), String> {
         demo: a("--demo"),
         fond: valeur("--fond"),
         ecrans: valeur("--ecrans"),
+        abysses: a("--abysses"),
     };
     if let Some(f) = valeur("--capture") {
         return capture::capture(&o, &PathBuf::from(f));

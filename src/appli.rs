@@ -35,6 +35,8 @@ pub enum Commande {
     Rattacher,
     /// Mire de couleurs 5 s sur le calque du fond.
     Tester,
+    /// Bascule le mode Abysses (réglage sauvegardé).
+    Abysses,
 }
 
 struct Appli {
@@ -235,6 +237,11 @@ impl Appli {
                 r.incrustation = (r.incrustation + 1) % 4;
             }
             Commande::Rattacher => self.affichage_applique = None,
+            Commande::Abysses => {
+                let r = &mut self.partie.reglages;
+                r.abysses = !r.abysses;
+                self.sauver();
+            }
             Commande::Tester =>
             {
                 #[cfg(windows)]
@@ -516,6 +523,7 @@ impl eframe::App for Appli {
         let fige = self.pause || self.plein_ecran;
         #[cfg(windows)]
         if let Some(s) = &self.systeme {
+            s.signaler_abysses(self.partie.reglages.abysses);
             s.signaler_pause(self.pause);
         }
         let (lp, hp) = self.preparer(ui);

@@ -72,13 +72,47 @@ pub fn dans_l_eau(c: [u8; 4], eau: Rgb, k: f32) -> Rgb {
     melange([c[0], c[1], c[2]], eau, k)
 }
 
-/// Pose une image en pixels fins, coin haut gauche (x0, y0), retournée si `miroir`.
-pub fn poser(t: &mut Toile, img: &Img, (x0, y0): (i32, i32), miroir: bool, eau: (Rgb, f32)) {
+/// Sous la ligne du sable (pixels fins, par colonne fine) ? Hors de la toile : oui.
+fn sous_le_sable(sol: &[i32], x: i32, y: i32) -> bool {
+    x < 0 || sol.get(x as usize).is_none_or(|&s| y >= s)
+}
+
+/// Pose une image en pixels fins, coin haut gauche (x0, y0), retournée si `miroir`. Ce qui
+/// passe sous la ligne du sable `sol` est caché : le bas est enfoui.
+pub fn poser(
+    t: &mut Toile,
+    img: &Img,
+    (x0, y0): (i32, i32),
+    miroir: bool,
+    eau: (Rgb, f32),
+    sol: &[i32],
+) {
     for y in 0..img.h {
         for x in 0..img.l {
             let p = img.px(if miroir { img.l - 1 - x } else { x }, y);
-            if p[3] > 0 {
+            if p[3] > 0 && !sous_le_sable(sol, x0 + x, y0 + y) {
                 t.poser_fin(x0 + x, y0 + y, dans_l_eau(p, eau.0, eau.1), 255);
+            }
+        }
+    }
+}
+
+/// Ombre de contact sur le sable au pied d'un élément large de `l` pixels fins centré en `cx`.
+pub fn ombre(t: &mut Toile, cx: i32, l: i32, sol: &[i32]) {
+    let r = (l / 2).max(2) as f32;
+    for dx in -(r as i32)..=(r as i32) {
+        let x = cx + dx;
+        let Some(&s) = sol.get(x.max(0) as usize) else {
+            continue;
+        };
+        if s == i32::MAX {
+            continue;
+        }
+        let k = 1.0 - (dx as f32 / r).powi(2);
+        for dy in 0..3 {
+            let a = (70.0 * k * (1.0 - dy as f32 / 3.0)) as u8;
+            if a > 0 {
+                t.poser_fin(x, s + dy, [0x10, 0x18, 0x20], a);
             }
         }
     }
@@ -97,6 +131,7 @@ pub fn algue(
     phase: f32,
     eau: (Rgb, f32),
     miroir: bool,
+    sol: &[i32],
 ) {
     let h = visible.clamp(1, img.h) as f32;
     let debut = img.h - visible.clamp(1, img.h);
@@ -107,13 +142,10 @@ pub fn algue(
         for x in 0..img.l {
             let p = img.px(if miroir { img.l - 1 - x } else { x }, y);
             if p[3] > 0 {
-                let yy = base - img.h + y;
-                t.poser_fin(
-                    cx - img.l / 2 + x + dx,
-                    yy,
-                    dans_l_eau(p, eau.0, eau.1),
-                    255,
-                );
+                let (xx, yy) = (cx - img.l / 2 + x + dx, base - img.h + y);
+                if !sous_le_sable(sol, xx, yy) {
+                    t.poser_fin(xx, yy, dans_l_eau(p, eau.0, eau.1), 255);
+                }
             }
         }
     }

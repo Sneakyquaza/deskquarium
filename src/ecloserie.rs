@@ -535,6 +535,31 @@ impl Ecloserie {
                 self.reserve = true;
             }
         });
+        // « Équiper les meilleurs » : les plus rentables dans l'aquarium, le reste en réserve.
+        ui.horizontal(|ui| {
+            let b = egui::Button::new(
+                RichText::new("Équiper les meilleurs")
+                    .font(titre(14.0))
+                    .color(ENCRE),
+            )
+            .fill(SABLE)
+            .min_size(Vec2::new(220.0, 34.0));
+            if ui.add(b).clicked() {
+                let (avant, apres) = p.equiper_meilleurs();
+                let d = apres - avant;
+                self.bandeau = Some(format!(
+                    "Meilleurs équipés : {}/s ({}{}/s)",
+                    court(apres),
+                    if d >= 0.0 { "+" } else { "-" },
+                    court(d.abs())
+                ));
+            }
+            ui.checkbox(
+                &mut p.reglages.equiper_auto,
+                RichText::new("Auto : un nouveau poisson meilleur remplace le plus faible")
+                    .size(13.0),
+            );
+        });
         ui.label(
             RichText::new(if self.reserve {
                 "Les poissons de la réserve ne rapportent rien. Sors-les quand il y a de la place."
@@ -903,6 +928,14 @@ impl Ecloserie {
                 "Si l'aquarium n'apparaît pas derrière les icônes : fenêtre sans bord au fond.",
                 &mut |ui| {
                     ui.checkbox(&mut r.mode_fenetre, "Mode fenêtre");
+                },
+            );
+            ligne(
+                ui,
+                "Mode Abysses",
+                "Aquarium des grands fonds : eau sombre, neige marine, poissons qui luisent.",
+                &mut |ui| {
+                    ui.checkbox(&mut r.abysses, "Mode Abysses");
                 },
             );
             ui.label(

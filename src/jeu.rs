@@ -219,6 +219,10 @@ pub struct Reglages {
     pub mode_fenetre: bool,
     /// Windows : méthode d'incrustation (0 auto, 1 Progman + calque, 2 Progman, 3 WorkerW).
     pub incrustation: u8,
+    /// Un poisson éclos qui rapporte plus que le plus faible de l'aquarium plein le remplace.
+    pub equiper_auto: bool,
+    /// Mode Abysses : aquarium sombre des grands fonds.
+    pub abysses: bool,
 }
 
 impl Default for Reglages {
@@ -231,6 +235,8 @@ impl Default for Reglages {
             pause_plein_ecran: true,
             mode_fenetre: false,
             incrustation: 0,
+            equiper_auto: false,
+            abysses: false,
         }
     }
 }
@@ -307,7 +313,55 @@ impl Partie {
         });
         self.eclos[rarete.index()] += 1;
         *self.vus.entry(e.cle.to_string()).or_default() += 1;
+        if !actif && self.reglages.equiper_auto {
+            self.remplacer_le_plus_faible(id);
+        }
         id
+    }
+
+    /// « Équiper auto » : le poisson `id` (en réserve) prend la place du plus faible de
+    /// l'aquarium s'il rapporte plus.
+    fn remplacer_le_plus_faible(&mut self, id: u64) {
+        let Some(nouveau) = self
+            .poissons
+            .iter()
+            .find(|p| p.id == id)
+            .map(Poisson::revenu)
+        else {
+            return;
+        };
+        let faible = self
+            .poissons
+            .iter()
+            .filter(|p| p.actif)
+            .min_by(|a, b| a.revenu().total_cmp(&b.revenu()))
+            .map(|p| (p.id, p.revenu()));
+        if let Some((fid, frev)) = faible {
+            if nouveau > frev {
+                for p in self.poissons.iter_mut() {
+                    if p.id == fid {
+                        p.actif = false;
+                    } else if p.id == id {
+                        p.actif = true;
+                    }
+                }
+            }
+        }
+    }
+
+    /// « Équiper les meilleurs » : les poissons qui rapportent le plus (revenu réel : rareté,
+    /// taille, niveau) remplissent l'aquarium, tous les autres vont en réserve. Renvoie le
+    /// revenu par seconde avant et après.
+    pub fn equiper_meilleurs(&mut self) -> (f64, f64) {
+        let avant = self.revenu_par_s();
+        let mut ordre: Vec<(u64, f64)> = self.poissons.iter().map(|p| (p.id, p.revenu())).collect();
+        ordre.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let gardes: std::collections::HashSet<u64> =
+            ordre.iter().take(CAPACITE).map(|o| o.0).collect();
+        for p in self.poissons.iter_mut() {
+            p.actif = gardes.contains(&p.id);
+        }
+        (avant, self.revenu_par_s())
     }
 
     /// Met une sauvegarde ancienne au format courant : chaque poisson sans espèce connue (lot 1,
@@ -771,5 +825,37 @@ mod tests {
         p.crediter(f64::MAX);
         p.crediter(f64::MAX);
         assert!(p.argent.is_finite() && p.total_gagne.is_finite());
+    }
+
+    #[test]
+    fn equiper_les_meilleurs() {
+        let mut p = Partie::nouvelle(0, 11);
+        p.argent = 1e15;
+        for i in 0..80 {
+            let _ = p.acheter_oeuf(i % 4);
+        }
+        // Mélange : quelques bons poissons en réserve.
+        for f in p.poissons.iter_mut().take(20) {
+            f.actif = !f.actif;
+        }
+        let (avant, apres) = p.equiper_meilleurs();
+        assert!(apres >= avant);
+        assert_eq!(p.nb_actifs(), CAPACITE.min(p.poissons.len()));
+        let min_actif = p
+            .poissons
+            .iter()
+            .filter(|f| f.actif)
+            .map(Poisson::revenu)
+            .fold(f64::MAX, f64::min);
+        assert!(p
+            .poissons
+            .iter()
+            .filter(|f| !f.actif)
+            .all(|f| f.revenu() <= min_actif));
+        // Équiper auto : un poisson éclos meilleur que le plus faible le remplace.
+        p.reglages.equiper_auto = true;
+        let id = p.ajouter(Rarete::Irreel, 1.5, 0);
+        assert!(p.poissons.iter().find(|f| f.id == id).unwrap().actif);
+        assert_eq!(p.nb_actifs(), CAPACITE);
     }
 }
