@@ -108,11 +108,12 @@ pub fn ombre(t: &mut Toile, cx: i32, l: i32, sol: &[i32]) {
         if s == i32::MAX {
             continue;
         }
+        // v0.8 : ombre de contact plus marquée (la relecture la voyait à peine).
         let k = 1.0 - (dx as f32 / r).powi(2);
-        for dy in 0..3 {
-            let a = (70.0 * k * (1.0 - dy as f32 / 3.0)) as u8;
+        for dy in -1..5 {
+            let a = (150.0 * k.sqrt() * (1.0 - (dy + 1) as f32 / 6.0)) as u8;
             if a > 0 {
-                t.poser_fin(x, s + dy, [0x10, 0x18, 0x20], a);
+                t.poser_fin(x, s + dy, [0x08, 0x0e, 0x16], a);
             }
         }
     }

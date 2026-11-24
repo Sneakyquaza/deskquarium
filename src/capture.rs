@@ -73,6 +73,8 @@ pub fn partie_demo() -> Partie {
             oeuf: 3,
             espece: cle.to_string(),
             variante: 0,
+            shiny: false,
+            modif: None,
         });
         p.eclos[e.rarete.index()] += 1;
         *p.vus.entry(cle.to_string()).or_default() += 1;
@@ -91,6 +93,22 @@ pub fn partie_demo() -> Partie {
         .collect();
     for id in gardees {
         let _ = p.basculer(id);
+    }
+    // v0.8 : quelques shiny et modificateurs à l'écran.
+    use crate::jeu::Modif;
+    for (cle, shiny, modif) in [
+        ("blanc", true, None),
+        ("manta", false, Some(Modif::Galaxie)),
+        ("tortue", false, Some(Modif::Dore)),
+        ("meduse", false, Some(Modif::Cristal)),
+        ("hippocampe", false, Some(Modif::ArcEnCiel)),
+        ("dauphin", false, Some(Modif::Electrique)),
+        ("murene", false, Some(Modif::Ombre)),
+        ("carpe_comete", true, Some(Modif::Diamant)),
+    ] {
+        if let Some(f) = p.poissons.iter_mut().find(|f| f.espece == cle && f.actif) {
+            (f.shiny, f.modif) = (shiny, modif);
+        }
     }
     p.argent = 1_234_567.0;
     p
@@ -403,6 +421,182 @@ fn planche_a_taille(
         );
     }
     enregistrer(&t, e, sortie)
+}
+
+/// Planche des formes : une ligne par espèce ; colonnes Normal + Shiny (`modifs` faux) ou
+/// Normal + les 7 modificateurs (`modifs` vrai), animées `secondes` (auras et particules).
+pub fn planche_formes(
+    sortie: &Path,
+    cles: &[&str],
+    modifs: bool,
+    secondes: f32,
+) -> Result<(), String> {
+    use crate::jeu::{Forme, Modif};
+    let colonnes: Vec<(String, Forme)> = if modifs {
+        std::iter::once(("Normal".to_string(), Forme::default()))
+            .chain(Modif::TOUS.iter().map(|&m| {
+                (
+                    m.nom().to_string(),
+                    Forme {
+                        shiny: false,
+                        modif: Some(m),
+                    },
+                )
+            }))
+            .collect()
+    } else {
+        vec![
+            ("Normal".to_string(), Forme::default()),
+            (
+                "Shiny".to_string(),
+                Forme {
+                    shiny: true,
+                    modif: None,
+                },
+            ),
+        ]
+    };
+    let especes: Vec<&Espece> = cles
+        .iter()
+        .map(|c| crate::especes::par_cle(c).ok_or(format!("espèce inconnue : {c}")))
+        .collect::<Result<_, _>>()?;
+    let lmax = especes.iter().map(|e| e.dims.0).max().unwrap_or(40);
+    let hmax = especes.iter().map(|e| e.dims.1).max().unwrap_or(30);
+    let f = crate::toile::FIN;
+    // Cases à la taille réelle du plus grand dessin (jamais réduit) + place pour l'aura.
+    let (cl, ch, gauche) = (lmax as usize / f + 30, hmax as usize / f + 34, 0usize);
+    let (lt, ht) = (cl * colonnes.len(), ch * especes.len() + 10);
+    let mut aq = Aquarium::new(lt, ht, 3);
+    aq.avec_compteur = false;
+    aq.decor = false;
+    let mut a = Alea(5);
+    let mut id = 1;
+    for (j, e) in especes.iter().enumerate() {
+        for (i, (_, forme)) in colonnes.iter().enumerate() {
+            let s = Arc::new(crate::poisson::sprite_forme(e, 0, 1.0, *forme));
+            let x = (i * cl + cl / 2) as f32;
+            let y = (10 + j * ch + (ch - 8) / 2) as f32;
+            let mut n = Nageur::new(id, e.rarete, s, x, y, &mut a);
+            id += 1;
+            n.fixe = true;
+            n.gauche = false;
+            n.forme = *forme;
+            aq.nageurs.push(n);
+        }
+    }
+    let t = rendre_planche(
+        &mut aq,
+        secondes,
+        colonnes.len(),
+        especes.len(),
+        (cl, ch, gauche),
+    );
+    let mut t2 = Toile::new(lt, ht);
+    t2.rect(0, 0, lt as i32, 10, [0x0a, 0x14, 0x24], 255);
+    t2.superposer(&t);
+    let mut t = t2;
+    for (i, (nom, _)) in colonnes.iter().enumerate() {
+        let w = crate::toile::largeur_texte(nom);
+        t.texte(
+            (i * cl) as i32 + (cl as i32 - w) / 2,
+            2,
+            nom,
+            [0xff, 0xea, 0xa8],
+            255,
+            None,
+        );
+    }
+    for (j, e) in especes.iter().enumerate() {
+        t.texte(
+            2,
+            (10 + j * ch + ch - 9) as i32,
+            e.nom,
+            [0xe8, 0xf0, 0xf4],
+            255,
+            Some([0, 0, 0]),
+        );
+    }
+    enregistrer(&t, 2, sortie)
+}
+
+/// Demi-tour d'une espèce image par image (une case toutes les 0,1 s), x4 : la créature nage
+/// vers la droite puis repart vers la gauche.
+pub fn planche_demi_tour(sortie: &Path, cle: &str) -> Result<(), String> {
+    let e = crate::especes::par_cle(cle).ok_or(format!("espèce inconnue : {cle}"))?;
+    let s = Arc::new(crate::poisson::sprite(e, 0, 1.0));
+    let f = crate::toile::FIN as f32;
+    let (cw, chh) = ((s.lw() * 1.5) as i32 + 8, (s.hw() * 1.4) as i32 + 8);
+    let (l, h) = (cw as usize * 6, chh as usize + 40);
+    let mut aq = Aquarium::new(l, h, 3);
+    aq.avec_compteur = false;
+    aq.decor = false;
+    let mut a = Alea(9);
+    let mut n = Nageur::new(1, e.rarete, s, l as f32 * 0.4, h as f32 / 2.0, &mut a);
+    n.gauche = false;
+    n.forcer_cible((l as f32 - 4.0, h as f32 / 2.0));
+    aq.nageurs.push(n);
+    let p = Partie::nouvelle(0, 1);
+    let mut cases = Vec::new();
+    let mut demi_tour = false;
+    for k in 0..240 {
+        if k == 45 {
+            aq.nageurs[0].forcer_cible((4.0, h as f32 / 2.0));
+            demi_tour = true;
+        }
+        aq.avancer(1.0 / 30.0);
+        if demi_tour && k % 3 == 0 && cases.len() < 16 {
+            aq.dessiner(&p);
+            let cx = aq.nageurs[0].x;
+            let mut c = Toile::new(cw as usize, chh as usize);
+            c.rect(0, 0, cw, chh, [0x18, 0x2c, 0x48], 255);
+            let (x0, y0) = (
+                ((cx - cw as f32 / 2.0) * f) as i32,
+                ((h as f32 - chh as f32) / 2.0 * f) as i32,
+            );
+            for y in 0..c.hf() as i32 {
+                for x in 0..c.lf() as i32 {
+                    let (sx, sy) = (x0 + x, y0 + y);
+                    if sx >= 0
+                        && sy >= 0
+                        && (sx as usize) < aq.toile.lf()
+                        && (sy as usize) < aq.toile.hf()
+                    {
+                        let px = aq.toile.px[sy as usize * aq.toile.lf() + sx as usize];
+                        if px[3] > 0 {
+                            let d = crate::toile::demultiplier(px);
+                            c.poser_fin(x, y, [d[0], d[1], d[2]], d[3]);
+                        }
+                    }
+                }
+            }
+            cases.push(c);
+        }
+    }
+    let n_col = 8;
+    let lignes = cases.len().div_ceil(n_col);
+    let mut t = Toile::new(cw as usize * n_col + n_col, (chh as usize + 8) * lignes);
+    t.rect(0, 0, t.l as i32, t.h as i32, [0x0a, 0x14, 0x24], 255);
+    for (i, c) in cases.iter().enumerate() {
+        let (x, y) = (
+            (i % n_col) as i32 * (cw + 1),
+            (i / n_col) as i32 * (chh + 8),
+        );
+        for yy in 0..c.hf() as i32 {
+            for xx in 0..c.lf() as i32 {
+                let d = crate::toile::demultiplier(c.px[yy as usize * c.lf() + xx as usize]);
+                t.poser_fin(x * 2 + xx, (y + 7) * 2 + yy, [d[0], d[1], d[2]], 255);
+            }
+        }
+        t.texte(
+            x + 2,
+            y + 1,
+            &format!("{:.1} S", i as f32 * 0.1),
+            [0xff, 0xea, 0xa8],
+            255,
+            None,
+        );
+    }
+    enregistrer(&t, 4, sortie)
 }
 
 fn rendre_planche(

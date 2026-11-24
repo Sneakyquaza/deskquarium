@@ -1,7 +1,7 @@
 # clé	image IA retenue (out/brouillons/ia/)	options de tools/pixeliser.py
 clown	clown_a	
-neon	neon_e	
-guppy	guppy_a	
+neon	neon_g	
+guppy	guppy_c	--yeux 34,10,1
 rouge	rouge_a	
 sardine	sardine_d	
 gobie	gobie_e	--yeux 57,12,2
@@ -41,7 +41,7 @@ cadborosaure	cadborosaure_c
 baleine_stellaire	baleine_stellaire_b	
 meduse_nebuleuse	meduse_nebuleuse_c	--yeux aucun
 raie_aurore	raie_aurore_a	--yeux 178,61,2;177,87,2
-carpe_comete	carpe_comete_b	--yeux 204,46,3
+carpe_comete	carpe_comete_c	
 cthulhu	cthulhu_c	--vue face --yeux 176,43,3;201,43,3
 leviathan	leviathan_c	--yeux 347,36,2
 oeil	oeil_a	--yeux 137,95,52

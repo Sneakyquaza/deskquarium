@@ -1,4 +1,17 @@
-AQUARIUM v0.7 - fond d'écran aquarium pixel art + petit jeu idle (Windows 10/11, 64 bits)
+AQUARIUM v0.8 - fond d'écran aquarium pixel art + petit jeu idle (Windows 10/11, 64 bits)
+
+MISES À JOUR (depuis la v0.8)
+- Plus besoin de dézipper : l'appli se met à jour elle-même depuis
+  https://github.com/Sneakyquaza/aquarium/releases (dépôt public).
+- Elle regarde au lancement puis toutes les 6 h, sans rien installer : quand une version est
+  disponible, une pastille « Mise à jour » apparaît dans l'Écloserie et l'infobulle de l'icône
+  l'annonce. Écloserie > Réglages > Mises à jour > « Installer vX.Y.Z » : téléchargement
+  vérifié (empreinte SHA-256), l'appli se ferme proprement (fond d'écran remis) et redémarre.
+- Aussi : clic droit sur l'icône > « Rechercher une mise à jour ».
+- En cas de problème (pas de réseau, GitHub qui limite les demandes, fichier abîmé), rien
+  n'est changé : l'ancienne version reste en place. Le dossier de l'exe doit être
+  modifiable (pas dans C:\Program Files) ; sinon, télécharge le zip sur la page ci-dessus.
+- Seule la demande envoyée à GitHub (« aquarium-maj », sans donnée personnelle) sort de ton PC.
 
 LANCER
 - Décompresse le dossier où tu veux (par exemple Documents\aquarium) et lance aquarium.exe.
@@ -18,7 +31,12 @@ JOUER
 - 61 espèces à collectionner, en pixel art détaillé et animé (poisson-clown, hippocampe, crabe,
   méduse, raie manta, requins, orque, baleine à bosse… jusqu'au kraken, au léviathan, au
   monstre du Loch Ness et à Jörmungandr), chacune avec plusieurs variantes de couleur.
-- Nouveau (v0.7) : décor posé dans le sable en petits groupes, nage calme et naturelle,
+- Nouveau (v0.8) : mises à jour dans l'appli ; poissons SHINY (1 chance sur 100, couleurs
+  différentes, traînée d'étincelles, revenu ×5) ; modificateurs (Doré, Diamant, Électrique,
+  Arc-en-ciel, Ombre, Cristal, Galaxie : aura et revenu ×1,5 à ×12) ; onglet Index (un index
+  par catégorie, +5 % de revenu pour toujours par index complet) ; demi-tours plus naturels,
+  grandes créatures qui ne se traversent plus, Mode Abysses plus lisible.
+- v0.7 : décor posé dans le sable en petits groupes, nage calme et naturelle,
   « Mode Abysses » (menu de l'icône ou Réglages : aquarium des grands fonds), bouton
   « Équiper les meilleurs » (onglet Mon aquarium, option auto).
 - v0.6 : nouveau décor en pixel art (sable, rochers, coraux, algues qui ondulent,

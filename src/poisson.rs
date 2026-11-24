@@ -3,7 +3,7 @@
 //! (dessinés au rendu dans `scene.rs`).
 
 use crate::especes::{Espece, Mouvement, Taille};
-use crate::jeu::Alea;
+use crate::jeu::{Alea, Forme, Modif};
 
 /// Classe d'un pixel du sprite (sert aux effets : arc-en-ciel sur le corps, pas sur l'œil…).
 pub const VIDE: u8 = 0;
@@ -49,6 +49,8 @@ pub struct Sprite {
     pub taille: Taille,
     /// Couleur de la paupière (clignement des yeux).
     pub paupiere: [u8; 3],
+    /// Dessin sombre (luminosité moyenne du corps basse) : contre-jour plus fort en Abysses.
+    pub sombre: f32,
 }
 
 impl Sprite {
@@ -72,7 +74,108 @@ pub fn echelle_individu(taille: f32) -> f32 {
 
 /// Sprite d'une espèce, variante et échelle données (déterministe).
 pub fn sprite(e: &Espece, variante: usize, echelle: f32) -> Sprite {
-    sprite_png(e, variante, echelle, png_espece(e.cle))
+    sprite_forme(e, variante, echelle, Forme::default())
+}
+
+/// Sprite d'un individu shiny et/ou modifié (palette recolorée, taille de l'Ombre).
+pub fn sprite_forme(e: &Espece, variante: usize, echelle: f32, forme: Forme) -> Sprite {
+    sprite_png(e, variante, echelle, png_espece(e.cle), forme)
+}
+
+/// Shiny : vraie recoloration (comme un Pokémon chromatique), pas juste plus clair. La teinte
+/// dominante du dessin tourne d'un pas propre à l'espèce (les rampes d'ombre restent) et les
+/// gris du corps prennent une teinte complémentaire ; yeux, lumières, contour sombre et
+/// reflets blancs gardés.
+fn recolorer_shiny(src: &mut [[u8; 4]], cle: &str) {
+    use crate::toile::{hsv, rgb_hsv};
+    // Teinte dominante (histogramme des pixels colorés).
+    let mut histo = [0f32; 24];
+    for p in src.iter().filter(|p| p[3] == 255) {
+        let (h, s, v) = rgb_hsv([p[0], p[1], p[2]]);
+        if s > 0.25 && v > 0.2 {
+            histo[((h.rem_euclid(1.0) * 24.0) as usize).min(23)] += s;
+        }
+    }
+    let dominante = (0..24)
+        .max_by(|&a, &b| histo[a].total_cmp(&histo[b]))
+        .map_or(0.0, |k| (k as f32 + 0.5) / 24.0);
+    // Pas propre à l'espèce, toujours loin des variantes (jamais moins d'un tiers de tour).
+    let h = cle.bytes().fold(0x811c_9dc5u32, |h, b| {
+        (h ^ b as u32).wrapping_mul(0x0100_0193)
+    });
+    let pas = [0.36, 0.45, 0.55, 0.62, 0.7][(h % 5) as usize];
+    let gris = (dominante + pas + 0.5).rem_euclid(1.0);
+    for p in src.iter_mut().filter(|p| p[3] == 255) {
+        let (hh, s, v) = rgb_hsv([p[0], p[1], p[2]]);
+        let c = if s >= 0.3 {
+            hsv(hh + pas, (s * 1.08).min(1.0), v)
+        } else if (0.2..0.93).contains(&v) {
+            // Gris et couleurs pâles du corps : teintés franchement, l'ombrage gardé.
+            hsv(gris, 0.34 + s * 0.5, v)
+        } else {
+            continue;
+        };
+        *p = [c[0], c[1], c[2], p[3]];
+    }
+}
+
+/// Modificateur : teinte légère ou effet du corps cuit dans la palette (l'aura et ce qui bouge
+/// sont dessinés au rendu, `scene.rs`).
+fn recolorer_modif(src: &mut [[u8; 4]], m: Modif, w: i32) {
+    use crate::toile::{hsv, melange, rgb_hsv};
+    for (i, p) in src.iter_mut().enumerate().filter(|(_, p)| p[3] == 255) {
+        let (x, y) = (i as i32 % w, i as i32 / w);
+        let c = [p[0], p[1], p[2]];
+        let (hh, s, v) = rgb_hsv(c);
+        let lum = (c[0] as f32 * 0.3 + c[1] as f32 * 0.59 + c[2] as f32 * 0.11) / 255.0;
+        let n = match m {
+            // Or : rampe dorée selon la luminosité, à 40 % (le dessin reste lisible).
+            Modif::Dore => melange(c, hsv(0.12, 0.75 - lum * 0.4, 0.35 + lum * 0.75), 0.4),
+            // Diamant : blanc bleuté, facettes en diagonale plus claires.
+            Modif::Diamant => {
+                let facette = (x + y).rem_euclid(9) == 0 || (x - y).rem_euclid(13) == 0;
+                let b = melange(c, [0xd8, 0xf4, 0xff], 0.38);
+                if facette && v > 0.25 {
+                    melange(b, [255, 255, 255], 0.35)
+                } else {
+                    b
+                }
+            }
+            // Électrique : couleurs plus vives, un peu froides.
+            Modif::Electrique => melange(
+                hsv(hh, (s * 1.25).min(1.0), v.max(0.15)),
+                [0x70, 0xf0, 0xff],
+                0.16,
+            ),
+            // Arc-en-ciel : bandes de teinte le long du corps (elles tournent au rendu).
+            Modif::ArcEnCiel => melange(c, hsv(x as f32 / w as f32, 0.7, 0.45 + lum * 0.6), 0.42),
+            // Ombre : plus sombre, violacée, désaturée.
+            Modif::Ombre => {
+                let sombre = hsv(hh, s * 0.6, v * 0.55);
+                melange(sombre, [0x2c, 0x14, 0x44], 0.3)
+            }
+            // Cristal : pâle et froid (posé translucide au rendu), facettes.
+            Modif::Cristal => {
+                let facette = (x * 2 + y).rem_euclid(11) == 0;
+                let b = melange(c, [0xc0, 0xf0, 0xf8], 0.5);
+                if facette {
+                    melange(b, [255, 255, 255], 0.45)
+                } else {
+                    b
+                }
+            }
+            // Galaxie : ciel de nuit (bleu nuit → violet → rose selon l'ombrage).
+            Modif::Galaxie => {
+                let g = if lum < 0.5 {
+                    melange([0x10, 0x0c, 0x38], [0x5c, 0x2c, 0x9c], lum * 2.0)
+                } else {
+                    melange([0x5c, 0x2c, 0x9c], [0xe8, 0x8c, 0xe8], (lum - 0.5) * 2.0)
+                };
+                melange(c, g, 0.75)
+            }
+        };
+        *p = [n[0], n[1], n[2], p[3]];
+    }
 }
 
 /// Sprite pixel art d'une espèce (image IA nettoyée par `tools/pixeliser.py`).
@@ -371,7 +474,7 @@ pub fn images_par_cycle(t: Taille) -> usize {
 /// Sprite d'une espèce pixel art : variante de couleur (teinte décalée selon la saturation,
 /// les rampes d'ombre restent), réduction éventuelle (vignettes), puis N images déformées
 /// à partir de l'unique dessin. Alpha du PNG : 255 corps, 254 œil, 253 lumière.
-fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8]) -> Sprite {
+fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8], forme: Forme) -> Sprite {
     let img = image::load_from_memory(png)
         .expect("sprite d'espèce embarqué lisible")
         .to_rgba8();
@@ -394,6 +497,22 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8]) -> Sprite {
             );
             *p = [c[0], c[1], c[2], p[3]];
         }
+    }
+    // Le contour sombre et les yeux (alpha 254/253) ne sont jamais recolorés : seuls les
+    // pixels de corps (alpha 255).
+    if forme.shiny {
+        recolorer_shiny(&mut src, e.cle);
+    }
+    if let Some(m) = forme.modif {
+        recolorer_modif(&mut src, m, w);
+    }
+    // Ombre : un peu plus grande (+12 %), agrandie au plus proche (jamais réduite).
+    if forme.modif == Some(Modif::Ombre) && echelle >= 0.85 {
+        let (nw, nh) = (w * 28 / 25, h * 28 / 25);
+        src = (0..nw * nh)
+            .map(|i| src[((i / nw) * h / nh * w + (i % nw) * w / nw) as usize])
+            .collect();
+        (w, h) = (nw, nh);
     }
     // Vignettes : réduction par la couleur la plus fréquente de chaque case (palette gardée).
     // Aux échelles d'individu (±10 %), le dessin reste à sa taille native.
@@ -603,7 +722,12 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8]) -> Sprite {
         .find_map(|x| bande(x).map(|y| (x, y)))
         .unwrap_or((bord + w - 1, bord + h / 2));
     let mut etoiles = Vec::new();
-    if e.rarete == crate::jeu::Rarete::Celeste {
+    // Étoiles et facettes qui scintillent : Céleste, Galaxie, Diamant, Cristal.
+    let scintille = matches!(
+        forme.modif,
+        Some(Modif::Galaxie | Modif::Diamant | Modif::Cristal)
+    );
+    if e.rarete == crate::jeu::Rarete::Celeste || scintille {
         let mut a = Alea(e.cle.len() as u64 * 977 + variante as u64);
         for _ in 0..((w + h) / 5).max(4) {
             for _essai in 0..30 {
@@ -615,6 +739,16 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8]) -> Sprite {
             }
         }
     }
+    // Luminosité moyenne du corps (contre-jour des dessins sombres, mode Abysses).
+    let (mut sl, mut sn) = (0f32, 0f32);
+    for (i, &c) in images[0].classe.iter().enumerate() {
+        if c == CORPS {
+            let p = images[0].px(i);
+            sl += p[0] as f32 * 0.3 + p[1] as f32 * 0.59 + p[2] as f32 * 0.11;
+            sn += 1.0;
+        }
+    }
+    let sombre = (1.0 - sl / sn.max(1.0) / 255.0 / 0.4).clamp(0.0, 1.0);
     Sprite {
         l,
         h: ht,
@@ -626,6 +760,7 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8]) -> Sprite {
         mouvement: e.mouvement,
         taille: e.taille,
         paupiere,
+        sombre,
     }
 }
 

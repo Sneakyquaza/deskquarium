@@ -225,4 +225,36 @@ mod tests {
         }
         assert_eq!(r.vus, q.vus);
     }
+
+    #[test]
+    fn sauvegarde_v3_migree_en_normal() {
+        // Format v0.7 (version 3) : pas de shiny, de modificateur ni d'index.
+        let d = dossier_test("v3");
+        let json = r#"{"version":3,"argent":5.0,"total_gagne":5.0,"horodatage":1700000000,
+            "prochain_id":3,"alea":9,"poissons":[
+            {"id":1,"graine":11,"rarete":"Commun","taille":1.0,"niveau":2,"actif":true,"oeuf":0,"espece":"clown","variante":0},
+            {"id":2,"graine":12,"rarete":"Rare","taille":1.3,"niveau":1,"actif":true,"oeuf":1,"espece":"meduse","variante":1}],
+            "oeufs_ouverts":[1,1,0,0,0],"eclos":[1,0,1,0,0,0,0,0,0],
+            "vus":{"clown":1,"meduse":1,"tortue":2},"reglages":{}}"#;
+        std::fs::write(fichier(&d), json).unwrap();
+        let (q, msg) = charger(&d);
+        assert!(msg.is_none(), "{msg:?}");
+        assert_eq!(q.version, crate::jeu::VERSION);
+        assert!(q.poissons.iter().all(|f| !f.shiny && f.modif.is_none()));
+        // Revenu inchangé : rareté × taille × niveau.
+        assert!((q.poissons[0].revenu() - 1.2).abs() < 1e-9);
+        // Les espèces déjà vues (même relâchées) sont dans l'index Normal, nulle part ailleurs.
+        for cle in ["clown", "meduse", "tortue"] {
+            assert!(q.dans_index(cle, 0), "{cle}");
+            assert!(
+                (1..crate::jeu::NB_INDEX).all(|k| !q.dans_index(cle, k)),
+                "{cle}"
+            );
+        }
+        assert_eq!(q.completion_index(0).0, 3);
+        assert_eq!(q.index_complets(), 0);
+        ecrire(&d, &q).unwrap();
+        let (r, _) = charger(&d);
+        assert_eq!(r.index, q.index);
+    }
 }

@@ -32,7 +32,8 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows_sys::Win32::UI::Shell::{
     SHQueryUserNotificationState, ShellExecuteW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP,
-    NIM_ADD, NIM_DELETE, NOTIFYICONDATAW, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
+    NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW, QUNS_PRESENTATION_MODE,
+    QUNS_RUNNING_D3D_FULL_SCREEN,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -56,6 +57,8 @@ static CTX: OnceLock<egui::Context> = OnceLock::new();
 static EN_PAUSE: AtomicBool = AtomicBool::new(false);
 static FENETRE_SYS: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
+/// Infobulle de l'icône (mise à jour disponible).
+static INFOBULLE: Mutex<String> = Mutex::new(String::new());
 const WM_ICONE: u32 = WM_APP + 1;
 
 pub struct Systeme {
@@ -192,6 +195,21 @@ impl Systeme {
     }
 
     /// État du mode Abysses pour la coche du menu.
+    /// Infobulle de l'icône de notification (« mise à jour disponible »…).
+    pub fn infobulle(&self, t: &str) {
+        *INFOBULLE.lock().unwrap_or_else(|e| e.into_inner()) = t.to_string();
+        let h = FENETRE_SYS.load(Ordering::Acquire);
+        if h.is_null() {
+            return;
+        }
+        let mut nid = donnees_icone(h);
+        nid.uFlags = NIF_TIP;
+        remplir_infobulle(&mut nid);
+        unsafe {
+            Shell_NotifyIconW(NIM_MODIFY, &nid);
+        }
+    }
+
     pub fn signaler_abysses(&self, a: bool) {
         ABYSSES.store(a, Ordering::Relaxed);
     }
@@ -957,10 +975,23 @@ fn ajouter_icone(h: HWND) {
         } else {
             icone
         };
-        let tip = large("Aquarium : clic pour l'Écloserie");
-        nid.szTip[..tip.len()].copy_from_slice(&tip);
+        remplir_infobulle(&mut nid);
         Shell_NotifyIconW(NIM_ADD, &nid);
     }
+}
+
+fn remplir_infobulle(nid: &mut NOTIFYICONDATAW) {
+    let t = INFOBULLE.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let t = if t.is_empty() {
+        "Aquarium : clic pour l'Écloserie".to_string()
+    } else {
+        t
+    };
+    let mut tip = large(&t);
+    // 128 caractères au plus, zéro final compris.
+    tip.truncate(nid.szTip.len() - 1);
+    tip.push(0);
+    nid.szTip[..tip.len()].copy_from_slice(&tip);
 }
 
 fn menu(h: HWND) {
@@ -999,6 +1030,12 @@ fn menu(h: HWND) {
             large("Test d'incrustation (couleurs)").as_ptr(),
         );
         AppendMenuW(m, MF_STRING, 6, large("Ouvrir le journal").as_ptr());
+        AppendMenuW(
+            m,
+            MF_STRING,
+            9,
+            large("Rechercher une mise à jour").as_ptr(),
+        );
         AppendMenuW(m, MF_SEPARATOR, 0, null());
         AppendMenuW(m, MF_STRING, 3, large("Quitter").as_ptr());
         let mut pt = POINT { x: 0, y: 0 };
@@ -1024,6 +1061,7 @@ fn menu(h: HWND) {
             5 => envoyer(Commande::AutreMethode),
             7 => envoyer(Commande::Tester),
             8 => envoyer(Commande::Abysses),
+            9 => envoyer(Commande::ChercherMaj),
             6 => {
                 let f = large(&crate::journal::chemin().display().to_string());
                 ShellExecuteW(

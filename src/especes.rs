@@ -968,6 +968,9 @@ mod tests {
         }
         assert!(lg("marteau") < lg("requin_baleine") && lg("requin_baleine") < lg("bosse"));
         assert!(lg("clown") < lg("tortue") && lg("tortue") < lg("dauphin"));
+        // v0.8 : néon et guppy plus petits que le clown, koï plus petite que le requin blanc.
+        assert!(lg("neon") < lg("clown") * 4 / 5 && lg("guppy") < lg("clown") * 4 / 5);
+        assert!(lg("carpe_comete") < lg("blanc") * 2 / 3);
     }
 
     #[test]

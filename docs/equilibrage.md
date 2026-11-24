@@ -74,3 +74,39 @@ Affichage : la limite `max_affiches` (40) compte des places : créature énorme 
 - Œuf d'ambre : 30 Md (3e10), 80 % Préhistorique, 12 % Céleste, 8 % Irréel. Gain moyen ≈ 180 k/s par œuf : un peu moins rentable que le cosmique neuf, beaucoup plus que le cosmique déjà ouvert des centaines de fois → objectif de fin de partie.
 - Sauvegardes : `oeufs_ouverts` et `eclos` sont des listes complétées par `migrer` (version 3) ; une sauvegarde v1/v2 se charge sans perte (test `sauvegarde_lot1_migree_sans_perte`).
 - Simulation (600 h = 25 jours de fond d'écran, le joueur glouton n'économise pas plus d'un jour pour un œuf) : partie 1 et 3 plafonnent à 150-190 k/s sans atteindre l'ambre en 25 jours ; partie 2 ouvre le 1er œuf d'ambre à 11 j 6 h, passe à 1 M/s dans l'heure et finit à 39 M/s. L'ambre est donc une chasse de 2 à 4 semaines ; levier si trop long : son prix.
+
+## v0.8 : shiny, modificateurs et index
+
+Tirés à l'éclosion à partir de la graine du poisson (`Forme::tirer`, flux à part : le tirage des raretés et des espèces ne change pas). Shiny et modificateur sont indépendants (un poisson peut être shiny ET Galaxie : ×60). Au plus un modificateur. Le poisson offert au départ est toujours normal.
+
+| Forme | Chance | Revenu | Effet |
+|---|---|---|---|
+| Shiny | 1/100 | ×5 | vraie recoloration (teinte dominante tournée de 0,36 à 0,7 tour selon l'espèce, gris teintés), traînée d'étincelles, étoiles, révélation fêtée |
+| Doré | 1/20 | ×1,5 | rampe dorée à 40 %, reflet qui glisse, anneau doré à éclats |
+| Diamant | 1/60 | ×2,5 | blanc bleuté à facettes, facettes qui s'allument sur l'anneau |
+| Électrique | 1/120 | ×3 | couleurs vives un peu froides, anneau qui grésille, arcs brefs |
+| Arc-en-ciel | 1/150 | ×4 | bandes de teinte qui tournent (palette tournée, pas chaque pixel) |
+| Ombre | 1/250 | ×5 | plus sombre, violacée, +12 % (agrandie au plus proche, jamais réduite), fumée |
+| Cristal | 1/400 | ×7 | pâle, translucide, facettes |
+| Galaxie | 1/1000 | ×12 | ciel de nuit, étoiles qui clignent |
+
+Espérance d'un poisson éclos : modificateurs ×1,129 (+12,9 %), shiny ×1,04, ensemble **×1,174** (`Forme::esperance`, testé). Le joueur glouton de la simulation compte cette espérance dans le gain d'un œuf ; « Équiper les meilleurs » et « Auto » suivent le revenu réel (forme comprise, test `equiper_les_meilleurs_avec_formes`). Le coût de « Nourrir » suit aussi la forme : un niveau se rentabilise pareil (600 s au niveau 1), shiny ou non.
+
+**Index** (onglet Index de l'Écloserie) : Normal (espèce éclose sous n'importe quelle forme), un par modificateur, Shiny ; 9 index de 61 espèces. Chaque index complet donne **+5 % de tout le revenu, pour toujours** (`BONUS_INDEX`, multiplicatif sur le revenu de l'aquarium, gains hors ligne compris ; 9 index = +45 %). Les anciennes sauvegardes (v1-v3) chargent tous leurs poissons normaux, et chaque espèce déjà vue compte dans l'index Normal (test `sauvegarde_v3_migree_en_normal`).
+
+Tirages vérifiés par test (2 millions : écart < 5 écarts-types par modificateur, shiny × Doré indépendants).
+
+Simulation (600 h = 25 jours de fond d'écran, mêmes règles que le lot 3) :
+
+| Jalon | Partie 1 | Partie 2 | Partie 3 |
+|---|---|---|---|
+| 1 k/s | 1 h 39 | 27 min | 2 h 05 |
+| 1er œuf des abysses | 2 h 53 | 2 h 05 | 3 h 14 |
+| 10 k/s | 10 h 03 | 7 h 43 | 7 h 05 |
+| 1er œuf cosmique | 1 j 1 h | 1 j 4 h | 21 h 47 |
+| 1er œuf d'ambre | — | 19 j 3 h | — |
+| Fin (25 j) | 100 k/s | 41,1 M/s | 159 k/s |
+| Shiny / modifiés dans l'aquarium | 2 / 7 | 1 / 6 | 0 / 7 |
+| Index Normal | 35/61 | 51/61 | 36/61 |
+
+Lecture : les premières heures bougent peu (l'espérance ne vaut que +17 %, et un modifié est rare au début) ; un shiny ou un Diamant tôt dans la partie se sent (×2,5 à ×5 sur un poisson). Aucun index n'est complet en 25 jours : l'index Normal (dernières espèces Préhistoriques et Irréelles) est l'objectif du mois, les index de modificateurs et Shiny sont des chasses de très long terme (environ 700 œufs ouverts en 25 jours → ~7 shiny et ~35 Dorés pour 61 espèces). Leviers si c'est trop lent : `CHANCE_SHINY`, chances des modificateurs, ou un index Normal par rareté.

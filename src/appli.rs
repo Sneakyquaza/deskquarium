@@ -37,6 +37,8 @@ pub enum Commande {
     Tester,
     /// Bascule le mode Abysses (réglage sauvegardé).
     Abysses,
+    /// Recherche une mise à jour (ouvre les Réglages de l'Écloserie).
+    ChercherMaj,
 }
 
 struct Appli {
@@ -75,6 +77,11 @@ struct Appli {
     premiere_image: bool,
     /// Mesure : images dessinées depuis `mesure_depuis` (affichées si AQUARIUM_IPS est défini).
     mesure: (u32, Instant, Duration),
+    /// Dernière recherche automatique de mise à jour (au lancement puis toutes les 6 h).
+    maj_le: Option<Instant>,
+    /// Version annoncée dans l'infobulle de l'icône.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    maj_annoncee: Option<String>,
 }
 
 /// Captures automatiques de chaque onglet (tests sous Xvfb).
@@ -163,12 +170,19 @@ pub fn lancer(o: Options) -> Result<(), String> {
         affichage_applique: None,
         premiere_image: false,
         mesure: (0, Instant::now(), Duration::ZERO),
+        maj_le: None,
+        maj_annoncee: None,
     };
+    // Ancienne version laissée par une mise à jour : supprimée.
+    crate::maj::nettoyer();
     eframe::run_native(
         "aquarium",
         options,
         Box::new(move |cc| {
             installer_style(&cc.egui_ctx);
+            let mut appli = appli;
+            let ctx = cc.egui_ctx.clone();
+            appli.ecloserie.maj = Some(crate::maj::Maj::new(move || ctx.request_repaint()));
             Ok(Box::new(appli))
         }),
     )
@@ -237,6 +251,14 @@ impl Appli {
                 r.incrustation = (r.incrustation + 1) % 4;
             }
             Commande::Rattacher => self.affichage_applique = None,
+            Commande::ChercherMaj => {
+                self.ecloserie_ouverte = true;
+                self.ecloserie.onglet = Onglet::Reglages;
+                if let Some(m) = &self.ecloserie.maj {
+                    m.chercher(false);
+                }
+                ctx.send_viewport_cmd_to(ecloserie_id(), egui::ViewportCommand::Focus);
+            }
             Commande::Abysses => {
                 let r = &mut self.partie.reglages;
                 r.abysses = !r.abysses;
@@ -248,6 +270,43 @@ impl Appli {
                 if let Some(s) = &self.systeme {
                     s.tester();
                 }
+            }
+        }
+    }
+
+    /// Mises à jour : recherche discrète au lancement puis toutes les 6 h (jamais en démo ni
+    /// en captures), infobulle de l'icône, installation (après le clic « Installer ») puis
+    /// fermeture propre et relance.
+    fn mises_a_jour(&mut self, ctx: &egui::Context) {
+        let Some(m) = &self.ecloserie.maj else {
+            return;
+        };
+        if !self.demo
+            && self.captures.is_none()
+            && self
+                .maj_le
+                .is_none_or(|t| t.elapsed() > Duration::from_secs(6 * 3600))
+        {
+            self.maj_le = Some(Instant::now());
+            m.chercher(true);
+        }
+        #[cfg(windows)]
+        {
+            let dispo = m.disponible();
+            if dispo != self.maj_annoncee {
+                if let Some(s) = &self.systeme {
+                    s.infobulle(&match &dispo {
+                        Some(v) => format!("Aquarium : mise à jour v{v} disponible"),
+                        None => String::new(),
+                    });
+                }
+                self.maj_annoncee = dispo;
+            }
+        }
+        if matches!(m.etat(), crate::maj::Etat::Pret(_)) {
+            if let Some(exe) = m.installer() {
+                self.ecloserie.relancer = Some(exe);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
     }
@@ -334,15 +393,17 @@ impl Appli {
             return;
         };
         let t = ui.input(|i| i.time);
-        let etapes: [(f64, &str); 8] = [
+        let etapes: [(f64, &str); 10] = [
             (1.0, "ecloserie-oeufs"),
             (1.5, "achat"),
             (3.3, "ecloserie-eclosion"),
             (6.5, "ecloserie-revelation"),
             (7.5, "ecloserie-aquarium"),
             (8.5, "ecloserie-poissodex"),
-            (9.5, "ecloserie-reglages"),
-            (10.5, "fin"),
+            (9.5, "ecloserie-index-dore"),
+            (10.5, "ecloserie-index-shiny"),
+            (11.5, "ecloserie-reglages"),
+            (12.5, "fin"),
         ];
         let Some(&(_, nom)) = etapes.get(c.etape) else {
             return;
@@ -363,13 +424,30 @@ impl Appli {
                     .filter(|&i| i < crate::jeu::OEUFS.len())
                     .unwrap_or(crate::jeu::OEUFS.len() - 1);
                 self.ecloserie.acheter(ui, &mut self.partie, oeuf);
+                // AQUARIUM_FORME=shiny / galaxie… : force la forme du poisson éclos (captures).
+                if let Ok(v) = std::env::var("AQUARIUM_FORME") {
+                    let forme = crate::jeu::Forme {
+                        shiny: v.contains("shiny"),
+                        modif: crate::jeu::Modif::TOUS
+                            .into_iter()
+                            .find(|m| v.contains(&m.nom().to_lowercase())),
+                    };
+                    self.ecloserie.forcer_forme(&mut self.partie, forme);
+                }
             }
             "fin" => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
             _ => {
                 // La capture prend l'image suivante : l'onglet change d'abord.
                 self.ecloserie.onglet = match nom {
                     "ecloserie-aquarium" => Onglet::Aquarium,
-                    "ecloserie-poissodex" => Onglet::Poissodex,
+                    "ecloserie-poissodex" | "ecloserie-index-dore" | "ecloserie-index-shiny" => {
+                        self.ecloserie.index = match nom {
+                            "ecloserie-index-dore" => 1,
+                            "ecloserie-index-shiny" => crate::jeu::NB_INDEX - 1,
+                            _ => 0,
+                        };
+                        Onglet::Poissodex
+                    }
                     "ecloserie-reglages" => Onglet::Reglages,
                     _ => self.ecloserie.onglet,
                 };
@@ -628,6 +706,7 @@ impl eframe::App for Appli {
         if self.sauve_le.elapsed() > Duration::from_secs(30) {
             self.sauver();
         }
+        self.mises_a_jour(&ctx);
         let ips = self.partie.reglages.ips.clamp(15, 60) as f32;
         if fige {
             ctx.request_repaint_after(Duration::from_millis(500));
@@ -641,6 +720,10 @@ impl eframe::App for Appli {
         #[cfg(windows)]
         if let Some(s) = self.systeme.take() {
             s.arreter();
+        }
+        // Mise à jour installée : la nouvelle version démarre une fois le fond d'écran remis.
+        if let Some(exe) = self.ecloserie.relancer.take() {
+            crate::maj::relancer(&exe);
         }
     }
 }

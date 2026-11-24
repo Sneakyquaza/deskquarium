@@ -3,7 +3,10 @@
 //! Pixelify Sans pour le texte), images pixel art agrandies en entier au plus proche.
 
 use crate::especes::{de_rarete, Espece};
-use crate::jeu::{court, duree, Partie, Poisson, Rarete, Refus, CAPACITE, OEUFS};
+use crate::jeu::{
+    court, duree, nom_index, Forme, Modif, Partie, Poisson, Rarete, Refus, BONUS_INDEX, CAPACITE,
+    MULT_SHINY, NB_INDEX, OEUFS,
+};
 use crate::scene::{nom_de, sprite_ajuste, Aquarium, Nageur};
 use crate::toile::{bayer, melange, Rgb, Toile};
 use eframe::egui::{
@@ -25,6 +28,8 @@ const OR: Color32 = Color32::from_rgb(0xff, 0xd3, 0x6e);
 const SABLE: Color32 = Color32::from_rgb(0xf2, 0xc1, 0x4e);
 const ENCRE: Color32 = Color32::from_rgb(0x2a, 0x1a, 0x08);
 const ALERTE: Color32 = Color32::from_rgb(0xe8, 0x5d, 0x75);
+/// Badge shiny (rose doré).
+const SHINY: Color32 = Color32::from_rgb(0xff, 0xb8, 0xe8);
 
 fn c32(c: Rgb) -> Color32 {
     Color32::from_rgb(c[0], c[1], c[2])
@@ -128,6 +133,8 @@ struct Eclosion {
     eclats: Vec<(f32, f32, f32, f32, Rgb)>,
     /// Agrandissement du poisson révélé (x2 s'il est petit, x1 sinon).
     zoom: i32,
+    /// Shiny : révélation fêtée (pluie d'étoiles, rayons arc-en-ciel, second éclair).
+    shiny: bool,
 }
 
 /// Durée du suspense avant la révélation.
@@ -138,6 +145,8 @@ pub struct Ecloserie {
     eclosion: Option<Eclosion>,
     vignettes: HashMap<u64, TextureHandle>,
     vignettes_dex: HashMap<String, TextureHandle>,
+    /// Index affiché (0 Normal, 1..=7 modificateurs, 8 Shiny).
+    pub index: usize,
     oeufs: Vec<TextureHandle>,
     confirmer: Option<u64>,
     reserve: bool,
@@ -147,6 +156,10 @@ pub struct Ecloserie {
     pub dossier: String,
     /// Le lancement au démarrage n'existe que sous Windows.
     pub windows: bool,
+    /// Mises à jour (GitHub Releases), créé au lancement de l'appli.
+    pub maj: Option<crate::maj::Maj>,
+    /// Nouvelle version installée : à relancer à la fermeture.
+    pub relancer: Option<std::path::PathBuf>,
 }
 
 impl Ecloserie {
@@ -156,6 +169,7 @@ impl Ecloserie {
             eclosion: None,
             vignettes: HashMap::new(),
             vignettes_dex: HashMap::new(),
+            index: 0,
             oeufs: Vec::new(),
             confirmer: None,
             reserve: false,
@@ -163,6 +177,8 @@ impl Ecloserie {
             info: None,
             dossier,
             windows: cfg!(windows),
+            maj: None,
+            relancer: None,
         }
     }
 
@@ -209,6 +225,7 @@ impl Ecloserie {
                 );
                 n.fixe = true;
                 n.gauche = false;
+                n.forme = f.forme();
                 aq.nageurs.push(n);
                 self.eclosion = Some(Eclosion {
                     oeuf,
@@ -220,6 +237,7 @@ impl Ecloserie {
                     texture: None,
                     eclats: Vec::new(),
                     zoom,
+                    shiny: f.shiny,
                 });
             }
             Err(Refus::PasAssez) => {
@@ -230,6 +248,26 @@ impl Ecloserie {
             }
             Err(_) => {}
         }
+    }
+
+    /// Captures : impose la forme du poisson de l'éclosion en cours.
+    pub fn forcer_forme(&mut self, p: &mut Partie, forme: Forme) {
+        let Some(e) = self.eclosion.as_mut() else {
+            return;
+        };
+        if let Some(f) = p.poissons.iter_mut().find(|f| f.id == e.id) {
+            (f.shiny, f.modif) = (forme.shiny, forme.modif);
+            let s = crate::scene::sprite_de(f);
+            if let Some(n) = e.poisson.nageurs.first_mut() {
+                n.forme = forme;
+                if e.zoom > 1 {
+                    n.sprite = Arc::new(s);
+                } else {
+                    n.sprite = Arc::new(sprite_ajuste(f, 126 * 2, 90 * 2));
+                }
+            }
+        }
+        e.shiny = forme.shiny;
     }
 
     pub fn ui(&mut self, ui: &mut Ui, p: &mut Partie) {
@@ -288,6 +326,18 @@ impl Ecloserie {
                         .font(titre(13.0))
                         .color(BRUME),
                 );
+                // Mise à jour disponible : pastille discrète qui mène aux Réglages.
+                if let Some(v) = self.maj.as_ref().and_then(|m| m.disponible()) {
+                    let b = egui::Button::new(
+                        RichText::new(format!("Mise à jour v{v}"))
+                            .font(titre(12.0))
+                            .color(ENCRE),
+                    )
+                    .fill(OR);
+                    if ui.add(b).clicked() {
+                        self.onglet = Onglet::Reglages;
+                    }
+                }
             });
         });
         if let Some(b) = self.bandeau.clone() {
@@ -304,7 +354,7 @@ impl Ecloserie {
             for (o, nom) in [
                 (Onglet::Oeufs, "Œufs"),
                 (Onglet::Aquarium, "Mon aquarium"),
-                (Onglet::Poissodex, "Poissodex"),
+                (Onglet::Poissodex, "Index"),
                 (Onglet::Reglages, "Réglages"),
             ] {
                 let actif = self.onglet == o;
@@ -447,8 +497,22 @@ impl Ecloserie {
                 return;
             };
             let nom = nom_de(f);
+            if f.shiny {
+                ui.label(texte_shiny(maintenant, 30.0));
+            }
             ui.label(texte_rarete(e.rarete, maintenant, 34.0));
             ui.label(RichText::new(nom).size(22.0));
+            if let Some(m) = f.modif {
+                ui.label(
+                    RichText::new(format!(
+                        "{} · revenu ×{}",
+                        m.nom(),
+                        court_pct(m.multiplicateur())
+                    ))
+                    .font(titre(16.0))
+                    .color(c32(m.couleur())),
+                );
+            }
             ui.label(
                 RichText::new(format!(
                     "Rapporte {}/s · taille {} · {}",
@@ -627,7 +691,10 @@ impl Ecloserie {
                             );
                             ui.vertical(|ui| {
                                 ui.spacing_mut().item_spacing.y = 2.0;
-                                ui.label(RichText::new(nom_de(f)).size(17.0));
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(nom_de(f)).size(17.0));
+                                    badges(ui, f);
+                                });
                                 ui.horizontal(|ui| {
                                     ui.label(
                                         RichText::new(f.rarete.nom())
@@ -717,35 +784,92 @@ impl Ecloserie {
         }
     }
 
+    /// Index façon Roblox : un onglet par catégorie (Normal, chaque modificateur, Shiny),
+    /// toutes les espèces listées (couleur si découverte, silhouette sinon), % de complétion.
     fn onglet_dex(&mut self, ui: &mut Ui, p: &Partie) {
-        let total = crate::especes::catalogue().len();
-        let vues = crate::especes::catalogue()
-            .iter()
-            .filter(|e| p.vus.get(e.cle).copied().unwrap_or(0) > 0)
-            .count();
+        ui.horizontal_wrapped(|ui| {
+            for k in 0..NB_INDEX {
+                let (n, t) = p.completion_index(k);
+                let actif = self.index == k;
+                let couleur = couleur_index(k);
+                let texte = format!("{} {}%", nom_index(k), n * 100 / t.max(1));
+                let b = egui::Button::new(RichText::new(texte).font(titre(13.0)).color(if actif {
+                    ENCRE
+                } else {
+                    c32(couleur)
+                }))
+                .fill(if actif { c32(couleur) } else { VERRE })
+                .stroke(Stroke::new(
+                    2.0,
+                    if n == t {
+                        OR
+                    } else if actif {
+                        ENCRE
+                    } else {
+                        BISEAU_SOMBRE
+                    },
+                ))
+                .min_size(Vec2::new(0.0, 30.0));
+                if ui.add(b).clicked() {
+                    self.index = k;
+                }
+            }
+        });
+        let k = self.index.min(NB_INDEX - 1);
+        let (n, total) = p.completion_index(k);
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(format!("{vues} espèces sur {total} découvertes")).font(titre(16.0)),
+                RichText::new(format!(
+                    "Index {} : {n}/{total} ({} %)",
+                    nom_index(k),
+                    n * 100 / total.max(1)
+                ))
+                .font(titre(16.0))
+                .color(c32(couleur_index(k))),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     RichText::new(format!(
-                        "{} œufs ouverts · {} gagnés en tout",
-                        p.oeufs_ouverts.iter().sum::<u64>(),
-                        court(p.total_gagne)
+                        "{} index complets : +{} % de revenu",
+                        p.index_complets(),
+                        court_pct(p.index_complets() as f64 * BONUS_INDEX * 100.0)
                     ))
-                    .color(BRUME),
+                    .color(OR),
                 );
             });
         });
+        let regle = match k {
+            0 => "Chaque espèce éclose (sous n'importe quelle forme) compte.".to_string(),
+            k if k < NB_INDEX - 1 => {
+                let m = Modif::TOUS[k - 1];
+                format!(
+                    "Espèces écloses avec le modificateur {} (1 chance sur {}, revenu ×{}).",
+                    m.nom(),
+                    (1.0 / m.chance()).round(),
+                    court_pct(m.multiplicateur())
+                )
+            }
+            _ => format!(
+                "Espèces écloses shiny (1 chance sur {}, revenu ×{}).",
+                (1.0 / crate::jeu::CHANCE_SHINY).round(),
+                court_pct(MULT_SHINY)
+            ),
+        };
+        ui.label(
+            RichText::new(format!(
+                "{regle} Index complet : +{} % de revenu pour toujours.",
+                court_pct(BONUS_INDEX * 100.0)
+            ))
+            // Chiffres en Silkscreen (dans Pixelify Sans, le 5 ressemble à un S).
+            .color(BRUME)
+            .font(titre(11.0)),
+        );
         ui.add_space(6.0);
         egui::ScrollArea::vertical().show(ui, |ui| {
             for r in Rarete::TOUTES {
                 let especes: Vec<&Espece> = de_rarete(r).collect();
-                let n = especes
-                    .iter()
-                    .filter(|e| p.vus.get(e.cle).copied().unwrap_or(0) > 0)
-                    .count();
+                let n = especes.iter().filter(|e| p.dans_index(e.cle, k)).count();
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new(r.nom())
@@ -753,18 +877,14 @@ impl Ecloserie {
                             .color(c32(r.couleur())),
                     );
                     ui.label(
-                        RichText::new(format!(
-                            "{n}/{} · {}/s de base",
-                            especes.len(),
-                            court(r.revenu_base())
-                        ))
-                        .color(BRUME)
-                        .font(titre(12.0)),
+                        RichText::new(format!("{n}/{}", especes.len()))
+                            .color(BRUME)
+                            .font(titre(12.0)),
                     );
                 });
                 ui.horizontal_wrapped(|ui| {
                     for e in especes {
-                        self.carte_espece(ui, p, e);
+                        self.carte_espece(ui, p, e, k);
                     }
                 });
                 ui.add_space(8.0);
@@ -772,10 +892,11 @@ impl Ecloserie {
         });
     }
 
-    /// Case d'une espèce : dessin (silhouette si jamais éclose), nom, nombre d'éclos.
-    fn carte_espece(&mut self, ui: &mut Ui, p: &Partie, e: &'static Espece) {
+    /// Case d'une espèce dans l'index `k` : dessin de cette forme (silhouette si pas encore
+    /// découverte), nom, nombre d'éclos.
+    fn carte_espece(&mut self, ui: &mut Ui, p: &Partie, e: &'static Espece, k: usize) {
         let n = p.vus.get(e.cle).copied().unwrap_or(0);
-        let vu = n > 0;
+        let vu = p.dans_index(e.cle, k);
         let (rect, _) = ui.allocate_exact_size(Vec2::new(128.0, 96.0), egui::Sense::hover());
         let peintre = ui.painter();
         let bord = if vu {
@@ -790,16 +911,17 @@ impl Ecloserie {
             Stroke::new(1.0, c32(bord)),
             egui::StrokeKind::Inside,
         );
-        let cle = format!("dex/{}/{vu}", e.cle);
+        let cle = format!("dex/{}/{k}/{vu}", e.cle);
         let tex = self
             .vignettes_dex
             .entry(cle.clone())
             .or_insert_with(|| {
                 let m = 2.0 * crate::poisson::MARGE as f32;
-                let k = ((112.0 - m) / e.dims.0 as f32)
+                let z = ((112.0 - m) / e.dims.0 as f32)
                     .min((54.0 - m) / e.dims.1 as f32)
                     .min(1.0);
-                let s = crate::poisson::sprite(e, 0, k);
+                let forme = forme_index(k);
+                let s = crate::poisson::sprite_forme(e, 0, z, forme);
                 let ombre = (!vu).then_some([0x05, 0x14, 0x20]);
                 ui.ctx()
                     .load_texture(&cle, image_sprite(&s, ombre), TextureOptions::NEAREST)
@@ -830,10 +952,12 @@ impl Ecloserie {
             FontId::proportional(13.0),
             c,
         );
-        let bas = if vu {
+        let bas = if !vu {
+            "À découvrir".into()
+        } else if k == 0 {
             format!("{n} éclos")
         } else {
-            "Pas encore éclos".into()
+            "Découvert".into()
         };
         peintre.text(
             egui::pos2(rect.center().x, rect.top() + 86.0),
@@ -856,7 +980,19 @@ impl Ecloserie {
             });
             ui.add_space(6.0);
         };
+        let maj = self.maj.as_ref();
         egui::ScrollArea::vertical().show(ui, |ui| {
+            if let Some(m) = maj {
+                ligne(
+                    ui,
+                    "Mises à jour",
+                    &format!(
+                        "Version actuelle : {}. L'appli se met à jour elle-même (rien à dézipper).",
+                        crate::maj::VERSION
+                    ),
+                    &mut |ui| section_maj(ui, m),
+                );
+            }
             ligne(
                 ui,
                 "Teinte de l'eau",
@@ -952,6 +1088,82 @@ impl Ecloserie {
     }
 }
 
+/// Section « Mises à jour » des Réglages : recherche, notes de version, installation avec
+/// barre de progression ; messages d'erreur clairs (rien n'est changé en cas d'échec).
+fn section_maj(ui: &mut Ui, m: &crate::maj::Maj) {
+    use crate::maj::Etat;
+    let chercher = |ui: &mut Ui, texte: &str| {
+        if ui
+            .add(egui::Button::new(RichText::new(texte).font(titre(13.0))))
+            .clicked()
+        {
+            m.chercher(false);
+        }
+    };
+    match m.etat() {
+        Etat::Rien => chercher(ui, "Rechercher une mise à jour"),
+        Etat::Recherche => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(RichText::new("Recherche en cours…").color(BRUME));
+            });
+        }
+        Etat::AJour => {
+            ui.label(RichText::new("Tu as la dernière version.").color(OR));
+            chercher(ui, "Rechercher à nouveau");
+        }
+        Etat::Erreur(e) => {
+            ui.label(RichText::new(e).color(ALERTE));
+            chercher(ui, "Réessayer");
+        }
+        Etat::Dispo(a) => {
+            ui.label(
+                RichText::new(format!("Nouvelle version {} disponible", a.version))
+                    .font(titre(14.0))
+                    .color(OR),
+            );
+            if !a.notes.trim().is_empty() {
+                egui::ScrollArea::vertical()
+                    .id_salt("notes_maj")
+                    .max_height(140.0)
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(a.notes.trim()).size(14.0));
+                    });
+            }
+            let b = egui::Button::new(
+                RichText::new(format!("Installer v{}", a.version))
+                    .font(titre(14.0))
+                    .color(ENCRE),
+            )
+            .fill(SABLE)
+            .min_size(Vec2::new(220.0, 34.0));
+            if ui.add(b).clicked() {
+                m.telecharger();
+            }
+            ui.label(
+                RichText::new("L'appli redémarre toute seule après l'installation.")
+                    .color(BRUME)
+                    .size(13.0),
+            );
+        }
+        Etat::Telechargement(v, n, t) => {
+            ui.label(RichText::new(format!("Téléchargement de la version {v}…")).color(BRUME));
+            ui.add(
+                egui::ProgressBar::new(n as f32 / t.max(1) as f32)
+                    .show_percentage()
+                    .desired_width(ui.available_width()),
+            );
+        }
+        Etat::Pret(_) | Etat::Installation => {
+            ui.label(RichText::new("Installation, redémarrage…").color(OR));
+        }
+        Etat::Echec(e) => {
+            ui.label(RichText::new(e).color(ALERTE));
+            chercher(ui, "Réessayer");
+        }
+    }
+}
+
 /// Cadre « verre » : biseau clair en haut à gauche, sombre en bas à droite, liseré coloré.
 fn biseau(liseré: Rgb) -> egui::Frame {
     egui::Frame::new()
@@ -967,6 +1179,57 @@ fn biseau(liseré: Rgb) -> egui::Frame {
             spread: 0,
             color: BISEAU_SOMBRE,
         })
+}
+
+/// Forme dessinée dans l'index `k`.
+fn forme_index(k: usize) -> Forme {
+    Forme {
+        shiny: k == NB_INDEX - 1,
+        modif: (1..NB_INDEX - 1).contains(&k).then(|| Modif::TOUS[k - 1]),
+    }
+}
+
+fn couleur_index(k: usize) -> Rgb {
+    match k {
+        0 => [0xe8, 0xf6, 0xf2],
+        k if k < NB_INDEX - 1 => Modif::TOUS[k - 1].couleur(),
+        _ => [0xff, 0xb8, 0xe8],
+    }
+}
+
+/// Badges shiny et modificateur (liste de « Mon aquarium »).
+fn badges(ui: &mut Ui, f: &Poisson) {
+    if f.shiny {
+        ui.label(RichText::new("SHINY").font(titre(12.0)).color(SHINY))
+            .on_hover_text(format!("Shiny : revenu ×{}", court_pct(MULT_SHINY)));
+    }
+    if let Some(m) = f.modif {
+        ui.label(
+            RichText::new(m.nom().to_uppercase())
+                .font(titre(12.0))
+                .color(c32(m.couleur())),
+        )
+        .on_hover_text(format!(
+            "{} : revenu ×{}",
+            m.nom(),
+            court_pct(m.multiplicateur())
+        ));
+    }
+}
+
+/// « SHINY ! » en lettres qui scintillent (révélation).
+fn texte_shiny(t: f64, taille: f32) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    for (i, ch) in "SHINY !".chars().enumerate() {
+        let k = 0.5 + 0.5 * (t as f32 * 6.0 - i as f32 * 0.9).sin();
+        let c = c32(melange([0xff, 0x9c, 0xdc], [0xff, 0xf6, 0xc0], k));
+        job.append(
+            &ch.to_string(),
+            0.0,
+            egui::TextFormat::simple(titre(taille), c),
+        );
+    }
+    job
 }
 
 fn taille(t: f32) -> String {
@@ -1236,10 +1499,17 @@ fn dessiner_eclosion(e: &mut Eclosion, t: f64) {
         return;
     }
     let apres = (t - SUSPENSE) as f32;
-    // Rayons tournants.
-    for i in 0..12 {
-        let ang = i as f32 / 12.0 * std::f32::consts::TAU + apres * 0.4;
+    // Rayons tournants (shiny : arc-en-ciel, deux fois plus nombreux et plus vifs).
+    let nr = if e.shiny { 24 } else { 12 };
+    for i in 0..nr {
+        let ang = i as f32 / nr as f32 * std::f32::consts::TAU + apres * 0.4;
         let long = (apres * 160.0).min(70.0);
+        let c = if e.shiny {
+            crate::toile::hsv(i as f32 / nr as f32 + apres * 0.3, 0.55, 1.0)
+        } else {
+            couleur
+        };
+        let fort = if e.shiny { 130.0 } else { 90.0 };
         for s in 10..long as i32 {
             if i % 2 == 0 || s % 2 == 0 {
                 let (x, y) = (
@@ -1249,9 +1519,31 @@ fn dessiner_eclosion(e: &mut Eclosion, t: f64) {
                 toile.eclairer(
                     x.round() as i32,
                     y.round() as i32,
-                    couleur,
-                    (90.0 * (1.0 - s as f32 / 75.0)) as u8,
+                    c,
+                    (fort * (1.0 - s as f32 / 75.0)) as u8,
                 );
+            }
+        }
+    }
+    // Shiny : pluie d'étoiles à quatre branches qui s'ouvrent tour à tour autour du poisson.
+    if e.shiny {
+        let mut a = crate::jeu::Alea(e.id ^ 0x5419);
+        for _ in 0..22 {
+            let (x, y) = (a.entre(6.0, l as f32 - 6.0), a.entre(6.0, h as f32 - 6.0));
+            let (debut, vie) = (a.entre(0.0, 2.5), a.entre(0.5, 0.9));
+            let u = (apres - debut).rem_euclid(2.6) / vie;
+            if u >= 1.0 {
+                continue;
+            }
+            let o = ((1.0 - (2.0 * u - 1.0).abs()) * 4.0).round() as i32;
+            let (x, y) = (x as i32, (y - u * 4.0) as i32);
+            let c = [[255, 246, 190], [255, 190, 236], [190, 240, 255]][a.n(3) as usize];
+            toile.eclairer(x, y, [255, 255, 255], 255);
+            for k in 1..=o {
+                let ak = (230 - k * 45).max(40) as u8;
+                for (dx, dy) in [(k, 0), (-k, 0), (0, k), (0, -k)] {
+                    toile.eclairer(x + dx, y + dy, c, ak);
+                }
             }
         }
     }
@@ -1300,9 +1592,13 @@ fn dessiner_eclosion(e: &mut Eclosion, t: f64) {
             }
         }
     }
-    // Flash blanc.
+    // Flash blanc (shiny : un second éclair doré).
     if apres < 0.25 {
         let a = ((0.25 - apres) / 0.25 * 255.0) as u8;
         toile.rect(0, 0, l, h, [255, 255, 255], a);
+    }
+    if e.shiny && (0.45..0.75).contains(&apres) {
+        let a = ((0.3 - (apres - 0.45)) / 0.3 * 150.0) as u8;
+        toile.rect(0, 0, l, h, [255, 226, 150], a);
     }
 }

@@ -12,6 +12,7 @@ mod especes;
 mod fond;
 mod jeu;
 mod journal;
+mod maj;
 mod poisson;
 mod sauve;
 mod scene;
@@ -34,6 +35,8 @@ Options (tests) :
   --planche-geantes X.png         créatures énormes et colossales à taille réelle, x2
   --alignement X.png              toutes les espèces à leur taille en 1920x1080 (tailles relatives)
   --planche-images X.png cle,cle  images d'animation des espèces données, x4
+  --planche-formes X.png cle,cle [--modifs]  normal et shiny (ou les 7 modificateurs), x2
+  --planche-demi-tour X.png cle   demi-tour image par image (0,1 s), x4
   --demo                          aquarium pré-rempli (raretés et espèces variées)
   --taille 1920x1080              taille de la capture / vidéo
   --ecrans 1920x1080+0+0,...      écrans simulés (capture / vidéo), le premier est le principal
@@ -108,6 +111,20 @@ fn lancer() -> Result<(), String> {
     }
     if let Some(f) = valeur("--alignement") {
         return capture::alignement(&PathBuf::from(f), o.secondes.min(3.0));
+    }
+    if let Some(f) = valeur("--planche-formes") {
+        let cles = valeur(&f).unwrap_or_default();
+        let cles: Vec<&str> = cles.split(',').filter(|c| !c.is_empty()).collect();
+        return capture::planche_formes(
+            &PathBuf::from(&f),
+            &cles,
+            a("--modifs"),
+            o.secondes.min(3.0),
+        );
+    }
+    if let Some(f) = valeur("--planche-demi-tour") {
+        let cle = valeur(&f).unwrap_or_default();
+        return capture::planche_demi_tour(&PathBuf::from(&f), &cle);
     }
     if let Some(f) = valeur("--planche-images") {
         let cles = valeur(&f).unwrap_or_default();
