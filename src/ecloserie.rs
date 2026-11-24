@@ -16,6 +16,8 @@ use eframe::egui::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod decor_ui;
+
 /// Jetons de couleur.
 pub const EAU: Color32 = Color32::from_rgb(0x10, 0x32, 0x4a);
 const VERRE: Color32 = Color32::from_rgb(0x16, 0x45, 0x60);
@@ -119,6 +121,7 @@ pub enum Onglet {
     Oeufs,
     Aquarium,
     Poissodex,
+    Decor,
     Reglages,
 }
 
@@ -160,6 +163,10 @@ pub struct Ecloserie {
     pub maj: Option<crate::maj::Maj>,
     /// Nouvelle version installée : à relancer à la fermeture.
     pub relancer: Option<std::path::PathBuf>,
+    /// Écrans de l'aquarium et échelle (éditeur du décor), donnés par l'appli.
+    pub disposition: Option<(crate::ecrans::Disposition, u32)>,
+    /// Onglet Décor (boutique, éditeur).
+    pub decor: decor_ui::EtatDecor,
 }
 
 impl Ecloserie {
@@ -179,6 +186,8 @@ impl Ecloserie {
             windows: cfg!(windows),
             maj: None,
             relancer: None,
+            disposition: None,
+            decor: Default::default(),
         }
     }
 
@@ -304,6 +313,7 @@ impl Ecloserie {
                     Onglet::Oeufs => self.onglet_oeufs(ui, p, maintenant),
                     Onglet::Aquarium => self.onglet_aquarium(ui, p),
                     Onglet::Poissodex => self.onglet_dex(ui, p),
+                    Onglet::Decor => self.onglet_decor(ui, p),
                     Onglet::Reglages => self.onglet_reglages(ui, p),
                 }
             });
@@ -355,6 +365,7 @@ impl Ecloserie {
                 (Onglet::Oeufs, "Œufs"),
                 (Onglet::Aquarium, "Mon aquarium"),
                 (Onglet::Poissodex, "Index"),
+                (Onglet::Decor, "Décor"),
                 (Onglet::Reglages, "Réglages"),
             ] {
                 let actif = self.onglet == o;
@@ -995,6 +1006,29 @@ impl Ecloserie {
                     &mut |ui| section_maj(ui, m),
                 );
             }
+            ligne(
+                ui,
+                "Décor",
+                "Le décor du fond de l'aquarium (les objets achetés restent posés).",
+                &mut |ui| {
+                    for (i, nom) in crate::decor::THEMES.iter().enumerate() {
+                        ui.radio_value(&mut r.theme, i as u8, *nom);
+                    }
+                },
+            );
+            ligne(
+                ui,
+                "Poissons et souris",
+                "Garde le clic appuyé un instant sur un poisson (bureau vide, pas sur une icône) \
+                 pour l'attraper et le déplacer ; un clic bref montre sa fiche.",
+                &mut |ui| {
+                    ui.checkbox(&mut r.attraper, "Attraper les poissons");
+                    ui.add_enabled(
+                        r.attraper,
+                        egui::Checkbox::new(&mut r.attraper_alt, "Seulement avec Alt"),
+                    );
+                },
+            );
             ligne(
                 ui,
                 "Teinte de l'eau",

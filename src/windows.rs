@@ -164,6 +164,11 @@ impl Systeme {
         }
     }
 
+    /// Fenêtre du calque (le curseur au-dessus d'elle est sur le bureau).
+    pub fn calque_hwnd(&self) -> HWND {
+        self.calque.hwnd
+    }
+
     pub fn presenter(&self, toile: &crate::toile::Toile, e: usize) {
         self.calque.presenter(toile, e);
     }
@@ -287,7 +292,7 @@ fn journal_version() {
     ));
 }
 
-fn classe_de(h: HWND) -> String {
+pub fn classe_de(h: HWND) -> String {
     let mut c = [0u16; 64];
     let n = unsafe { GetClassNameW(h, c.as_mut_ptr(), c.len() as i32) } as usize;
     String::from_utf16_lossy(&c[..n])

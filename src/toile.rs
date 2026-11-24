@@ -260,6 +260,13 @@ fn glyphe(c: char) -> &'static str {
         'Ê' | 'ê' => ".#.|###|#..|##.|#..|###",
         'À' | 'à' => "#..|.#.|#.#|###|#.#|#.#",
         c if c.is_ascii_lowercase() => glyphe(c.to_ascii_uppercase()),
+        // Lettres accentuées sans glyphe propre : la lettre de base.
+        'Â' | 'â' | 'Ä' | 'ä' => glyphe('A'),
+        'Ë' | 'ë' => glyphe('E'),
+        'Î' | 'î' | 'Ï' | 'ï' => glyphe('I'),
+        'Ô' | 'ô' => glyphe('O'),
+        'Û' | 'û' | 'Ù' | 'ù' | 'Ü' | 'ü' => glyphe('U'),
+        '&' => ".#.|#.#|.#.|#.#|.##",
         'A' => ".#.|#.#|###|#.#|#.#",
         'B' => "##.|#.#|##.|#.#|##.",
         'C' | 'Ç' | 'ç' => ".##|#..|#..|#..|.##",
@@ -360,6 +367,22 @@ mod tests {
     fn police_couvre_le_compteur() {
         for c in "0123456789,.+-/: kMdBnTQe!'ABCDEFGHIJKLMNOPQRSTUVWXYZéèêàçœö".chars() {
             assert_ne!(glyphe(c), glyphe('\u{1}'), "glyphe manquant : {c}");
+        }
+        // Fiche d'un poisson (v0.9) : noms d'espèces, raretés et modificateurs.
+        let mut noms: Vec<String> = crate::especes::catalogue()
+            .iter()
+            .map(|e| e.nom.to_string())
+            .collect();
+        noms.extend(
+            crate::jeu::Rarete::TOUTES
+                .iter()
+                .map(|r| r.nom().to_string()),
+        );
+        noms.extend(crate::jeu::Modif::TOUS.iter().map(|m| m.nom().to_string()));
+        for n in noms {
+            for c in police(&n) {
+                assert_ne!(glyphe(c), glyphe('\u{1}'), "glyphe manquant : {c} ({n})");
+            }
         }
         assert_eq!(largeur_texte("1"), 3);
         assert_eq!(largeur_texte("M"), 5);

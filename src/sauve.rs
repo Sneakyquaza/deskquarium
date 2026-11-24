@@ -257,4 +257,44 @@ mod tests {
         let (r, _) = charger(&d);
         assert_eq!(r.index, q.index);
     }
+
+    #[test]
+    fn sauvegarde_v08_migree_avec_decor_vide() {
+        // Format v0.8 (version 4) : ni thème, ni souris, ni objets de décor.
+        let d = dossier_test("v08");
+        let json = r#"{"version":4,"argent":50.0,"total_gagne":50.0,"horodatage":1700000000,
+            "prochain_id":2,"alea":9,"poissons":[
+            {"id":1,"graine":11,"rarete":"Commun","taille":1.0,"niveau":1,"actif":true,"oeuf":0,"espece":"clown","variante":0,"shiny":true}],
+            "oeufs_ouverts":[1,0,0,0,0],"eclos":[1,0,0,0,0,0,0,0,0],
+            "vus":{"clown":1},"index":{"clown":257},"reglages":{"abysses":true}}"#;
+        std::fs::write(fichier(&d), json).unwrap();
+        let (q, msg) = charger(&d);
+        assert!(msg.is_none(), "{msg:?}");
+        assert_eq!(q.version, crate::jeu::VERSION);
+        assert!(q.poissons[0].shiny && q.reglages.abysses);
+        assert_eq!(q.reglages.theme, 0);
+        assert!(q.reglages.attraper && !q.reglages.attraper_alt);
+        assert!(q.decor_achete.is_empty() && q.decor_pose.is_empty());
+        // Décor abîmé : objet inconnu, plus de posés que d'achetés, x hors limite, thème
+        // inconnu → nettoyé sans rien perdre d'autre.
+        let json = json.replace(
+            r#""reglages":{"abysses":true}"#,
+            r#""reglages":{"theme":42},"decor_achete":{"coffre":1,"truc":3},
+            "decor_pose":[{"objet":"coffre","ecran":3,"x":7.0},{"objet":"coffre","x":0.2},
+            {"objet":"truc","x":0.5}]"#,
+        );
+        std::fs::write(fichier(&d), json).unwrap();
+        let (q, msg) = charger(&d);
+        assert!(msg.is_none(), "{msg:?}");
+        assert_eq!(q.reglages.theme as usize, crate::decor::THEMES.len() - 1);
+        assert_eq!(q.decor_achete.len(), 1);
+        assert_eq!(q.decor_pose.len(), 1);
+        assert_eq!(q.decor_pose[0].x, 1.0);
+        assert_eq!(q.decor_pose[0].ecran, 3);
+        // Aller-retour : le décor est gardé.
+        ecrire(&d, &q).unwrap();
+        let (r, _) = charger(&d);
+        assert_eq!(r.decor_pose, q.decor_pose);
+        assert_eq!(r.decor_achete, q.decor_achete);
+    }
 }

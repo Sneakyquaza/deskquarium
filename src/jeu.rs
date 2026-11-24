@@ -371,6 +371,12 @@ pub struct Reglages {
     pub equiper_auto: bool,
     /// Mode Abysses : aquarium sombre des grands fonds.
     pub abysses: bool,
+    /// v0.9 : décor à thème (index de `decor::THEMES`, 0 = récif corallien).
+    pub theme: u8,
+    /// v0.9 (Windows) : attraper un poisson au bureau (clic maintenu sur un poisson).
+    pub attraper: bool,
+    /// v0.9 : attraper seulement en tenant Alt (sécurité).
+    pub attraper_alt: bool,
 }
 
 impl Default for Reglages {
@@ -385,6 +391,9 @@ impl Default for Reglages {
             incrustation: 0,
             equiper_auto: false,
             abysses: false,
+            theme: 0,
+            attraper: true,
+            attraper_alt: false,
         }
     }
 }
@@ -415,11 +424,32 @@ pub struct Partie {
     complets: usize,
     #[serde(default)]
     pub reglages: Reglages,
+    /// v0.9 : objets de décor achetés (exemplaires par clé de `decor::OBJETS`).
+    #[serde(default)]
+    pub decor_achete: BTreeMap<String, u32>,
+    /// v0.9 : objets posés dans l'aquarium.
+    #[serde(default)]
+    pub decor_pose: Vec<Pose>,
+}
+
+/// Objet de décor posé (v0.9) : sur l'écran `ecran` (0 = principal, ordre de
+/// `ecrans::Disposition`), à `x` = fraction de la largeur de cet écran ; la hauteur suit le
+/// sable. Un écran débranché : l'objet va sur le principal (même fraction).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Pose {
+    pub objet: String,
+    #[serde(default)]
+    pub ecran: u8,
+    pub x: f32,
+    #[serde(default)]
+    pub miroir: bool,
 }
 
 /// Version du format de sauvegarde (2 = espèces, 3 = rareté Préhistorique et œuf d'ambre,
-/// 4 = shiny, modificateurs et index).
-pub const VERSION: u32 = 4;
+/// 4 = shiny, modificateurs et index, 5 = décor à thème et objets de décor).
+pub const VERSION: u32 = 5;
+/// Exemplaires au plus d'un même objet de décor.
+pub const MAX_EXEMPLAIRES: u32 = 8;
 
 #[derive(Debug, PartialEq)]
 pub enum Refus {
@@ -446,6 +476,8 @@ impl Partie {
             index: BTreeMap::new(),
             complets: 0,
             reglages: Reglages::default(),
+            decor_achete: BTreeMap::new(),
+            decor_pose: Vec::new(),
         };
         let id = p.ajouter(Rarete::Commun, 1.0, 0);
         // Le poisson offert est toujours normal (départ identique pour tout le monde).
@@ -575,6 +607,25 @@ impl Partie {
             *self.index.entry(f.espece.clone()).or_default() |= bits_index(f.forme());
         }
         self.recompter_index();
+        // Version 5 : décor. Objets inconnus retirés, jamais plus de posés que d'achetés.
+        self.decor_achete
+            .retain(|k, n| crate::decor::objet(k).is_some() && *n > 0);
+        let mut poses: BTreeMap<String, u32> = BTreeMap::new();
+        let achete = &self.decor_achete;
+        self.decor_pose.retain_mut(|p| {
+            let n = poses.entry(p.objet.clone()).or_default();
+            *n += 1;
+            p.x = if p.x.is_finite() {
+                p.x.clamp(0.0, 1.0)
+            } else {
+                0.5
+            };
+            *n <= achete.get(&p.objet).copied().unwrap_or(0)
+        });
+        self.reglages.theme = self
+            .reglages
+            .theme
+            .min(crate::decor::THEMES.len() as u8 - 1);
         self.version = self.version.max(VERSION);
     }
 
@@ -714,6 +765,50 @@ impl Partie {
             return Err(Refus::AquariumPlein);
         }
         p.actif = !p.actif;
+        Ok(())
+    }
+
+    /// Prix du prochain exemplaire d'un objet de décor (×1,6 par exemplaire déjà acheté).
+    pub fn prix_objet(&self, cle: &str) -> Option<f64> {
+        let o = crate::decor::objet(cle)?;
+        Some(o.prix * 1.6f64.powi(self.nb_achetes(cle) as i32))
+    }
+
+    pub fn nb_achetes(&self, cle: &str) -> u32 {
+        self.decor_achete.get(cle).copied().unwrap_or(0)
+    }
+
+    /// Exemplaires achetés pas encore posés.
+    pub fn nb_libres(&self, cle: &str) -> u32 {
+        let poses = self.decor_pose.iter().filter(|p| p.objet == cle).count() as u32;
+        self.nb_achetes(cle).saturating_sub(poses)
+    }
+
+    pub fn acheter_objet(&mut self, cle: &str) -> Result<(), Refus> {
+        let prix = self.prix_objet(cle).ok_or(Refus::Introuvable)?;
+        if self.nb_achetes(cle) >= MAX_EXEMPLAIRES {
+            return Err(Refus::NiveauMax);
+        }
+        if self.argent < prix {
+            return Err(Refus::PasAssez);
+        }
+        self.argent -= prix;
+        *self.decor_achete.entry(cle.to_string()).or_default() += 1;
+        Ok(())
+    }
+
+    /// Pose un exemplaire libre de l'objet sur l'écran `ecran`, à la fraction `x`.
+    pub fn poser_objet(&mut self, cle: &str, ecran: u8, x: f32) -> Result<(), Refus> {
+        if self.nb_libres(cle) == 0 {
+            return Err(Refus::Introuvable);
+        }
+        let miroir = self.decor_pose.len() % 2 == 1;
+        self.decor_pose.push(Pose {
+            objet: cle.to_string(),
+            ecran,
+            x: x.clamp(0.0, 1.0),
+            miroir,
+        });
         Ok(())
     }
 
@@ -922,6 +1017,53 @@ pub fn simuler(heures: f64, graine: u64) -> Vec<Jalon> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decor_prix_et_achats() {
+        use crate::decor::OBJETS;
+        // Du moins cher (premières minutes) au plus cher (fin de partie, après l'œuf d'ambre).
+        assert!(OBJETS.windows(2).all(|w| w[0].prix < w[1].prix));
+        assert!(OBJETS[0].prix <= 200.0);
+        assert!(OBJETS[OBJETS.len() - 1].prix >= OEUFS[OEUFS.len() - 1].prix);
+        let mut p = Partie::nouvelle(0, 1);
+        assert_eq!(p.acheter_objet("cailloux"), Err(Refus::PasAssez));
+        assert_eq!(p.acheter_objet("inconnu"), Err(Refus::Introuvable));
+        p.argent = 1e9;
+        let p0 = p.prix_objet("crane").unwrap();
+        p.acheter_objet("crane").unwrap();
+        assert!((p.argent - (1e9 - p0)).abs() < 1e-6);
+        assert!(p.prix_objet("crane").unwrap() > p0 * 1.5);
+        assert_eq!(p.nb_libres("crane"), 1);
+        p.poser_objet("crane", 1, 0.4).unwrap();
+        assert_eq!(p.nb_libres("crane"), 0);
+        assert_eq!(p.poser_objet("crane", 0, 0.5), Err(Refus::Introuvable));
+        for _ in 1..MAX_EXEMPLAIRES {
+            p.acheter_objet("crane").unwrap();
+        }
+        assert_eq!(p.acheter_objet("crane"), Err(Refus::NiveauMax));
+        // Le décor ne change pas les gains.
+        let r = p.revenu_par_s();
+        p.poser_objet("crane", 0, 0.9).unwrap();
+        assert_eq!(p.revenu_par_s(), r);
+    }
+
+    #[test]
+    fn themes_et_objets_complets() {
+        use crate::decor::{decor, OBJETS, THEMES};
+        let d = decor();
+        assert_eq!(THEMES.len(), 6);
+        assert_eq!(d.themes.len(), THEMES.len());
+        assert_eq!(d.objets.len(), OBJETS.len());
+        for t in &d.themes {
+            assert!(t.grands.len() >= 2 && t.petits.len() >= 3 && !t.algues.is_empty());
+        }
+        // Clés uniques (elles sont sauvegardées).
+        for (i, o) in OBJETS.iter().enumerate() {
+            assert!(OBJETS[i + 1..].iter().all(|b| b.cle != o.cle), "{}", o.cle);
+        }
+        // Volcan : des pixels qui luisent.
+        assert!(!crate::decor::points_lumineux(&d.themes[3].grands[0]).is_empty());
+    }
 
     #[test]
     fn tables_somment_a_100() {

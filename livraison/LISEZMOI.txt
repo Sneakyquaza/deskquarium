@@ -1,4 +1,4 @@
-AQUARIUM v0.8 - fond d'écran aquarium pixel art + petit jeu idle (Windows 10/11, 64 bits)
+AQUARIUM v0.9 - fond d'écran aquarium pixel art + petit jeu idle (Windows 10/11, 64 bits)
 
 MISES À JOUR (depuis la v0.8)
 - Plus besoin de dézipper : l'appli se met à jour elle-même depuis
@@ -12,6 +12,38 @@ MISES À JOUR (depuis la v0.8)
   n'est changé : l'ancienne version reste en place. Le dossier de l'exe doit être
   modifiable (pas dans C:\Program Files) ; sinon, télécharge le zip sur la page ci-dessus.
 - Seule la demande envoyée à GitHub (« aquarium-maj », sans donnée personnelle) sort de ton PC.
+
+NOUVEAU (v0.9) : LES POISSONS ET LA SOURIS
+- Laisse le curseur immobile sur le bureau près des poissons : les curieux viennent voir
+  doucement. Un coup de souris rapide les fait fuir un instant. Les grandes créatures
+  réagissent moins, les géantes pas du tout. Seulement quand le curseur est sur le bureau
+  (pas sur une autre fenêtre).
+- Attraper un poisson : sur le bureau VIDE (pas sur une icône), garde le clic gauche appuyé
+  un instant (0,2 s) sur un poisson : il gigote et suit le curseur ; relâche, il repart de là.
+- Un clic bref sur un poisson montre sa fiche 3 s (nom, rareté, shiny ou modificateur,
+  revenu par seconde). Le clic arrive quand même au bureau (il désélectionne les icônes
+  comme d'habitude).
+- Le bureau marche comme avant : sur une icône, rien ne change ; un clic glissé qui démarre
+  tout de suite trace toujours le rectangle de sélection ; pendant qu'un poisson est tenu, le
+  bureau ne reçoit pas le clic (pas de rectangle de sélection).
+- Réglages > Poissons et souris : « Attraper les poissons » (désactivé = plus aucune
+  surveillance des clics) et « Seulement avec Alt » (n'attrape que si Alt est tenu).
+- Comment : l'aquarium surveille la souris avec un crochet souris Windows (WH_MOUSE_LL), sans
+  rien enregistrer ni envoyer. Un antivirus peut le signaler comme « surveillance de la
+  souris » : c'est ce crochet.
+
+NOUVEAU (v0.9) : LE DÉCOR
+- Réglages > Décor : 6 décors (Récif corallien, Épave & trésor, Ruines englouties, Abysses
+  volcaniques avec cheminées qui luisent, Forêt de kelp, Cimetière marin).
+- Écloserie > Décor > Boutique : 14 objets à acheter avec l'argent du jeu (cailloux, crâne,
+  anémone, amphores, algue lumineuse, ancre, corail rare, casque de scaphandrier, coffre au
+  trésor qui fait des bulles, cristaux luisants, barque engloutie, geyser à bulles, statue,
+  château), du moins cher au plus cher ; jusqu'à 8 exemplaires de chacun. Le décor ne change
+  pas les gains.
+- Écloserie > Décor > Modifier le décor : l'aperçu de chaque écran ; glisse un objet pour le
+  déplacer (il reste posé sur le sable), clic droit (ou « Retirer ») pour le ranger,
+  « Retourner » pour l'inverser. Rien ne se pose devant le compteur. Les objets restent sur
+  leur écran ; un écran débranché : ils passent sur l'écran principal.
 
 LANCER
 - Décompresse le dossier où tu veux (par exemple Documents\aquarium) et lance aquarium.exe.
@@ -89,4 +121,7 @@ CE QUI N'A PAS ÉTÉ TESTÉ (version préparée sur un serveur Linux, sans Windo
   écrans de tailles ou d'échelles différentes, branchement ou débranchement en marche.
 - Écrans à mise à l'échelle (125 %, 150 %), fonds d'écran en diaporama ou Windows à la une.
 - Consommation processeur réelle (mesurée seulement sous Linux, voir le message d'accompagnement).
+- v0.9 : tout ce qui touche la souris au bureau (curseur, crochet souris, clic rendu au
+  bureau, recherche des icônes sous le curseur, écrans à échelles différentes). Si le bureau se
+  comporte bizarrement : Réglages > décoche « Attraper les poissons ».
 Si quelque chose ne marche pas, une capture d'écran et ta version de Windows aideront beaucoup.

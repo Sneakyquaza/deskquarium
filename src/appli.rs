@@ -82,6 +82,19 @@ struct Appli {
     /// Version annoncée dans l'infobulle de l'icône.
     #[cfg_attr(not(windows), allow(dead_code))]
     maj_annoncee: Option<String>,
+    /// Coin haut gauche de la toile dans le bureau virtuel (pixels physiques) : curseur.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    origine: (i32, i32),
+    /// Fenêtre de test : même règle d'appui que le crochet Windows (`souris.rs`).
+    pince: crate::souris::Pince,
+    /// Windows : crochet souris (attraper les poissons), voulu selon le réglage.
+    #[cfg(windows)]
+    crochet: Option<crate::crochet::Crochet>,
+    #[cfg(windows)]
+    crochet_voulu: Option<bool>,
+    /// Windows : dernière recherche d'icône sous le curseur (point, instant, icône ?).
+    #[cfg(windows)]
+    icone_vue: Option<((i32, i32), Instant, Option<bool>)>,
 }
 
 /// Captures automatiques de chaque onglet (tests sous Xvfb).
@@ -172,6 +185,14 @@ pub fn lancer(o: Options) -> Result<(), String> {
         mesure: (0, Instant::now(), Duration::ZERO),
         maj_le: None,
         maj_annoncee: None,
+        origine: (0, 0),
+        pince: crate::souris::Pince::default(),
+        #[cfg(windows)]
+        crochet: None,
+        #[cfg(windows)]
+        crochet_voulu: None,
+        #[cfg(windows)]
+        icone_vue: None,
     };
     // Ancienne version laissée par une mise à jour : supprimée.
     crate::maj::nettoyer();
@@ -344,6 +365,9 @@ impl Appli {
             (lp, hp)
         };
         let e = disp.echelle() as usize;
+        let (bx, by, _, _) = disp.boite();
+        self.origine = (bx, by);
+        self.ecloserie.disposition = Some((disp.clone(), e as u32));
         let (l, h) = ((lp as usize).div_ceil(e), (hp as usize).div_ceil(e));
         let refaire = self
             .aquarium
@@ -371,6 +395,121 @@ impl Appli {
         (lp as f32, hp as f32)
     }
 
+    /// Souris (v0.9) : curseur sur le bureau (curiosité, fuite) et poisson attrapé. Windows :
+    /// position par GetCursorPos (le fond ne reçoit aucun clic) et crochet souris ; fenêtre de
+    /// test : la souris d'egui, même règle (`souris.rs`).
+    fn souris(&mut self, ctx: &egui::Context, dt: f32, fige: bool) {
+        use crate::souris::Suite;
+        let Some(aq) = &mut self.aquarium else {
+            return;
+        };
+        let e = self.echelle as f32;
+        let r = &self.partie.reglages;
+        let attraper = r.attraper && !fige;
+        let mut suites: Vec<Suite> = Vec::new();
+        #[allow(unused_mut)]
+        let mut pos: Option<(f32, f32)> = None;
+        #[allow(unused_mut)]
+        let mut fait = false;
+        #[cfg(windows)]
+        if let Some(s) = &self.systeme {
+            fait = true;
+            // Crochet installé seulement si le réglage est actif (retiré sinon).
+            if self.crochet_voulu != Some(r.attraper) {
+                self.crochet_voulu = Some(r.attraper);
+                self.crochet = None;
+                if r.attraper {
+                    self.crochet = crate::crochet::Crochet::demarrer();
+                }
+            }
+            let cur = crate::crochet::curseur_bureau(s.calque_hwnd());
+            pos = cur.map(|(pt, _)| {
+                (
+                    (pt.x - self.origine.0) as f32 / e,
+                    (pt.y - self.origine.1) as f32 / e,
+                )
+            });
+            // Poisson attrapable sous le curseur, sur le bureau vide : publié au crochet.
+            let mut arme = None;
+            if let (true, Some((pt, liste)), Some(p)) = (attraper, cur, pos) {
+                if let Some(id) = aq.poisson_sous(p, true).filter(|_| !aq.en_prise()) {
+                    // Icône sous le curseur : 10 recherches par seconde au plus.
+                    let icone = match self.icone_vue {
+                        Some((q, t, v))
+                            if (q.0 - pt.x).abs() <= 3
+                                && (q.1 - pt.y).abs() <= 3
+                                && t.elapsed() < Duration::from_millis(100) =>
+                        {
+                            v
+                        }
+                        _ => {
+                            let v = crate::crochet::icone_sous(liste, pt);
+                            self.icone_vue = Some(((pt.x, pt.y), Instant::now(), v));
+                            v
+                        }
+                    };
+                    if icone == Some(false) {
+                        arme = Some((pt.x, pt.y, id));
+                    }
+                }
+            }
+            crate::crochet::armer(arme, r.attraper_alt);
+            if let Some(c) = &self.crochet {
+                suites = c.suites();
+            }
+        }
+        if !fait {
+            // Fenêtre de test : pixels physiques de la fenêtre.
+            let ppp = ctx.pixels_per_point();
+            let (survol, t, evts) = ctx.input(|i| {
+                let evts: Vec<(egui::Pos2, bool)> = i
+                    .events
+                    .iter()
+                    .filter_map(|ev| match ev {
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            ..
+                        } => Some((*pos, *pressed)),
+                        _ => None,
+                    })
+                    .collect();
+                (i.pointer.hover_pos(), (i.time * 1000.0) as u32, evts)
+            });
+            pos = survol.map(|p| (p.x * ppp / e, p.y * ppp / e));
+            let px = |p: egui::Pos2| ((p.x * ppp) as i32, (p.y * ppp) as i32);
+            if let Some(p) = survol {
+                let (x, y) = px(p);
+                suites.push(self.pince.mouvement(t, x, y).1);
+            }
+            for (p, appui) in evts {
+                let (x, y) = px(p);
+                suites.push(if appui {
+                    let alt_ok = !r.attraper_alt || ctx.input(|i| i.modifiers.alt);
+                    let id = aq
+                        .poisson_sous((p.x * ppp / e, p.y * ppp / e), true)
+                        .filter(|_| attraper && alt_ok);
+                    self.pince.appui(t, x, y, id).1
+                } else {
+                    self.pince.relache(t).1
+                });
+            }
+        }
+        for s in suites {
+            match s {
+                Suite::Appui(id) => aq.appuyer(id),
+                Suite::RendreAppui(..) => aq.annuler(),
+                Suite::Clic(id) => aq.cliquer(id),
+                Suite::Lache => aq.lacher(),
+                Suite::Rien => {}
+            }
+        }
+        if !fige {
+            aq.curseur(pos, dt);
+        }
+    }
+
     fn charger_fond(&self, d: &Disposition, l: u32, h: u32) -> image::RgbaImage {
         #[cfg(windows)]
         if !self.fenetre {
@@ -393,7 +532,7 @@ impl Appli {
             return;
         };
         let t = ui.input(|i| i.time);
-        let etapes: [(f64, &str); 10] = [
+        let etapes: [(f64, &str); 13] = [
             (1.0, "ecloserie-oeufs"),
             (1.5, "achat"),
             (3.3, "ecloserie-eclosion"),
@@ -403,7 +542,10 @@ impl Appli {
             (9.5, "ecloserie-index-dore"),
             (10.5, "ecloserie-index-shiny"),
             (11.5, "ecloserie-reglages"),
-            (12.5, "fin"),
+            (12.0, "decor-achats"),
+            (12.8, "ecloserie-decor-boutique"),
+            (13.8, "ecloserie-decor-editeur"),
+            (14.8, "fin"),
         ];
         let Some(&(_, nom)) = etapes.get(c.etape) else {
             return;
@@ -435,6 +577,28 @@ impl Appli {
                     self.ecloserie.forcer_forme(&mut self.partie, forme);
                 }
             }
+            "decor-achats" => {
+                // Quelques objets achetés et posés (boutique et éditeur montrent un vrai décor).
+                self.partie.argent = 1e15;
+                for cle in [
+                    "coffre",
+                    "algue_lumineuse",
+                    "statue",
+                    "geyser",
+                    "crane",
+                    "cristaux",
+                ] {
+                    let _ = self.partie.acheter_objet(cle);
+                }
+                self.partie.decor_pose.clear();
+                for (i, cle) in ["coffre", "algue_lumineuse", "statue", "geyser", "cristaux"]
+                    .iter()
+                    .enumerate()
+                {
+                    let _ = self.partie.poser_objet(cle, 0, 0.12 + i as f32 * 0.2);
+                }
+                self.partie.argent = 2.4e10;
+            }
             "fin" => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
             _ => {
                 // La capture prend l'image suivante : l'onglet change d'abord.
@@ -449,6 +613,10 @@ impl Appli {
                         Onglet::Poissodex
                     }
                     "ecloserie-reglages" => Onglet::Reglages,
+                    "ecloserie-decor-boutique" | "ecloserie-decor-editeur" => {
+                        self.ecloserie.decor.editeur = nom == "ecloserie-decor-editeur";
+                        Onglet::Decor
+                    }
                     _ => self.ecloserie.onglet,
                 };
                 ui.ctx()
@@ -606,6 +774,7 @@ impl eframe::App for Appli {
         }
         let (lp, hp) = self.preparer(ui);
         let e = self.echelle;
+        self.souris(&ctx, dt as f32, fige);
         if let Some(aq) = &mut self.aquarium {
             aq.synchroniser(&self.partie);
             if !fige || self.toile_tex.is_none() {

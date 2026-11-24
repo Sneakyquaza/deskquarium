@@ -124,6 +124,10 @@ pub struct Options {
     pub ecrans: Option<String>,
     /// Mode Abysses.
     pub abysses: bool,
+    /// v0.9 : décor à thème (index de `decor::THEMES`).
+    pub theme: Option<u8>,
+    /// v0.9 : objets de décor posés (clés), répartis sur l'écran principal.
+    pub objets: Vec<String>,
 }
 
 type Prepare = (
@@ -160,6 +164,16 @@ fn preparer(o: &Options) -> Result<Prepare, String> {
         crate::sauve::charger(&crate::sauve::dossier()).0
     };
     partie.reglages.abysses |= o.abysses;
+    if let Some(t) = o.theme {
+        partie.reglages.theme = t;
+    }
+    for (i, cle) in o.objets.iter().enumerate() {
+        *partie.decor_achete.entry(cle.clone()).or_default() += 1;
+        let x = (i as f32 + 0.5) / o.objets.len() as f32;
+        partie
+            .poser_objet(cle, 0, x)
+            .map_err(|_| format!("objet de décor inconnu : {cle}"))?;
+    }
     let d = match &o.ecrans {
         Some(t) => Disposition::depuis_texte(t)?,
         None => Disposition::simple(o.largeur, o.hauteur),
@@ -697,4 +711,160 @@ fn creer_dossier(f: &Path) -> Result<(), String> {
         std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Planche de la souris (v0.9) : curiosité (curseur immobile), fuite (coup rapide), poisson
+/// attrapé qui suit le curseur puis lâché, fiche après un clic. Recadrages à taille écran, le
+/// curseur dessiné en flèche blanche.
+pub fn planche_souris(o: &Options, sortie: &Path) -> Result<(), String> {
+    let (mut partie, mut aq, fond, e, _, _) = preparer(o)?;
+    let dt = 1.0 / 30.0;
+    let mut cases: Vec<(String, image::RgbaImage)> = Vec::new();
+    fn pas(aq: &mut Aquarium, partie: &mut Partie, c: Option<(f32, f32)>, dt: f32) {
+        partie.avancer(dt as f64);
+        aq.curseur(c, dt);
+        aq.avancer(dt);
+    }
+    for _ in 0..30 * 30 {
+        pas(&mut aq, &mut partie, None, dt);
+    }
+    let (lw, hw) = (aq.toile.l as f32, aq.toile.h as f32);
+    // Poisson moyen ou petit le plus près du centre.
+    let cible = |aq: &Aquarium| {
+        aq.nageurs
+            .iter()
+            .filter(|n| n.sprite.taille <= Taille::Moyenne && n.sprite.taille.profondeur() == 0.0)
+            .min_by(|a, b| {
+                let d = |n: &Nageur| (n.x - lw * 0.45).hypot(n.y - hw * 0.45);
+                d(a).total_cmp(&d(b))
+            })
+            .map(|n| (n.id, n.x, n.y))
+    };
+    let mut cliche = |aq: &mut Aquarium, partie: &Partie, nom: &str, c: (f32, f32)| {
+        aq.dessiner(partie);
+        let img = fond::composer(&fond, &aq.toile, e);
+        let (cl, ch) = (170 * e as i32, 100 * e as i32);
+        let x0 = ((c.0 * e as f32) as i32 - cl / 2).clamp(0, img.width() as i32 - cl);
+        let y0 = ((c.1 * e as f32) as i32 - ch / 2).clamp(0, img.height() as i32 - ch);
+        let mut r =
+            image::imageops::crop_imm(&img, x0 as u32, y0 as u32, cl as u32, ch as u32).to_image();
+        // Flèche du curseur (pointe en haut à gauche), contour noir.
+        let (px, py) = ((c.0 * e as f32) as i32 - x0, (c.1 * e as f32) as i32 - y0);
+        for y in 0..22 {
+            for x in 0..=y.min(14) {
+                let bord = x == 0 || x == y.min(14) || y == 21;
+                let (u, v) = (px + x, py + y);
+                if u >= 0 && v >= 0 && (u as u32) < r.width() && (v as u32) < r.height() {
+                    let c = if bord {
+                        [0, 0, 0, 255]
+                    } else {
+                        [255, 255, 255, 255]
+                    };
+                    r.put_pixel(u as u32, v as u32, image::Rgba(c));
+                }
+            }
+        }
+        cases.push((nom.to_string(), r));
+    };
+    // Curiosité et fuite : là où il y a le plus de petits poissons ensemble.
+    let petits: Vec<(f32, f32)> = aq
+        .nageurs
+        .iter()
+        .filter(|n| n.sprite.taille <= Taille::Moyenne && n.sprite.taille.profondeur() == 0.0)
+        .map(|n| (n.x, n.y))
+        .collect();
+    let Some(&(x, y)) = petits.iter().max_by_key(|a| {
+        petits
+            .iter()
+            .filter(|b| (a.0 - b.0).hypot(a.1 - b.1) < 70.0)
+            .count()
+    }) else {
+        return Err("aucun poisson à montrer".into());
+    };
+    // 1. Curseur immobile près d'un poisson : les curieux s'approchent.
+    let c = (x + 30.0, y - 6.0);
+    cliche(&mut aq, &partie, "1 CURSEUR IMMOBILE 0 S", c);
+    for k in 0..90 {
+        pas(&mut aq, &mut partie, Some(c), dt);
+        if k == 44 {
+            cliche(&mut aq, &partie, "2 CURIEUX 1,5 S", c);
+        }
+    }
+    cliche(&mut aq, &partie, "3 CURIEUX 3 S", c);
+    // 2. Coup de souris rapide à travers eux : ils fuient.
+    for k in 0..9 {
+        let cc = (c.0 - 70.0 + k as f32 * 17.5, c.1);
+        pas(&mut aq, &mut partie, Some(cc), dt);
+    }
+    let c2 = (c.0 + 70.0, c.1);
+    cliche(&mut aq, &partie, "4 COUP RAPIDE : FUITE", c);
+    for _ in 0..15 {
+        pas(&mut aq, &mut partie, Some(c2), dt);
+    }
+    cliche(&mut aq, &partie, "5 FUITE 0,5 S", c);
+    for _ in 0..60 {
+        pas(&mut aq, &mut partie, None, dt);
+    }
+    // 3. Appui maintenu sur un poisson : attrapé, il suit le curseur en gigotant.
+    let Some((id, x, y)) = cible(&aq) else {
+        return Err("aucun poisson à attraper".into());
+    };
+    aq.appuyer(id);
+    let mut c = (x, y);
+    for _ in 0..8 {
+        pas(&mut aq, &mut partie, Some(c), dt);
+    }
+    cliche(&mut aq, &partie, "6 ATTRAPÉ APRÈS 0,25 S", c);
+    for k in 0..30 {
+        c = (x + k as f32 * 2.5, y - k as f32 * 1.2);
+        pas(&mut aq, &mut partie, Some(c), dt);
+        if k == 14 {
+            cliche(&mut aq, &partie, "7 TENU, IL SUIT", c);
+        }
+    }
+    cliche(&mut aq, &partie, "8 TENU 1 S", c);
+    aq.lacher();
+    for _ in 0..30 {
+        pas(&mut aq, &mut partie, Some(c), dt);
+    }
+    cliche(&mut aq, &partie, "9 LÂCHÉ, IL REPART", c);
+    // 4. Clic bref : la fiche du poisson.
+    if let Some((id, x, y)) = cible(&aq) {
+        aq.cliquer(id);
+        for _ in 0..10 {
+            pas(&mut aq, &mut partie, Some((x, y)), dt);
+        }
+        // Recadré un peu au-dessus du poisson : la fiche est au-dessus de lui.
+        let n = aq
+            .nageurs
+            .iter()
+            .find(|n| n.id == id)
+            .map_or((x, y), |n| (n.x, n.y - 20.0));
+        cliche(&mut aq, &partie, "10 CLIC : FICHE", n);
+    }
+    // Planche : 3 colonnes, titre au-dessus de chaque case.
+    let (cl, ch) = (cases[0].1.width(), cases[0].1.height());
+    let bande = 12 * e as u32;
+    let n_col = 3;
+    let lignes = cases.len().div_ceil(n_col) as u32;
+    let mut out = image::RgbaImage::from_pixel(
+        cl * n_col as u32 + 8 * (n_col as u32 - 1),
+        (ch + bande + 8) * lignes,
+        image::Rgba([0x0a, 0x14, 0x24, 255]),
+    );
+    for (i, (nom, r)) in cases.iter().enumerate() {
+        let (x, y) = (
+            (i % n_col) as u32 * (cl + 8),
+            (i / n_col) as u32 * (ch + bande + 8),
+        );
+        let mut t = Toile::new((cl as usize).div_ceil(e), 12);
+        t.texte(2, 3, nom, [0xff, 0xea, 0xa8], 255, None);
+        let fond_titre =
+            image::RgbaImage::from_pixel(cl, bande, image::Rgba([0x0a, 0x14, 0x24, 255]));
+        let titre = fond::composer(&fond_titre, &t, e);
+        image::imageops::replace(&mut out, &titre, x as i64, y as i64);
+        image::imageops::replace(&mut out, r, x as i64, (y + bande) as i64);
+    }
+    creer_dossier(sortie)?;
+    out.save(sortie).map_err(|e| e.to_string())
 }

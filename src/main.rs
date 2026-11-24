@@ -5,6 +5,8 @@ mod appli;
 #[cfg(windows)]
 mod calque;
 mod capture;
+#[cfg(windows)]
+mod crochet;
 mod decor;
 mod ecloserie;
 mod ecrans;
@@ -16,6 +18,7 @@ mod maj;
 mod poisson;
 mod sauve;
 mod scene;
+mod souris;
 mod toile;
 #[cfg(windows)]
 mod windows;
@@ -41,6 +44,9 @@ Options (tests) :
   --taille 1920x1080              taille de la capture / vidéo
   --ecrans 1920x1080+0+0,...      écrans simulés (capture / vidéo), le premier est le principal
   --abysses                       mode Abysses (capture / vidéo)
+  --theme N                      décor à thème 0-5 (capture / vidéo)
+  --planche-souris X.png         curiosité, fuite, poisson attrapé, fiche (avec --demo)
+  --objets cle,cle               objets de décor posés (capture / vidéo)
   --fond image.png                fond d'écran sous l'aquarium (sinon fond factice)
   --captures-ecloserie DOSSIER    (avec --fenetre) captures de chaque onglet puis quitte
   --simulation                    jalons de l'équilibrage (docs/equilibrage.md)";
@@ -96,9 +102,23 @@ fn lancer() -> Result<(), String> {
         fond: valeur("--fond"),
         ecrans: valeur("--ecrans"),
         abysses: a("--abysses"),
+        theme: valeur("--theme")
+            .map(|s| s.parse().map_err(|_| "--theme : 0 à 5"))
+            .transpose()?,
+        objets: valeur("--objets")
+            .map(|s| {
+                s.split(',')
+                    .filter(|c| !c.is_empty())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default(),
     };
     if let Some(f) = valeur("--capture") {
         return capture::capture(&o, &PathBuf::from(f));
+    }
+    if let Some(f) = valeur("--planche-souris") {
+        return capture::planche_souris(&o, &PathBuf::from(f));
     }
     if let Some(f) = valeur("--video") {
         return capture::video(&o, &PathBuf::from(f));
