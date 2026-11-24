@@ -533,43 +533,50 @@ pub fn planche_demi_tour(sortie: &Path, cle: &str) -> Result<(), String> {
     n.forcer_cible((l as f32 - 4.0, h as f32 / 2.0));
     aq.nageurs.push(n);
     let p = Partie::nouvelle(0, 1);
-    let mut cases = Vec::new();
-    let mut demi_tour = false;
-    for k in 0..240 {
+    let mut cases: Vec<Toile> = Vec::new();
+    let long = aq.nageurs[0].corps_long();
+    // Repli : les 6 images d'avant le demi-tour puis la suite (le repli dure ~5 images). Corps
+    // long (jamais replié) : une image sur 6 pendant 8 s (il sort de l'écran et revient).
+    let mut vu_tour = false;
+    for k in 0..1200 {
         if k == 45 {
             aq.nageurs[0].forcer_cible((4.0, h as f32 / 2.0));
-            demi_tour = true;
         }
         aq.avancer(1.0 / 30.0);
-        if demi_tour && k % 3 == 0 && cases.len() < 16 {
-            aq.dessiner(&p);
-            let cx = aq.nageurs[0].x;
-            let mut c = Toile::new(cw as usize, chh as usize);
-            c.rect(0, 0, cw, chh, [0x18, 0x2c, 0x48], 255);
-            let (x0, y0) = (
-                ((cx - cw as f32 / 2.0) * f) as i32,
-                ((h as f32 - chh as f32) / 2.0 * f) as i32,
-            );
-            for y in 0..c.hf() as i32 {
-                for x in 0..c.lf() as i32 {
-                    let (sx, sy) = (x0 + x, y0 + y);
-                    if sx >= 0
-                        && sy >= 0
-                        && (sx as usize) < aq.toile.lf()
-                        && (sy as usize) < aq.toile.hf()
-                    {
-                        let px = aq.toile.px[sy as usize * aq.toile.lf() + sx as usize];
-                        if px[3] > 0 {
-                            let d = crate::toile::demultiplier(px);
-                            c.poser_fin(x, y, [d[0], d[1], d[2]], d[3]);
-                        }
+        if k < 45 || cases.len() >= 40 || (long && k % 6 != 0) {
+            continue;
+        }
+        vu_tour |= aq.nageurs[0].en_demi_tour();
+        aq.dessiner(&p);
+        let cx = aq.nageurs[0].x;
+        let mut c = Toile::new(cw as usize, chh as usize);
+        c.rect(0, 0, cw, chh, [0x18, 0x2c, 0x48], 255);
+        let (x0, y0) = (
+            ((cx - cw as f32 / 2.0) * f) as i32,
+            ((h as f32 - chh as f32) / 2.0 * f) as i32,
+        );
+        for y in 0..c.hf() as i32 {
+            for x in 0..c.lf() as i32 {
+                let (sx, sy) = (x0 + x, y0 + y);
+                if sx >= 0
+                    && sy >= 0
+                    && (sx as usize) < aq.toile.lf()
+                    && (sy as usize) < aq.toile.hf()
+                {
+                    let px = aq.toile.px[sy as usize * aq.toile.lf() + sx as usize];
+                    if px[3] > 0 {
+                        let d = crate::toile::demultiplier(px);
+                        c.poser_fin(x, y, [d[0], d[1], d[2]], d[3]);
                     }
                 }
             }
-            cases.push(c);
+        }
+        cases.push(c);
+        if !long && !vu_tour && cases.len() > 6 {
+            cases.remove(0);
         }
     }
-    let n_col = 8;
+    let n_col = 10;
     let lignes = cases.len().div_ceil(n_col);
     let mut t = Toile::new(cw as usize * n_col + n_col, (chh as usize + 8) * lignes);
     t.rect(0, 0, t.l as i32, t.h as i32, [0x0a, 0x14, 0x24], 255);
@@ -587,7 +594,7 @@ pub fn planche_demi_tour(sortie: &Path, cle: &str) -> Result<(), String> {
         t.texte(
             x + 2,
             y + 1,
-            &format!("{:.1} S", i as f32 * 0.1),
+            &format!("{}", i + 1),
             [0xff, 0xea, 0xa8],
             255,
             None,

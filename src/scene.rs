@@ -13,6 +13,8 @@ use std::sync::Arc;
 const EAU_LOIN: Rgb = [0x10, 0x3c, 0x58];
 /// Mode Abysses : eau des grands fonds, presque noire.
 const EAU_ABYSSE: Rgb = [0x03, 0x10, 0x20];
+/// Demi-tour : demi-durée du repli de la largeur (0,09 s de chaque côté : ~5 images à 30 i/s).
+const REPLI: f32 = 0.09;
 
 /// Échelle entière toile → écran : ~480 pixels monde en largeur ; toujours paire (les
 /// sprites sont posés au pixel fin, la moitié d'un pixel monde).
@@ -1110,6 +1112,20 @@ impl Nageur {
             }
     }
 
+    /// Corps long (anguilles, serpents, grands reptiles marins…) : jamais replié en demi-tour
+    /// (v0.8.1, la vue de face fabriquée donnait des rayures) ; il ne se retourne que hors de
+    /// l'écran. Les poissons de banc gardent le repli (le banc suit son meneur).
+    pub fn corps_long(&self) -> bool {
+        let s = &self.sprite;
+        s.mouvement != Mouvement::Banc
+            && (s.mouvement == Mouvement::Ondule || s.l as f32 > s.h as f32 * 3.0)
+    }
+
+    /// Demi-tour en cours (planches de capture).
+    pub fn en_demi_tour(&self) -> bool {
+        self.tourne > 0.0
+    }
+
     /// Durée du retournement (plus lente pour les grandes créatures).
     fn duree_tour(&self) -> f32 {
         0.4 * (1.0 + self.sprite.taille.profondeur() * 3.0)
@@ -1133,6 +1149,9 @@ impl Nageur {
         let mv = self.sprite.mouvement;
         let (sl, sh) = (self.sprite.lw(), self.sprite.hw());
         let marge_x = sl / 2.0 + 4.0;
+        let long = self.corps_long();
+        // Corps long tout entier hors de l'écran : il s'y retourne sans être vu.
+        let dehors = self.x + sl / 2.0 < 0.0 || self.x - sl / 2.0 > l;
         // L'eau sous tout le corps (plusieurs écrans : jamais dans les trous entre eux).
         let (dessus, plancher) = b
             .eau(self.x - sl / 2.0, self.x + sl / 2.0)
@@ -1317,7 +1336,9 @@ impl Nageur {
                 } else {
                     self.x > l - marge_x - 70.0
                 };
-                let demi_tour = if derriere && !pres_du_bord && !demi_tour_permis {
+                let demi_tour = if derriere && long {
+                    10_000.0
+                } else if derriere && !pres_du_bord && !demi_tour_permis {
                     400.0
                 } else {
                     0.0
@@ -1402,6 +1423,11 @@ impl Nageur {
                 0.3 + 0.7 * (u - 0.5) * 2.0
             };
         }
+        if long && !dehors && (self.cible.0 - self.x) * if self.gauche { -1.0 } else { 1.0 } < 0.0 {
+            // Corps long : plutôt que se retourner sous nos yeux, il sort de l'écran devant lui
+            // (il fera demi-tour dehors).
+            self.cible.0 = if self.gauche { -sl } else { l + sl };
+        }
         let (dx, dy) = (self.cible.0 - self.x, (self.cible.1 - self.y) * 0.6);
         let d = dx.hypot(dy).max(0.001);
         let freine = (d / 12.0).min(1.0);
@@ -1446,11 +1472,33 @@ impl Nageur {
                 self.cible.1 = self.cible.1.clamp(y0, y1);
             }
         }
-        // Passage d'un écran à l'autre : seulement s'il y a de l'eau à cette hauteur.
-        let nx = (self.x + self.vx * dt).clamp(marge_x - 2.0, l - marge_x + 2.0);
+        // Corps long visible : jamais de marche arrière (pas de demi-tour sous nos yeux).
+        if long && !dehors {
+            self.vx = if self.gauche {
+                self.vx.min(0.0)
+            } else {
+                self.vx.max(0.0)
+            };
+        }
+        // Passage d'un écran à l'autre : seulement s'il y a de l'eau à cette hauteur. Un corps
+        // long peut sortir tout entier par les bords de la toile.
+        let (xmin, xmax) = if long {
+            (-sl / 2.0 - 6.0, l + sl / 2.0 + 6.0)
+        } else {
+            (marge_x - 2.0, l - marge_x + 2.0)
+        };
+        let nx = (self.x + self.vx * dt).clamp(xmin, xmax);
         match b.eau(nx - sl / 2.0, nx + sl / 2.0) {
             Some((t, f)) if self.y - sh / 2.0 >= t - 2.0 && self.y + sh / 2.0 <= f + 8.0 => {
                 self.x = nx
+            }
+            _ if long => {
+                // Bloqué par un trou entre écrans : retournement immédiat (miroir du vrai
+                // dessin, jamais écrasé).
+                self.gauche = !self.gauche;
+                self.vx = 0.0;
+                self.cible.0 = self.x + if self.gauche { -60.0 } else { 60.0 };
+                self.minuteur = 2.0;
             }
             _ => {
                 self.vx *= -0.3;
@@ -1462,7 +1510,17 @@ impl Nageur {
         self.y += pousse.1 * dt * 1.4;
         self.y = (self.y + self.vy * dt).clamp(haut - 4.0, bas.max(haut) + 2.0);
         // Retournement avec hystérésis et image écrasée pendant le demi-tour.
-        if (self.vx < -3.0 && !self.gauche) || (self.vx > 3.0 && self.gauche) {
+        if long && dehors {
+            // Hors de l'écran : il se retourne vers l'eau (sans repli) et revient.
+            let vers_gauche = self.x > l / 2.0;
+            if vers_gauche != self.gauche {
+                self.gauche = vers_gauche;
+                self.vx = 0.0;
+                self.tourne = 0.0;
+                self.cible = place_libre(a, occupes, b, (sl, sh), false);
+                self.minuteur = a.entre(7.0, 14.0);
+            }
+        } else if !long && ((self.vx < -3.0 && !self.gauche) || (self.vx > 3.0 && self.gauche)) {
             self.gauche = !self.gauche;
             self.tourne = self.duree_tour();
         }
@@ -1706,22 +1764,16 @@ impl Nageur {
         let im = &s.images[k];
         let (x0, y0) = self.origine_fine();
         let fw = FIN as f32;
-        // Demi-tour (v0.8) : il ralentit en s'écrasant un peu, puis 2-3 images étroites « face à
-        // nous » (0,1 s), puis repart dans l'autre sens en reprenant sa largeur. Pas de rotation
-        // du pixel art. Corps longs : moins étroits (sinon un trait).
-        let long = s.l > s.h * 3;
-        let (etroit, mi) = if long { (0.5, 0.85) } else { (0.4, 0.72) };
+        // Demi-tour (v0.8.1) : il ralentit (voir `bouger`), puis la largeur se replie par
+        // colonnes entières du vrai dessin (1 → 0,5, miroir, 0,5 → 1) en ~5 images ; la
+        // hauteur ne change jamais (aucune ligne écrasée, plus de fausse vue de face). Les corps
+        // longs ne se replient pas : ils font demi-tour hors de l'écran (`bouger`).
         let d = self.duree_tour();
         let ecart = (self.tourne - d * 0.5).abs();
-        // Trois images au milieu : ~70 %, étroite, ~70 % (à 30 i/s).
-        let ratio = if self.tourne <= 0.0 {
+        let ratio = if self.tourne <= 0.0 || ecart >= REPLI {
             1.0
-        } else if ecart < 0.02 {
-            etroit
-        } else if ecart < 0.055 {
-            (etroit + mi) / 2.0
         } else {
-            mi + (1.0 - mi) * ((ecart - 0.055) / (d * 0.5 - 0.055).max(0.01)).clamp(0.0, 1.0)
+            0.5 + 0.5 * ecart / REPLI
         };
         let cx = s.l as f32 / 2.0;
         // Pendant la première moitié du demi-tour, l'ancien sens.
@@ -1735,49 +1787,8 @@ impl Nageur {
         let tx = |x: i32| -> i32 { colonnes[x as usize] };
         // Pas de rotation du pixel art (scintillement) : le corps reste horizontal.
         let ty = |_x: i32, y: i32| -> i32 { y0 + y };
-        // Images du milieu du demi-tour : vue « de face » fabriquée avec la tête (le bout du
-        // museau au centre, les côtés de la tête et les deux yeux de part et d'autre).
-        let frontal = self.tourne > 0.0 && ecart < 0.055 && s.mouvement != Mouvement::Pulse;
         // Colonnes dessinées : (colonne du dessin, colonne de la toile).
-        let paires: Vec<(i32, i32)> = if frontal {
-            let oeil = {
-                let (mut sx, mut n) = (0i64, 0i64);
-                for (i, &c) in im.classe.iter().enumerate() {
-                    if c == OEIL {
-                        sx += i as i64 % s.l as i64;
-                        n += 1;
-                    }
-                }
-                if n > 0 {
-                    (sx / n) as f32
-                } else {
-                    s.bouche.0 as f32 - s.l as f32 * 0.15
-                }
-            };
-            let museau = s.bouche.0 as f32;
-            // Centre : la colonne la plus haute du corps ; bords : un peu au-delà de l'œil (les
-            // deux yeux de part et d'autre, silhouette ovale).
-            let milieu = (0..s.l)
-                .max_by_key(|&x| {
-                    (0..s.h)
-                        .filter(|&y| im.classe[(y * s.l + x) as usize] != VIDE)
-                        .count()
-                })
-                .unwrap_or(s.l / 2) as f32;
-            let bord = oeil + (museau - oeil) * 0.3;
-            let large = if ecart < 0.02 { 0.8 } else { 1.0 };
-            let n = ((s.h as f32 * 0.75 * large).min(s.l as f32 * 0.5) as i32).max(6);
-            (0..n)
-                .map(|j| {
-                    let k = ((j as f32 + 0.5 - n as f32 / 2.0) / (n as f32 / 2.0)).abs();
-                    let src = (milieu + k * (bord - milieu)).round() as i32;
-                    (src.clamp(0, s.l - 1), x0 + (cx as i32 - n / 2) + j)
-                })
-                .collect()
-        } else {
-            (0..s.l).map(|x| (x, colonnes[x as usize])).collect()
-        };
-        let avec_halo = avec_halo && !frontal;
+        let paires: Vec<(i32, i32)> = (0..s.l).map(|x| (x, colonnes[x as usize])).collect();
         let r = self.rarete;
         let pouls = 0.75 + 0.25 * (t * 2.4 + self.phase).sin();
         // Immobile (éclosion, planches) : couleurs vraies, sans l'eau du lointain. Sinon l'eau
@@ -1843,7 +1854,7 @@ impl Nageur {
         // Halos (lueurs), pixels fins. L'Irréel n'a pas d'anneau : son contour est irisé.
         // Abysses : fine lueur de contre-jour autour du corps (le poisson se détache du noir).
         // Les dessins sombres (baudroie, clown des grands fonds…) ont un contre-jour plus fort.
-        if self.contre_jour && !frontal {
+        if self.contre_jour {
             let a = 70.0 + 120.0 * s.sombre;
             for &(x, y) in &im.halo1 {
                 toile.eclairer_fin(tx(x), ty(x, y), [0x58, 0xa8, 0xc8], a as u8);
@@ -1922,7 +1933,7 @@ impl Nageur {
         }
 
         // Copies décalées (Irréel, pendant un glitch).
-        if r == Rarete::Irreel && self.glitch > 0.0 && !frontal {
+        if r == Rarete::Irreel && self.glitch > 0.0 {
             for (dx, c) in [(-2, [255, 40, 200]), (2, [40, 230, 255])] {
                 for y in 0..s.h {
                     for x in 0..s.l {
@@ -1983,18 +1994,12 @@ impl Nageur {
             } else {
                 0
             };
-            for (jp, &(x, dest)) in paires.iter().enumerate() {
+            for &(x, dest) in &paires {
                 let i = (y * s.l + x) as usize;
                 let cl = im.classe[i];
                 if cl == VIDE {
                     continue;
                 }
-                // Vue de face : les bords de la tête prennent le trait du contour.
-                let cl = if frontal && (jp == 0 || jp + 1 == paires.len()) {
-                    CONTOUR
-                } else {
-                    cl
-                };
                 let p = im.px(i);
                 let mut c = [p[0], p[1], p[2]];
                 if cligne && cl == OEIL {
@@ -2078,11 +2083,6 @@ impl Nageur {
                 } else {
                     p[3]
                 };
-                let c = if frontal && cl == CONTOUR && im.classe[i] != CONTOUR {
-                    melange(c, [0x08, 0x06, 0x0c], 0.6)
-                } else {
-                    c
-                };
                 toile.poser_fin(dest + decal_ligne, ty(x, y), c, a);
             }
         }
@@ -2112,9 +2112,7 @@ impl Nageur {
             }
         }
         // Étoiles (Galaxie) et facettes (Diamant, Cristal) qui scintillent sur le corps.
-        if let (Some(m @ (Modif::Galaxie | Modif::Diamant | Modif::Cristal)), false) =
-            (modif, frontal)
-        {
+        if let Some(m @ (Modif::Galaxie | Modif::Diamant | Modif::Cristal)) = modif {
             for &(x, y, ph) in &s.etoiles {
                 let v = (t * if m == Modif::Galaxie { 2.0 } else { 1.1 } + ph * TAU).sin();
                 let (xx, yy) = (tx(x), ty(x, y));
@@ -2135,7 +2133,7 @@ impl Nageur {
             }
         }
         // Étoiles du corps (Céleste) qui scintillent.
-        if r == Rarete::Celeste && !frontal {
+        if r == Rarete::Celeste {
             for &(x, y, ph) in &s.etoiles {
                 let v = (t * 2.6 + ph * TAU).sin();
                 if v > 0.1 {
@@ -2662,11 +2660,12 @@ mod tests {
             aq.avancer(1.0 / 30.0);
             aq.dessiner(&p);
         }
-        // Tous restent dans la toile (les serpents colossaux sortent entre deux traversées).
+        // Tous restent dans la toile (les serpents colossaux sortent entre deux traversées, les
+        // corps longs pour se retourner hors de l'écran).
         for n in aq
             .nageurs
             .iter()
-            .filter(|n| n.sprite.mouvement != Mouvement::Traverse)
+            .filter(|n| n.sprite.mouvement != Mouvement::Traverse && !n.corps_long())
         {
             assert!(n.x >= 0.0 && n.x <= 480.0 && n.y >= 0.0 && n.y <= 270.0);
         }
@@ -2674,6 +2673,55 @@ mod tests {
         aq.synchroniser(&p);
         let places: usize = aq.nageurs.iter().map(|n| n.sprite.taille.places()).sum();
         assert!(!aq.nageurs.is_empty() && places <= 5);
+    }
+
+    #[test]
+    fn corps_longs_ne_se_retournent_que_hors_de_l_ecran() {
+        // v0.8.1 : anguilles, serpents… ne se replient jamais sous nos yeux ; ils sortent par
+        // un bord, se retournent dehors et reviennent (personne ne reste coincé dehors).
+        let mut p = crate::capture::partie_demo();
+        for cle in ["anguille", "murene", "lutin", "narval"] {
+            let mut f = p.poissons[0].clone();
+            f.id = 9000 + p.poissons.len() as u64;
+            f.espece = cle.to_string();
+            f.rarete = crate::especes::par_cle(cle).unwrap().rarete;
+            f.actif = true;
+            p.poissons.push(f);
+        }
+        p.reglages.max_affiches = 60;
+        let mut aq = Aquarium::new(480, 270, 1);
+        aq.synchroniser(&p);
+        let longs: Vec<u64> = aq
+            .nageurs
+            .iter()
+            .filter(|n| n.corps_long() && n.sprite.mouvement != Mouvement::Traverse)
+            .map(|n| n.id)
+            .collect();
+        assert!(longs.len() >= 3, "{longs:?}");
+        let mut dedans = vec![0usize; longs.len()];
+        for _ in 0..30 * 120 {
+            let avant: Vec<bool> = aq.nageurs.iter().map(|n| n.gauche).collect();
+            aq.avancer(1.0 / 30.0);
+            for (i, n) in aq.nageurs.iter().enumerate() {
+                let Some(k) = longs.iter().position(|&id| id == n.id) else {
+                    continue;
+                };
+                let (sl, l) = (n.sprite.lw(), aq.l() as f32);
+                let dehors = n.x + sl / 2.0 < 0.0 || n.x - sl / 2.0 > l;
+                assert!(
+                    n.gauche == avant[i] || dehors,
+                    "{} se retourne à l'écran (x {:.0})",
+                    n.espece,
+                    n.x
+                );
+                assert_eq!(n.tourne, 0.0, "{} replié", n.espece);
+                dedans[k] += !dehors as usize;
+            }
+        }
+        // Chacun passe l'essentiel du temps à l'écran.
+        for (k, &d) in dedans.iter().enumerate() {
+            assert!(d > 30 * 60, "{} : {d} images à l'écran", longs[k]);
+        }
     }
 
     #[test]
