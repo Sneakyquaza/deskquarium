@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 S=${1:-out/captures/v11/oeufs_v11_ingame.mp4}
 T=out/captures/v11/video_tmp
 mkdir -p "$T"
-A=./target/release/aquarium
+A=./target/release/deskquarium
 export AQUARIUM_FFMPEG=${AQUARIUM_FFMPEG:-$HOME/opt/ffmpeg/ffmpeg}
 F=$AQUARIUM_FFMPEG
 $A --repos-oeufs "$T/00_repos.mp4" --secondes 7

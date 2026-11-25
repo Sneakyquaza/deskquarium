@@ -33,7 +33,7 @@ mod windows;
 
 use std::path::PathBuf;
 
-const AIDE: &str = "aquarium : fond d'écran aquarium pixel art + idle game
+const AIDE: &str = "deskquarium : fond d'écran aquarium pixel art + idle game
 
 Sans option : sous Windows, l'aquarium se place derrière les icônes du bureau
 (icône près de l'horloge : Ouvrir l'Écloserie, Pause, Quitter).
@@ -67,7 +67,7 @@ Options (tests) :
 
 fn main() {
     if let Err(e) = lancer() {
-        eprintln!("aquarium : {e}");
+        eprintln!("deskquarium : {e}");
         #[cfg(windows)]
         windows::alerte(&e);
         std::process::exit(1);
@@ -75,7 +75,7 @@ fn main() {
 }
 
 fn lancer() -> Result<(), String> {
-    // Captures et outils : langue du système (AQUARIUM_LANGUE=en pour l'anglais).
+    // Captures et outils : langue du système (DESKQUARIUM_LANGUE ou AQUARIUM_LANGUE=en pour l'anglais).
     i18n::regler(i18n::langue_systeme());
     let args: Vec<String> = std::env::args().skip(1).collect();
     let valeur = |nom: &str| -> Option<String> {

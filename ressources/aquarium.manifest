@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity type="win32" name="Sneakyquaza.Aquarium" version="0.7.0.0" processorArchitecture="amd64"/>
+  <assemblyIdentity type="win32" name="Sneakyquaza.Deskquarium" version="0.7.0.0" processorArchitecture="amd64"/>
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
     <application>
       <!-- Windows 7, 8, 8.1, 10 et 11 : sans ces lignes, les fenêtres enfants WS_EX_LAYERED

@@ -1,4 +1,4 @@
-//! Mise à jour depuis les GitHub Releases du dépôt public `Sneakyquaza/aquarium` : lecture de
+//! Mise à jour depuis les GitHub Releases du dépôt public `Sneakyquaza/deskquarium` : lecture de
 //! la dernière version, téléchargement vérifié (sha256) à côté de l'exécutable, échange des
 //! fichiers puis relance après la fermeture propre (fond d'écran remis). Tout le réseau tourne
 //! sur d'autres fils ; jamais d'installation sans un clic. Modèle : `gbemu/gb-app/src/maj.rs`.
@@ -10,10 +10,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const URL_RELEASE: &str = "https://api.github.com/repos/Sneakyquaza/aquarium/releases/latest";
-pub const PAGE_RELEASES: &str = "https://github.com/Sneakyquaza/aquarium/releases";
-const AGENT: &str = "aquarium-maj";
-const NOM_EXE: &str = "aquarium.exe";
+pub const URL_RELEASE: &str =
+    "https://api.github.com/repos/Sneakyquaza/deskquarium/releases/latest";
+pub const PAGE_RELEASES: &str = "https://github.com/Sneakyquaza/deskquarium/releases";
+const AGENT: &str = "deskquarium-maj";
+const NOM_EXE: &str = "deskquarium.exe";
+/// Nom d'avant le renommage (v0.12 et moins) : repli si une release ne publie que lui.
+const NOM_EXE_ANCIEN: &str = "aquarium.exe";
 /// Exécutable plus gros : refusé (release fausse).
 const TAILLE_MAX: u64 = 256 << 20;
 /// Hôtes autorisés (https seulement) : l'API, la page des releases et ses fichiers.
@@ -153,8 +156,8 @@ impl Maj {
         });
     }
 
-    /// Échange les fichiers (`aquarium.exe` → `.ancien`, `.nouveau` → `aquarium.exe`) et rend
-    /// l'exécutable à relancer après la fermeture propre. Échec : rien n'a changé, message.
+    /// Échange les fichiers (exe lancé, quel que soit son nom → `.ancien`, `.nouveau` → exe lancé)
+    /// et rend l'exécutable à relancer après la fermeture propre. Échec : rien n'a changé, message.
     pub fn installer(&self) -> Option<PathBuf> {
         let nouveau = {
             let mut e = self.verrou();
@@ -199,7 +202,7 @@ pub fn relancer(exe: &Path) {
     }
 }
 
-/// `chemin` + `fin` (`aquarium.exe` → `aquarium.exe.ancien`).
+/// `chemin` + `fin` (`deskquarium.exe` → `deskquarium.exe.ancien`).
 fn suffixe(chemin: &Path, fin: &str) -> PathBuf {
     let mut s = chemin.as_os_str().to_owned();
     s.push(fin);
@@ -295,12 +298,14 @@ struct Fichier {
     size: u64,
 }
 
-/// Release GitHub (JSON de `releases/latest`) → annonce : `aquarium.exe` et son `.sha256`.
+/// Release GitHub (JSON de `releases/latest`) → annonce : `deskquarium.exe` et son `.sha256`
+/// (à défaut `aquarium.exe` et le sien). Le nom ne compte pas : l'exe lancé est remplacé.
 pub fn annonce_depuis_json(d: &[u8]) -> Result<Annonce, String> {
     let r: Release = serde_json::from_slice(d)
         .map_err(|_| crate::i18n::tr("Réponse de GitHub illisible").to_string())?;
     let trouver = |nom: &str| r.assets.iter().find(|a| a.name == nom);
-    let (Some(exe), Some(sha)) = (trouver(NOM_EXE), trouver(&format!("{NOM_EXE}.sha256"))) else {
+    let paire = |nom: &str| Some((trouver(nom)?, trouver(&format!("{nom}.sha256"))?));
+    let Some((exe, sha)) = paire(NOM_EXE).or_else(|| paire(NOM_EXE_ANCIEN)) else {
         return Err("La dernière version ne contient pas l'exécutable Windows".into());
     };
     if !url_permise(&exe.browser_download_url) || !url_permise(&sha.browser_download_url) {
@@ -315,7 +320,7 @@ pub fn annonce_depuis_json(d: &[u8]) -> Result<Annonce, String> {
     })
 }
 
-/// Fichier `.sha256` (« <64 hex>  aquarium.exe » ou les 64 caractères seuls).
+/// Fichier `.sha256` (« <64 hex>  deskquarium.exe » ou les 64 caractères seuls).
 pub fn empreinte_depuis_texte(t: &str) -> Result<String, String> {
     let h = t.split_whitespace().next().unwrap_or("");
     if h.len() == 64 && h.bytes().all(|c| c.is_ascii_hexdigit()) {
@@ -459,7 +464,7 @@ mod tests {
 
     fn dossier(nom: &str) -> PathBuf {
         let d =
-            std::env::temp_dir().join(format!("aquarium-test-maj-{nom}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("deskquarium-test-maj-{nom}-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&d);
         d
     }
@@ -478,47 +483,73 @@ mod tests {
 
     #[test]
     fn lecture_d_une_release() {
-        let json = br#"{"url":"https://api.github.com/repos/Sneakyquaza/aquarium/releases/1",
-            "tag_name":"v0.8.0","name":"v0.8.0","body":"Shiny, modificateurs, index.",
+        let json = br#"{"url":"https://api.github.com/repos/Sneakyquaza/deskquarium/releases/1",
+            "tag_name":"v0.13.0","name":"v0.13.0","body":"Shiny, modificateurs, index.",
             "assets":[
               {"name":"aquarium.exe.sha256","size":80,"browser_download_url":
-               "https://github.com/Sneakyquaza/aquarium/releases/download/v0.8.0/aquarium.exe.sha256"},
-              {"name":"aquarium.exe","size":12345678,"browser_download_url":
-               "https://github.com/Sneakyquaza/aquarium/releases/download/v0.8.0/aquarium.exe"}]}"#;
+               "https://github.com/Sneakyquaza/deskquarium/releases/download/v0.13.0/aquarium.exe.sha256"},
+              {"name":"aquarium.exe","size":11,"browser_download_url":
+               "https://github.com/Sneakyquaza/deskquarium/releases/download/v0.13.0/aquarium.exe"},
+              {"name":"deskquarium.exe.sha256","size":80,"browser_download_url":
+               "https://github.com/Sneakyquaza/deskquarium/releases/download/v0.13.0/deskquarium.exe.sha256"},
+              {"name":"deskquarium.exe","size":12345678,"browser_download_url":
+               "https://github.com/Sneakyquaza/deskquarium/releases/download/v0.13.0/deskquarium.exe"}]}"#;
         let a = annonce_depuis_json(json).unwrap();
-        assert_eq!(a.version, "0.8.0");
+        assert_eq!(a.version, "0.13.0");
         assert_eq!(a.taille, 12_345_678);
-        assert!(a.url.ends_with("/aquarium.exe") && a.url_sha256.ends_with(".sha256"));
+        assert!(a.url.ends_with("/deskquarium.exe"));
+        assert!(a.url_sha256.ends_with("/deskquarium.exe.sha256"));
         assert_eq!(a.notes, "Shiny, modificateurs, index.");
         // Sans l'exécutable, ou un lien hors de GitHub : refusé.
         let sans = br#"{"tag_name":"v0.8.0","body":null,"assets":[]}"#;
         assert!(annonce_depuis_json(sans).is_err());
         let pirate = String::from_utf8_lossy(json).replace(
-            "https://github.com/Sneakyquaza/aquarium/releases/download/v0.8.0/aquarium.exe\"",
-            "https://pirate.example/aquarium.exe\"",
+            "https://github.com/Sneakyquaza/deskquarium/releases/download/v0.13.0/deskquarium.exe\"",
+            "https://pirate.example/deskquarium.exe\"",
         );
         assert!(annonce_depuis_json(pirate.as_bytes()).is_err());
         assert!(annonce_depuis_json(b"<html>").is_err());
     }
 
     #[test]
+    fn release_avec_l_ancien_nom_seul() {
+        // Release d'avant le renommage : `aquarium.exe` et son `.sha256` servent de repli.
+        let json = br#"{"tag_name":"v0.12.0","body":null,"assets":[
+              {"name":"aquarium.exe.sha256","size":80,"browser_download_url":
+               "https://github.com/Sneakyquaza/aquarium/releases/download/v0.12.0/aquarium.exe.sha256"},
+              {"name":"aquarium.exe","size":42,"browser_download_url":
+               "https://github.com/Sneakyquaza/aquarium/releases/download/v0.12.0/aquarium.exe"}]}"#;
+        let a = annonce_depuis_json(json).unwrap();
+        assert_eq!((a.version.as_str(), a.taille), ("0.12.0", 42));
+        assert!(a.url.ends_with("/aquarium.exe"));
+        assert!(a.url_sha256.ends_with("/aquarium.exe.sha256"));
+        // Nouveau nom sans son `.sha256` : pas de mélange avec l'empreinte de l'ancien.
+        let sans_sha = String::from_utf8_lossy(json).replace(
+            r#"{"name":"aquarium.exe.sha256""#,
+            r#"{"name":"deskquarium.exe","size":7,"browser_download_url":"https://github.com/x/deskquarium.exe"},{"name":"aquarium.exe.sha256""#,
+        );
+        let a = annonce_depuis_json(sans_sha.as_bytes()).unwrap();
+        assert!(a.url.ends_with("/aquarium.exe") && a.taille == 42);
+    }
+
+    #[test]
     fn liste_des_liens_permis() {
         for ok in [
             URL_RELEASE,
-            "https://github.com/Sneakyquaza/aquarium/releases/download/v0.8.0/aquarium.exe",
+            "https://github.com/Sneakyquaza/deskquarium/releases/download/v0.13.0/deskquarium.exe",
             "https://objects.githubusercontent.com/github-production-release-asset/1?x=y",
             "https://release-assets.githubusercontent.com/github-production-release-asset/1",
         ] {
             assert!(url_permise(ok), "{ok}");
         }
         for non in [
-            "http://github.com/Sneakyquaza/aquarium/releases/download/v0.8.0/aquarium.exe",
-            "https://github.com.pirate.fr/aquarium.exe",
-            "https://github.com@pirate.fr/aquarium.exe",
-            "https://github.com:444/aquarium.exe",
-            "https://evilgithub.com/aquarium.exe",
+            "http://github.com/Sneakyquaza/deskquarium/releases/download/v0.13.0/deskquarium.exe",
+            "https://github.com.pirate.fr/deskquarium.exe",
+            "https://github.com@pirate.fr/deskquarium.exe",
+            "https://github.com:444/deskquarium.exe",
+            "https://evilgithub.com/deskquarium.exe",
             "ftp://github.com/x",
-            "file:///C:/aquarium.exe",
+            "file:///C:/deskquarium.exe",
         ] {
             assert!(!url_permise(non), "{non}");
         }
@@ -534,11 +565,11 @@ mod tests {
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
         assert_eq!(
-            empreinte_depuis_texte(&format!("{}  aquarium.exe\n", vrai.to_uppercase())).unwrap(),
+            empreinte_depuis_texte(&format!("{}  deskquarium.exe\n", vrai.to_uppercase())).unwrap(),
             vrai
         );
         assert!(empreinte_depuis_texte("pas une empreinte").is_err());
-        let dest = d.join("aquarium.exe.nouveau");
+        let dest = d.join("deskquarium.exe.nouveau");
         let mut vus = 0;
         ecrire_verifie(&corps[..], corps.len() as u64, &vrai, &dest, |n| vus = n).unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), corps);
@@ -556,6 +587,7 @@ mod tests {
 
     #[test]
     fn remplacement_et_retour() {
+        // Ancienne installation : l'exe lancé garde son nom (`aquarium.exe`), quel qu'il soit.
         let d = dossier("remplacer");
         let exe = d.join("aquarium.exe");
         let nouveau = suffixe(&exe, ".nouveau");

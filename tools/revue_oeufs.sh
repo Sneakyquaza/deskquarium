@@ -4,7 +4,7 @@
 cd "$(dirname "$0")/.."
 D=${1:-out/captures/v11/revue}
 mkdir -p "$D"
-A=./target/release/aquarium
+A=./target/release/deskquarium
 export AQUARIUM_FFMPEG=${AQUARIUM_FFMPEG:-$HOME/opt/ffmpeg/ffmpeg}
 F=$AQUARIUM_FFMPEG
 $A --planche-oeufs "$D/oeufs_planche.png"

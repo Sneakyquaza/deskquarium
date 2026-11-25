@@ -128,8 +128,11 @@ pub fn lancer(o: Options) -> Result<(), String> {
     } else {
         sauve::charger(&dossier)
     };
-    // Langue : AQUARIUM_LANGUE (captures) l'impose, sinon celle choisie, sinon celle de Windows.
-    if std::env::var_os("AQUARIUM_LANGUE").is_some() {
+    // Langue : DESKQUARIUM_LANGUE / AQUARIUM_LANGUE (captures) l'impose, sinon celle choisie,
+    // sinon celle de Windows.
+    if std::env::var_os("DESKQUARIUM_LANGUE").is_some()
+        || std::env::var_os("AQUARIUM_LANGUE").is_some()
+    {
         partie.reglages.langue = Some(crate::i18n::langue_systeme());
     }
     crate::i18n::regler(
@@ -152,8 +155,8 @@ pub fn lancer(o: Options) -> Result<(), String> {
     let icone = std::sync::Arc::new(icone());
     let viewport = if o.fenetre {
         ViewportBuilder::default()
-            .with_title("Aquarium")
-            .with_app_id("aquarium")
+            .with_title("Deskquarium")
+            .with_app_id("deskquarium")
             .with_inner_size(if o.captures.is_some() {
                 [960.0, 720.0]
             } else {
@@ -163,7 +166,7 @@ pub fn lancer(o: Options) -> Result<(), String> {
     } else {
         // Fenêtre sans bord, hors barre des tâches : elle est ensuite incrustée dans WorkerW.
         ViewportBuilder::default()
-            .with_title("Aquarium (fond)")
+            .with_title("Deskquarium (fond)")
             .with_decorations(false)
             .with_taskbar(false)
             // Ne montre rien : le calque GDI (calque.rs) dessine l'aquarium.
@@ -237,7 +240,7 @@ pub fn lancer(o: Options) -> Result<(), String> {
         return crate::moteur::lancer(appli);
     }
     eframe::run_native(
-        "aquarium",
+        "deskquarium",
         options,
         Box::new(move |cc| {
             installer_style(&cc.egui_ctx);
@@ -361,7 +364,7 @@ impl Appli {
                 if let Some(s) = &self.systeme {
                     s.infobulle(&match &dispo {
                         Some(v) => crate::i18n::trf(
-                            "Aquarium : mise à jour v{} disponible",
+                            "Deskquarium : mise à jour v{} disponible",
                             &[&v.to_string()],
                         ),
                         None => String::new(),
@@ -1021,7 +1024,7 @@ impl eframe::App for Appli {
             let mut fermer = false;
             let builder = ViewportBuilder::default()
                 .with_title(crate::i18n::tr("Écloserie"))
-                .with_app_id("aquarium-ecloserie")
+                .with_app_id("deskquarium-ecloserie")
                 .with_inner_size([960.0, 720.0])
                 .with_min_inner_size([640.0, 520.0])
                 .with_icon(std::sync::Arc::new(icone()));

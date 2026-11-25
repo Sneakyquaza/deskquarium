@@ -45,7 +45,7 @@ pub fn alerte(m: &str) {
         MessageBoxW(
             null_mut(),
             large(m).as_ptr(),
-            large("Aquarium").as_ptr(),
+            large("Deskquarium").as_ptr(),
             MB_OK | MB_ICONWARNING,
         );
     }
@@ -329,7 +329,7 @@ fn journal_version() {
         "Windows 10"
     };
     crate::journal::ecrire(&format!(
-        "--- aquarium {} : {nom} {} {} build {build} ---",
+        "--- Deskquarium {} : {nom} {} {} build {build} ---",
         env!("CARGO_PKG_VERSION"),
         v("EditionID"),
         v("DisplayVersion"),
@@ -474,7 +474,7 @@ fn incruster(hwnd: HWND, methode: u8) -> Result<HWND, String> {
                 rect_de(c),
                 IsWindowVisible(c) != 0,
                 GetWindowLongPtrW(c, GWL_EXSTYLE) as u32,
-                if c == hwnd { " <- aquarium" } else { "" }
+                if c == hwnd { " <- Deskquarium" } else { "" }
             ));
             c = GetWindow(c, GW_HWNDNEXT);
             i += 1;
@@ -1043,7 +1043,8 @@ pub fn processus() -> Option<(u64, usize, usize)> {
     }
 }
 
-/// Lancement au démarrage de la session : valeur « Aquarium » de HKCU\…\Run.
+/// Lancement au démarrage de la session : valeur « Deskquarium » de HKCU\…\Run (appliqué à
+/// chaque lancement). L'ancienne valeur « Aquarium » (v0.12 et moins) est retirée au passage.
 pub fn demarrage(actif: bool) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     unsafe {
@@ -1065,7 +1066,9 @@ pub fn demarrage(actif: bool) -> Result<(), String> {
                 &[&r.to_string()],
             ));
         }
-        let nom = large("Aquarium");
+        // Renommage : l'ancienne entrée disparaît, la nouvelle pointe sur l'exe lancé.
+        RegDeleteValueW(cle, large("Aquarium").as_ptr());
+        let nom = large("Deskquarium");
         let r = if actif {
             let v = large(&format!("\"{}\"", exe.display()));
             RegSetValueExW(
@@ -1149,7 +1152,7 @@ fn ajouter_icone(h: HWND) {
 fn remplir_infobulle(nid: &mut NOTIFYICONDATAW) {
     let t = INFOBULLE.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let t = if t.is_empty() {
-        crate::i18n::tr("Aquarium : clic pour l'Écloserie").to_string()
+        crate::i18n::tr("Deskquarium : clic pour l'Écloserie").to_string()
     } else {
         t
     };
@@ -1319,7 +1322,7 @@ unsafe extern "system" fn proc_sys(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> L
 fn fil_systeme() {
     unsafe {
         let hinst = GetModuleHandleW(null());
-        let classe = large("AquariumSysteme");
+        let classe = large("DeskquariumSysteme");
         let wc = WNDCLASSW {
             lpfnWndProc: Some(proc_sys),
             hInstance: hinst,
@@ -1330,7 +1333,7 @@ fn fil_systeme() {
         let h = CreateWindowExW(
             0,
             classe.as_ptr(),
-            large("Aquarium").as_ptr(),
+            large("Deskquarium").as_ptr(),
             WS_OVERLAPPED,
             0,
             0,

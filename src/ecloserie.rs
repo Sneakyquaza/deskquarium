@@ -1461,7 +1461,7 @@ impl Ecloserie {
                 ui,
                 tr("Démarrage"),
                 if windows {
-                    tr("L'aquarium se lance tout seul à l'ouverture de ta session.")
+                    tr("Deskquarium se lance tout seul à l'ouverture de ta session.")
                 } else {
                     tr("Disponible seulement sous Windows.")
                 },

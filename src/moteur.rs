@@ -122,7 +122,7 @@ fn fil_ecloserie(
         let options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_title(titre)
-                .with_app_id("aquarium-ecloserie")
+                .with_app_id("deskquarium-ecloserie")
                 .with_inner_size([960.0, 720.0])
                 .with_min_inner_size([640.0, 520.0])
                 .with_icon(icone),
@@ -137,7 +137,7 @@ fn fil_ecloserie(
         let e = etat.clone();
         crate::journal::ecrire("Écloserie ouverte");
         let r = eframe::run_native(
-            "aquarium-ecloserie",
+            "deskquarium-ecloserie",
             options,
             Box::new(move |cc| {
                 crate::ecloserie::installer_style(&cc.egui_ctx);

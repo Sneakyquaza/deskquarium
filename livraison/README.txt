@@ -1,11 +1,18 @@
-AQUARIUM v0.11 - pixel art aquarium wallpaper + small idle game (Windows 10/11, 64-bit)
+DESKQUARIUM v0.13 - pixel art aquarium wallpaper + small idle game (Windows 10/11, 64-bit)
+
+NEW NAME (v0.13)
+- "Aquarium" is now called Deskquarium. Download: the Deskquarium-vX.Y zip from
+  https://github.com/Sneakyquaza/deskquarium/releases (public).
+- Already had it? Nothing to do: it updates itself (your aquarium.exe keeps its name), your
+  save moves by itself from %APPDATA%\aquarium to %APPDATA%\Deskquarium, and "Launch when
+  Windows starts" carries over.
 
 LANGUAGE
 - The game is in English or French. On first launch it follows your Windows language; change it
   any time in Hatchery > Settings > Language (applies immediately).
 
 START
-- Unzip the folder anywhere (for example Documents\aquarium) and run aquarium.exe.
+- Unzip the folder anywhere (for example Documents\Deskquarium) and run deskquarium.exe.
 - The aquarium is drawn behind your desktop icons, on top of your wallpaper.
 - Windows may show "Windows protected your PC" (unsigned exe): "More info" then "Run anyway".
 
@@ -31,7 +38,7 @@ PLAY
   A short click shows its card. Settings > Fish and mouse to turn it off.
 
 UPDATES
-- The app updates itself from https://github.com/Sneakyquaza/aquarium/releases (public).
+- The app updates itself from https://github.com/Sneakyquaza/deskquarium/releases (public).
   Hatchery > Settings > Updates > "Install vX.Y.Z". Nothing is changed if anything goes wrong.
 
 IF THE AQUARIUM DOESN'T SHOW ON THE DESKTOP
@@ -41,4 +48,4 @@ IF THE AQUARIUM DOESN'T SHOW ON THE DESKTOP
 QUIT / UNINSTALL
 - Right click the fish icon > Quit: your normal wallpaper comes back.
 - Untick "Launch when Windows starts" in Settings, quit, delete the folder. Your save is in
-  %APPDATA%\aquarium (delete it to erase everything).
+  %APPDATA%\Deskquarium (delete it to erase everything).

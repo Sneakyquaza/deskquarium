@@ -64,7 +64,9 @@ pub fn langue_systeme() -> Langue {
 }
 
 fn langue_systeme_lue() -> Langue {
-    if let Ok(v) = std::env::var("AQUARIUM_LANGUE") {
+    // DESKQUARIUM_LANGUE, ou l'ancien nom AQUARIUM_LANGUE.
+    if let Ok(v) = std::env::var("DESKQUARIUM_LANGUE").or_else(|_| std::env::var("AQUARIUM_LANGUE"))
+    {
         return if v.starts_with("en") {
             Langue::En
         } else {

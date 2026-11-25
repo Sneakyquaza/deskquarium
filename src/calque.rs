@@ -56,7 +56,7 @@ impl Calque {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || unsafe {
             let hinst = GetModuleHandleW(null());
-            let classe = large("AquariumCalque");
+            let classe = large("DeskquariumCalque");
             let wc = WNDCLASSW {
                 lpfnWndProc: Some(proc_calque),
                 hInstance: hinst,
@@ -68,7 +68,7 @@ impl Calque {
             let h = CreateWindowExW(
                 WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
                 classe.as_ptr(),
-                large("Aquarium (fond)").as_ptr(),
+                large("Deskquarium (fond)").as_ptr(),
                 WS_POPUP,
                 0,
                 0,
@@ -323,7 +323,9 @@ unsafe fn bandes(dc: HDC, l: i32, h: i32, nom: &str) {
             right: l,
             bottom: h,
         };
-        let t: Vec<u16> = format!("AQUARIUM VISIBLE : {nom}").encode_utf16().collect();
+        let t: Vec<u16> = format!("DESKQUARIUM VISIBLE : {nom}")
+            .encode_utf16()
+            .collect();
         DrawTextW(
             dc,
             t.as_ptr(),

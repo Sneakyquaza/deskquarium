@@ -1,4 +1,4 @@
-//! Sauvegarde JSON : `%APPDATA%\aquarium\partie.json` (Linux : `~/.local/share/aquarium`).
+//! Sauvegarde JSON : `%APPDATA%\Deskquarium\partie.json` (Linux : `~/.local/share/deskquarium`).
 //! Écriture atomique (fichier temporaire puis renommage) ; la version précédente reste en `.bak`.
 //! Fichier abîmé : on reprend le `.bak` ; les deux abîmés : le fichier est mis de côté
 //! (`partie.abime-<horodatage>.json`), jamais écrasé, et une partie neuve commence.
@@ -6,6 +6,7 @@
 use crate::jeu::Partie;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn maintenant() -> u64 {
@@ -15,23 +16,71 @@ pub fn maintenant() -> u64 {
         .unwrap_or(0)
 }
 
-/// Dossier de sauvegarde (`AQUARIUM_DOSSIER` le remplace, pour les tests et captures).
+/// Dossier de sauvegarde (`AQUARIUM_DOSSIER` le remplace, pour les tests et captures). Choisi
+/// une fois par lancement : l'ancien dossier `aquarium` (v0.12 et moins) y est migré.
 pub fn dossier() -> PathBuf {
-    if let Some(d) = std::env::var_os("AQUARIUM_DOSSIER") {
-        return PathBuf::from(d);
-    }
+    static D: OnceLock<PathBuf> = OnceLock::new();
+    D.get_or_init(|| {
+        if let Some(d) = std::env::var_os("AQUARIUM_DOSSIER") {
+            return PathBuf::from(d);
+        }
+        let (racine, nom) = racine();
+        migrer_dossier(&racine.join("aquarium"), &racine.join(nom))
+    })
+    .clone()
+}
+
+/// Dossier des données de l'utilisateur et nom du dossier de l'appli.
+fn racine() -> (PathBuf, &'static str) {
     if cfg!(windows) {
         if let Some(a) = std::env::var_os("APPDATA") {
-            return PathBuf::from(a).join("aquarium");
+            return (PathBuf::from(a), "Deskquarium");
         }
     }
     if let Some(x) = std::env::var_os("XDG_DATA_HOME") {
-        return PathBuf::from(x).join("aquarium");
+        return (PathBuf::from(x), "deskquarium");
     }
     let maison = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .unwrap_or_else(|| ".".into());
-    PathBuf::from(maison).join(".local/share/aquarium")
+    (PathBuf::from(maison).join(".local/share"), "deskquarium")
+}
+
+/// Renommage en Deskquarium : `ancien` devient `nouveau` si celui-ci n'existe pas encore (rien
+/// n'est jamais écrasé). Déplacement refusé (fichier ouvert…) : tout est copié dans un dossier
+/// temporaire, renommé ensuite en `nouveau` ; l'ancien reste intact. Copie impossible : on
+/// continue dans l'ancien dossier. Renvoie le dossier à utiliser.
+pub fn migrer_dossier(ancien: &Path, nouveau: &Path) -> PathBuf {
+    if nouveau.exists() || !ancien.is_dir() || std::fs::rename(ancien, nouveau).is_ok() {
+        return nouveau.to_path_buf();
+    }
+    let mut t = nouveau.as_os_str().to_owned();
+    t.push(".migration");
+    let tmp = PathBuf::from(t);
+    let _ = std::fs::remove_dir_all(&tmp);
+    if copier(ancien, &tmp)
+        .and_then(|()| std::fs::rename(&tmp, nouveau))
+        .is_ok()
+    {
+        return nouveau.to_path_buf();
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+    ancien.to_path_buf()
+}
+
+/// Copie récursive de `de` dans `vers` (créé).
+fn copier(de: &Path, vers: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(vers)?;
+    for e in std::fs::read_dir(de)? {
+        let e = e?;
+        let cible = vers.join(e.file_name());
+        if e.file_type()?.is_dir() {
+            copier(&e.path(), &cible)?;
+        } else {
+            std::fs::copy(e.path(), cible)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn fichier(d: &Path) -> PathBuf {
@@ -120,10 +169,65 @@ mod tests {
     use super::*;
 
     fn dossier_test(nom: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("aquarium-test-{nom}-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("deskquarium-test-{nom}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn ancien_dossier_migre_sans_perte() {
+        let d = dossier_test("migration");
+        let (ancien, nouveau) = (d.join("aquarium"), d.join("Deskquarium"));
+        // Rien à migrer : le nouveau dossier (créé plus tard par l'écriture).
+        assert_eq!(migrer_dossier(&ancien, &nouveau), nouveau);
+        assert!(!nouveau.exists());
+        // Ancien dossier seul : déplacé, contenu intact.
+        std::fs::create_dir_all(ancien.join("sous")).unwrap();
+        std::fs::write(ancien.join("partie.json"), b"{v12}").unwrap();
+        std::fs::write(ancien.join("sous/x"), b"x").unwrap();
+        assert_eq!(migrer_dossier(&ancien, &nouveau), nouveau);
+        assert!(!ancien.exists());
+        assert_eq!(
+            std::fs::read(nouveau.join("partie.json")).unwrap(),
+            b"{v12}"
+        );
+        assert_eq!(std::fs::read(nouveau.join("sous/x")).unwrap(), b"x");
+        // Les deux existent : rien n'est touché, le nouveau sert.
+        std::fs::create_dir_all(&ancien).unwrap();
+        std::fs::write(ancien.join("partie.json"), b"{vieux}").unwrap();
+        assert_eq!(migrer_dossier(&ancien, &nouveau), nouveau);
+        assert_eq!(
+            std::fs::read(nouveau.join("partie.json")).unwrap(),
+            b"{v12}"
+        );
+        assert_eq!(
+            std::fs::read(ancien.join("partie.json")).unwrap(),
+            b"{vieux}"
+        );
+        // Déplacement refusé (ici : parent absent ; sous Windows, un fichier ouvert) : copie
+        // complète, l'ancien reste intact.
+        let ailleurs = d.join("absent/Deskquarium");
+        assert_eq!(migrer_dossier(&ancien, &ailleurs), ailleurs);
+        assert_eq!(
+            std::fs::read(ailleurs.join("partie.json")).unwrap(),
+            b"{vieux}"
+        );
+        assert_eq!(
+            std::fs::read(ancien.join("partie.json")).unwrap(),
+            b"{vieux}"
+        );
+        assert!(!d.join("absent/Deskquarium.migration").exists());
+        // Copie impossible aussi (cible sous un fichier) : on reste dans l'ancien dossier.
+        std::fs::write(d.join("fichier"), b"").unwrap();
+        assert_eq!(
+            migrer_dossier(&ancien, &d.join("fichier/Deskquarium")),
+            ancien
+        );
+        assert_eq!(
+            std::fs::read(ancien.join("partie.json")).unwrap(),
+            b"{vieux}"
+        );
     }
 
     #[test]

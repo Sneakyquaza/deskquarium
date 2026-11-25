@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fabrique out/livraison/aquarium_windows_<version>.zip : aquarium.exe + LISEZMOI.txt + LICENCES.txt.
+# Fabrique out/livraison/Deskquarium-<version>.zip : deskquarium.exe + LISEZMOI.txt + LICENCES.txt.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 VERSION=${1:-v0.1}
@@ -7,12 +7,12 @@ export PATH="$HOME/.cargo/bin:$PATH"
 cargo build --release --target x86_64-pc-windows-gnu
 L=out/livraison
 mkdir -p "$L"
-cp target/x86_64-pc-windows-gnu/release/aquarium.exe "$L/"
+cp target/x86_64-pc-windows-gnu/release/deskquarium.exe "$L/"
 cp livraison/LISEZMOI.txt livraison/README.txt "$L/"
 {
-  echo "AQUARIUM - licences"
+  echo "DESKQUARIUM - licences"
   echo
-  echo "Le programme aquarium est sous licence MIT. Les œufs et décors sont dessinés par"
+  echo "Le programme Deskquarium est sous licence MIT. Les œufs et décors sont dessinés par"
   echo "le programme. Les sprites des 61 espèces (assets/especes) ont été générés pour ce"
   echo "projet avec un modèle d'image (ChatGPT, OpenAI) puis nettoyés au pixel près et animés"
   echo "par le programme ; designs originaux (Cthulhu et le monstre du Loch Ness : folklore et"
@@ -24,7 +24,7 @@ cp livraison/LISEZMOI.txt livraison/README.txt "$L/"
   echo
   echo "Bibliothèques Rust incluses dans l'exe (nom version : licence) :"
   cargo tree --target x86_64-pc-windows-gnu -e normal --prefix none --format "{p} : {l}" \
-    | sed 's/ (\*)//; s/ (proc-macro)//; s/ (\/home[^)]*)//' | sort -u | grep -v '^aquarium '
+    | sed 's/ (\*)//; s/ (proc-macro)//; s/ (\/home[^)]*)//' | sort -u | grep -v '^deskquarium '
   echo
   echo "Textes complets : https://opensource.org/license/mit , https://www.apache.org/licenses/LICENSE-2.0"
   echo
@@ -35,14 +35,14 @@ cp livraison/LISEZMOI.txt livraison/README.txt "$L/"
   cat assets/polices/OFL-Silkscreen.txt
 } > "$L/LICENCES.txt"
 # Textes en fins de ligne Windows dans le zip.
-python3 -I - "$L" "aquarium_windows_$VERSION.zip" <<'PY'
+python3 -I - "$L" "Deskquarium-$VERSION.zip" <<'PY'
 import sys, zipfile, pathlib
 d = pathlib.Path(sys.argv[1])
 with zipfile.ZipFile(d / sys.argv[2], "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
-    for n in ["aquarium.exe", "LISEZMOI.txt", "README.txt", "LICENCES.txt"]:
+    for n in ["deskquarium.exe", "LISEZMOI.txt", "README.txt", "LICENCES.txt"]:
         data = (d / n).read_bytes()
         if n.endswith(".txt") and b"\r\n" not in data:
             data = data.replace(b"\n", b"\r\n")
-        z.writestr("aquarium/" + n, data)
+        z.writestr("Deskquarium/" + n, data)
 PY
-ls -la "$L/aquarium_windows_$VERSION.zip"
+ls -la "$L/Deskquarium-$VERSION.zip"

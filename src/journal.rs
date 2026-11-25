@@ -1,4 +1,4 @@
-//! Journal de diagnostic : `journal.log` dans le dossier de sauvegarde (%APPDATA%\aquarium).
+//! Journal de diagnostic : `journal.log` dans le dossier de sauvegarde (%APPDATA%\Deskquarium).
 //! Incrustation sur le bureau, fenêtres trouvées, première image, pauses : ce qui permet de
 //! comprendre à distance pourquoi rien ne s'affiche.
 
