@@ -477,8 +477,13 @@ pub struct Reglages {
     pub incrustation: u8,
     /// Un poisson éclos qui rapporte plus que le plus faible de l'aquarium plein le remplace.
     pub equiper_auto: bool,
-    /// Mode Abysses : aquarium sombre des grands fonds.
+    /// Mode Abysses : aquarium sombre des grands fonds (choix manuel).
     pub abysses: bool,
+    /// v0.17 : Abysses automatique la nuit (21 h – 7 h, heure locale) ; ignore `abysses`.
+    pub abysses_auto: bool,
+    /// v0.17 : il fait nuit (relu une fois par minute par l'appli, pas sauvegardé).
+    #[serde(skip)]
+    pub nuit: bool,
     /// v0.9 : décor à thème (index de `decor::THEMES`, 0 = récif corallien).
     pub theme: u8,
     /// v0.9 (Windows) : attraper un poisson au bureau (clic maintenu sur un poisson).
@@ -496,6 +501,28 @@ pub struct Reglages {
     pub langue: Option<crate::i18n::Langue>,
 }
 
+impl Reglages {
+    /// Nuit pour le mode Abysses automatique : de 21 h à 7 h.
+    pub fn est_nuit(heure: u32) -> bool {
+        !(7..21).contains(&heure)
+    }
+
+    /// Mode Abysses affiché : la nuit en automatique, sinon le choix manuel.
+    pub fn abysses_actif(&self) -> bool {
+        if self.abysses_auto {
+            self.nuit
+        } else {
+            self.abysses
+        }
+    }
+
+    /// Bascule manuelle (menu) : quitte l'automatique et inverse l'état affiché.
+    pub fn basculer_abysses(&mut self) {
+        self.abysses = !self.abysses_actif();
+        self.abysses_auto = false;
+    }
+}
+
 impl Default for Reglages {
     fn default() -> Self {
         Reglages {
@@ -508,6 +535,8 @@ impl Default for Reglages {
             incrustation: 0,
             equiper_auto: false,
             abysses: false,
+            abysses_auto: true,
+            nuit: false,
             theme: 0,
             attraper: true,
             attraper_alt: false,
@@ -1398,6 +1427,39 @@ pub fn simuler(heures: f64, graine: u64) -> Vec<Jalon> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn abysses_automatiques() {
+        let mut r = Reglages::default();
+        assert!(r.abysses_auto);
+        for (h, nuit) in [
+            (20, false),
+            (21, true),
+            (3, true),
+            (6, true),
+            (7, false),
+            (12, false),
+        ] {
+            r.nuit = Reglages::est_nuit(h);
+            assert_eq!(r.abysses_actif(), nuit, "{h} h");
+        }
+        // Manuel : suit le choix, quelle que soit l'heure.
+        r.abysses_auto = false;
+        r.nuit = true;
+        assert!(!r.abysses_actif());
+        r.abysses = true;
+        r.nuit = false;
+        assert!(r.abysses_actif());
+        // Menu : la nuit en automatique, les Abysses s'éteignent et l'automatique s'arrête.
+        let mut r = Reglages {
+            nuit: true,
+            ..Reglages::default()
+        };
+        r.basculer_abysses();
+        assert!(!r.abysses_auto && !r.abysses_actif());
+        r.basculer_abysses();
+        assert!(r.abysses_actif());
+    }
 
     #[test]
     fn oeufs_exceptionnels() {

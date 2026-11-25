@@ -206,7 +206,7 @@ impl Ecloserie {
             self.decor.ecran,
             disp,
             e,
-            p.reglages.abysses,
+            p.reglages.abysses_actif(),
             p.reglages.teinte
         );
         if self.decor.apercu.as_ref().is_some_and(|a| a.0 == cle) {

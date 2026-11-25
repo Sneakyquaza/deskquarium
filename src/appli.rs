@@ -74,6 +74,8 @@ pub struct Appli {
     occulte: bool,
     #[cfg_attr(not(windows), allow(dead_code))]
     verif_occlusion: Instant,
+    /// v0.17 : dernière lecture de l'heure locale (mode Abysses automatique).
+    verif_heure: Option<Instant>,
     /// v0.12 : ligne « Performance » du journal toutes les 60 s (Windows).
     #[cfg(windows)]
     perf: Option<(Instant, u64, u64)>,
@@ -210,6 +212,7 @@ pub fn lancer(o: Options) -> Result<(), String> {
         quitter: false,
         occulte: false,
         verif_occlusion: Instant::now(),
+        verif_heure: None,
         #[cfg(windows)]
         perf: None,
         images_total: 0,
@@ -330,8 +333,7 @@ impl Appli {
                 self.focus_ecloserie = true;
             }
             Commande::Abysses => {
-                let r = &mut self.partie.reglages;
-                r.abysses = !r.abysses;
+                self.partie.reglages.basculer_abysses();
                 self.sauver();
             }
             Commande::Tester =>
@@ -821,6 +823,16 @@ impl Appli {
         self.tick = maintenant;
         // L'argent continue même en pause.
         self.partie.avancer(dt);
+        // v0.17 : heure locale relue une fois par minute (Abysses automatique la nuit) ; les
+        // captures restent de jour.
+        if self.captures.is_none()
+            && self
+                .verif_heure
+                .is_none_or(|v| v.elapsed() >= Duration::from_secs(60))
+        {
+            self.verif_heure = Some(Instant::now());
+            self.partie.reglages.nuit = crate::jeu::Reglages::est_nuit(heure_locale());
+        }
         if self.verif_plein_ecran.elapsed() > Duration::from_secs(1) {
             self.verif_plein_ecran = Instant::now();
             #[cfg(windows)]
@@ -863,7 +875,7 @@ impl Appli {
         let fige = self.pause || self.plein_ecran || self.occulte;
         #[cfg(windows)]
         if let Some(s) = &self.systeme {
-            s.signaler_abysses(self.partie.reglages.abysses);
+            s.signaler_abysses(self.partie.reglages.abysses_actif());
             s.signaler_pause(self.pause);
         }
         let (lp, hp) = self.preparer(taille);
@@ -1011,6 +1023,24 @@ impl Appli {
             },
         ));
         self.perf = Some((Instant::now(), cpu, images));
+    }
+}
+
+/// v0.17 : heure locale (0..24) ; hors Windows, heure UTC (fenêtre de test).
+fn heure_locale() -> u32 {
+    #[cfg(windows)]
+    {
+        // SAFETY : GetLocalTime remplit simplement la structure fournie.
+        let t = unsafe {
+            let mut t = std::mem::zeroed();
+            windows_sys::Win32::System::SystemInformation::GetLocalTime(&mut t);
+            t
+        };
+        u32::from(t.wHour)
+    }
+    #[cfg(not(windows))]
+    {
+        (sauve::maintenant() / 3600 % 24) as u32
     }
 }
 

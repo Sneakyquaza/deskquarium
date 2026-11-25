@@ -167,7 +167,10 @@ pub fn preparer(o: &Options) -> Result<Prepare, String> {
     } else {
         crate::sauve::charger(&crate::sauve::dossier()).0
     };
-    partie.reglages.abysses |= o.abysses;
+    if o.abysses {
+        partie.reglages.abysses = true;
+        partie.reglages.abysses_auto = false;
+    }
     if let Some(t) = o.theme {
         partie.reglages.theme = t;
     }
@@ -780,6 +783,7 @@ fn audit_ligne(
     let mut p = Partie::nouvelle(0, 1);
     p.reglages.teinte = 0.0;
     p.reglages.abysses = abysses;
+    p.reglages.abysses_auto = false;
     let mut a = Alea(11);
     let mut n = Nageur::new(1, e.rarete, s, l as f32 * 0.2, h as f32 * 0.45, &mut a);
     n.gauche = false;

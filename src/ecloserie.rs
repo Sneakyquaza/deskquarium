@@ -1595,7 +1595,11 @@ impl Ecloserie {
                 tr("Mode Abysses"),
                 tr("Aquarium des grands fonds : eau sombre, neige marine, poissons qui luisent."),
                 &mut |ui| {
-                    ui.checkbox(&mut r.abysses, tr("Mode Abysses"));
+                    ui.checkbox(&mut r.abysses_auto, tr("Automatique la nuit (21 h – 7 h)"));
+                    // Automatique : la coche manuelle montre l'état du moment, sans effet.
+                    let mut actif = r.abysses_actif();
+                    let c = if r.abysses_auto { &mut actif } else { &mut r.abysses };
+                    ui.add_enabled(!r.abysses_auto, egui::Checkbox::new(c, tr("Mode Abysses")));
                 },
             );
             ui.label(

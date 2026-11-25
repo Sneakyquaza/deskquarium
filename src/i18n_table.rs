@@ -88,6 +88,7 @@ pub static TABLE: &[(&str, &str)] = &[
     ("Mise à jour v{}", "Update v{}"),
     ("Mises à jour", "Updates"),
     ("Mode Abysses", "Abyss mode"),
+    ("Automatique la nuit (21 h – 7 h)", "Automatic at night (9 pm – 7 am)"),
     ("Mode fenêtre", "Window mode"),
     ("Modifier le décor", "Edit the decor"),
     ("Mon aquarium", "My aquarium"),

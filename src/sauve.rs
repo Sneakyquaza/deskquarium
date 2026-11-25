@@ -428,6 +428,8 @@ mod tests {
         assert!(msg.is_none(), "{msg:?}");
         assert_eq!(q.version, crate::jeu::VERSION);
         assert!(q.poissons[0].shiny && q.reglages.abysses);
+        // v0.17 : champ absent des anciennes sauvegardes → Abysses automatique la nuit.
+        assert!(q.reglages.abysses_auto);
         assert_eq!(q.reglages.theme, 0);
         assert!(q.reglages.attraper && !q.reglages.attraper_alt);
         assert!(q.decor_achete.is_empty() && q.decor_pose.is_empty());

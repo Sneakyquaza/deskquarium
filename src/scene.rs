@@ -1335,8 +1335,10 @@ impl Aquarium {
         if self.decor && (self.theme != theme || self.poses != partie.decor_pose) {
             self.decorer(theme, &partie.decor_pose);
         }
-        if self.teinte_fond != partie.reglages.teinte || self.abysses != partie.reglages.abysses {
-            self.abysses = partie.reglages.abysses;
+        if self.teinte_fond != partie.reglages.teinte
+            || self.abysses != partie.reglages.abysses_actif()
+        {
+            self.abysses = partie.reglages.abysses_actif();
             self.refaire_fond(partie.reglages.teinte);
         }
         let t = self.temps;
