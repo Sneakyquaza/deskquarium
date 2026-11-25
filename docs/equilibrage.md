@@ -157,3 +157,22 @@ Simulation (600 h, mêmes 3 parties ; le flux aléatoire change dès qu'une piti
 | Fin (25 j) | 39,2 / 50,9 / 47 M/s | 47,1 / 54 / 59,8 M/s |
 
 Lecture : la pitié de la rivière accélère la première heure (un Épique arrive tôt), le reste de la courbe bouge dans le bruit des tirages ; revenu final +10 à +25 %. Levier si c'est trop généreux : le N de la rivière (40 → 60).
+
+## v0.16 : nourriture
+
+Sept nourritures achetées dans l'Écloserie (onglet Nourriture, réserve de 999 au plus), jetées dans l'aquarium ; les poissons qui les mangent donnent un bonus temporaire. Valeurs dans `src/nourriture.rs`.
+
+| Nourriture | Prix | Revenu | Durée d'un repas | Chance éclosions | Morceaux × bouchées | Poissons attirés | Revenu « rentable » |
+|---|---|---|---|---|---|---|---|
+| Flocons | 15 | ×1,5 | 1 min | | 6 × 1 | minuscules à moyens | ≈ 0,5/s |
+| Granulés | 1 500 | ×1,75 | 1 min 30 | | 4 × 1 | petits à grands | ≈ 20/s |
+| Vers de vase | 60 k | ×2 | 2 min | | 3 × 1 | petits à grands | ≈ 500/s |
+| Crevette | 2,5 M | ×2,5 | 2 min 30 | | 1 × 2 | moyens à énormes | ≈ 10 k/s |
+| Morceau de calamar | 50 M | ×3 | 3 min | ×1,5 | 1 × 3 | moyens à énormes | ≈ 140 k/s |
+| Cage à requins | 1,5 Md | ×4 | 4 min | ×2 | 1 × 4 | grands à colossaux | ≈ 2 M/s |
+| Festin abyssal | 50 Md | ×6 | 5 min | ×3 | 1 × 5 | tous | ≈ 30 M/s |
+
+- Prix ≈ revenu rentable × (mult − 1) × durée : une nourriture se rembourse dès que le revenu dépasse cette valeur. Tenir un bonus en continu coûte prix / durée par seconde (cage : 6,25 M/s) : chaque palier devient le bon choix quand le revenu grandit (calamar vers 1 M/s, cage vers 10 M/s, festin vers 40 M/s).
+- Un seul bonus à la fois (`nourriture::ajouter`) : la valeur (mult − 1) × secondes se conserve. Meilleure nourriture : elle remplace, le reste de l'ancienne converti ; moins bonne : prolonge à proportion (60 s de flocons = 30 s de vers). Plafond : 3 repas de la nourriture active. Pas de multiplicateurs empilés.
+- Chaque bouchée donne sa part du repas (1 / (morceaux × bouchées)) : il faut que les poissons mangent tout. Un morceau resté 25 s sur le sable disparaît.
+- Le bonus s'use en temps réel, compte aussi hors ligne pour le temps qui lui restait ; la chance multiplie les bonus shiny et modificateur de l'œuf (`acheter_oeuf_a`). Sauvegarde version 8 (`nourriture`, `festin`, vides dans les anciennes).

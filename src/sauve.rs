@@ -453,4 +453,61 @@ mod tests {
         assert_eq!(r.decor_pose, q.decor_pose);
         assert_eq!(r.decor_achete, q.decor_achete);
     }
+
+    #[test]
+    fn sauvegarde_v014_migree_avec_nourriture() {
+        // v0.14 (version 7) : ni réserve de nourriture ni bonus du repas.
+        let d = dossier_test("v014");
+        let json = r#"{"version":7,"argent":5.0,"total_gagne":5.0,"horodatage":1700000000,
+            "prochain_id":1,"alea":9,"poissons":[],"oeufs_ouverts":[0,0,0,0,0,0,0,0],
+            "eclos":[0,0,0,0,0,0,0,0,0]}"#;
+        std::fs::write(fichier(&d), json).unwrap();
+        let (q, msg) = charger(&d);
+        assert!(msg.is_none(), "{msg:?}");
+        assert_eq!(q.version, crate::jeu::VERSION);
+        assert_eq!(q.nourriture, vec![0; crate::nourriture::NOURRITURES.len()]);
+        assert_eq!(q.festin, None);
+        // Les créatures d'avant la v0.16 arrivent sans cadenas ; le cadenas est sauvegardé.
+        let j = json.replace(
+            r#""poissons":[]"#,
+            r#""poissons":[{"id":1,"graine":11,"rarete":"Commun","taille":1.0,"niveau":1,"actif":false,"oeuf":0,"espece":"clown","variante":0}]"#,
+        );
+        std::fs::write(fichier(&d), j).unwrap();
+        let (mut v, msg) = charger(&d);
+        assert!(msg.is_none(), "{msg:?}");
+        assert!(!v.poissons[0].verrou);
+        v.verrouiller(1).unwrap();
+        ecrire(&d, &v).unwrap();
+        assert!(charger(&d).0.poissons[0].verrou);
+        std::fs::write(fichier(&d), json).unwrap();
+        let (q, _) = charger(&d);
+        // Aller-retour : réserve et bonus gardés.
+        let mut q = q;
+        q.nourriture[5] = 3;
+        q.manger(5, 0.5);
+        ecrire(&d, &q).unwrap();
+        let (r, _) = charger(&d);
+        assert_eq!(r.nourriture[5], 3);
+        assert_eq!(r.festin, q.festin);
+        // Bonus abîmé (nourriture inconnue, durée hors limite) : retiré ou ramené au plafond.
+        for (festin, attendu) in [
+            (r#"{"niveau":42,"reste":10.0}"#, None),
+            (r#"{"niveau":1,"reste":-3.0}"#, None),
+            (
+                r#"{"niveau":1,"reste":1e9}"#,
+                Some(90.0 * crate::nourriture::PLAFOND),
+            ),
+        ] {
+            let j = json.replace(
+                r#""prochain_id":1"#,
+                &format!(r#""festin":{festin},"nourriture":[1,2],"prochain_id":1"#),
+            );
+            std::fs::write(fichier(&d), j).unwrap();
+            let (q, msg) = charger(&d);
+            assert!(msg.is_none(), "{msg:?}");
+            assert_eq!(q.festin.map(|f| f.reste), attendu, "{festin}");
+            assert_eq!(q.nourriture.len(), crate::nourriture::NOURRITURES.len());
+            assert_eq!(q.nourriture[1], 2);
+        }
+    }
 }

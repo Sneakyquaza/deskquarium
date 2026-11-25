@@ -1,6 +1,7 @@
 //! Logique du jeu idle : raretés, œufs, poissons, revenus, gains hors ligne, format des nombres.
 //! Toutes les valeurs d'équilibrage sont ici (courbes documentées dans `docs/equilibrage.md`).
 
+use crate::nourriture::{Festin, MAX_STOCK, NOURRITURES, PLAFOND};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -416,6 +417,9 @@ pub struct Poisson {
     pub shiny: bool,
     #[serde(default)]
     pub modif: Option<Modif>,
+    /// v0.16 : verrouillé (cadenas) : ni vendu par « Tout vendre », ni relâché.
+    #[serde(default)]
+    pub verrou: bool,
 }
 
 impl Poisson {
@@ -557,6 +561,12 @@ pub struct Partie {
     /// v0.11 : le dernier œuf acheté a déclenché la pitié (rareté garantie).
     #[serde(skip)]
     pub derniere_pitie: bool,
+    /// v0.16 : nourriture en réserve, par nourriture (ordre de `nourriture::NOURRITURES`).
+    #[serde(default)]
+    pub nourriture: Vec<u32>,
+    /// v0.16 : bonus du repas en cours.
+    #[serde(default)]
+    pub festin: Option<Festin>,
 }
 
 /// Objet de décor posé (v0.9) : sur l'écran `ecran` (0 = principal, ordre de
@@ -573,8 +583,9 @@ pub struct Pose {
 }
 
 /// Version du format de sauvegarde (2 = espèces, 3 = rareté Préhistorique et œuf d'ambre,
-/// 4 = shiny, modificateurs et index, 5 = décor à thème et objets de décor, 6 = pitié).
-pub const VERSION: u32 = 7;
+/// 4 = shiny, modificateurs et index, 5 = décor à thème et objets de décor, 6 = pitié,
+/// 7 = 24 images/s, 8 = nourriture et bonus du repas).
+pub const VERSION: u32 = 8;
 /// Exemplaires au plus d'un même objet de décor.
 pub const MAX_EXEMPLAIRES: u32 = 8;
 
@@ -594,6 +605,8 @@ pub enum Refus {
     AquariumPlein,
     /// Œuf exceptionnel hors de son moment.
     Indisponible,
+    /// v0.16 : créature verrouillée (cadenas).
+    Verrouille,
 }
 
 impl Partie {
@@ -618,6 +631,8 @@ impl Partie {
             dernier_dore: false,
             pitie: vec![0; OEUFS.len()],
             derniere_pitie: false,
+            nourriture: vec![0; NOURRITURES.len()],
+            festin: None,
         };
         let id = p.ajouter(Rarete::Commun, 1.0, 0);
         // Le poisson offert est toujours normal (départ identique pour tout le monde).
@@ -652,6 +667,7 @@ impl Partie {
             variante,
             shiny: forme.shiny,
             modif: forme.modif,
+            verrou: false,
         });
         self.eclos[rarete.index()] += 1;
         *self.vus.entry(e.cle.to_string()).or_default() += 1;
@@ -776,6 +792,16 @@ impl Partie {
         if self.version < 7 && self.reglages.ips == 30 {
             self.reglages.ips = 24;
         }
+        // Version 8 (v0.16) : réserve de nourriture (anciennes sauvegardes : vide), bonus du
+        // repas relu prudemment (nourriture inconnue ou durée abîmée : plus de bonus).
+        self.nourriture
+            .resize(NOURRITURES.len().max(self.nourriture.len()), 0);
+        self.festin = self.festin.filter(|f| {
+            (f.niveau as usize) < NOURRITURES.len() && f.reste.is_finite() && f.reste > 0.0
+        });
+        if let Some(f) = &mut self.festin {
+            f.reste = f.reste.min(f.nourriture().duree * PLAFOND);
+        }
         self.version = self.version.max(VERSION);
     }
 
@@ -816,14 +842,23 @@ impl Partie {
         self.poissons.iter().filter(|p| p.actif).count()
     }
 
-    /// Revenu de l'aquarium (poissons actifs, bonus des index complets compris).
+    /// Revenu de l'aquarium (poissons actifs, bonus des index complets et du repas compris).
     pub fn revenu_par_s(&self) -> f64 {
+        self.revenu_sans_festin() * self.mult_festin()
+    }
+
+    fn revenu_sans_festin(&self) -> f64 {
         self.poissons
             .iter()
             .filter(|p| p.actif)
             .map(Poisson::revenu)
             .sum::<f64>()
             * self.bonus_index()
+    }
+
+    /// Multiplicateur du bonus du repas en cours (1 sans bonus).
+    pub fn mult_festin(&self) -> f64 {
+        self.festin.map_or(1.0, |f| f.nourriture().mult)
     }
 
     pub fn crediter(&mut self, montant: f64) {
@@ -834,15 +869,67 @@ impl Partie {
     pub fn avancer(&mut self, dt: f64) {
         let r = self.revenu_par_s();
         self.crediter(r * dt);
+        self.user_festin(dt);
     }
 
-    /// Crédite les gains depuis `horodatage` (plafond 8 h) ; renvoie le montant.
+    /// Le bonus du repas s'use (fini : plus de bonus).
+    fn user_festin(&mut self, dt: f64) {
+        if let Some(f) = &mut self.festin {
+            f.reste -= dt;
+            if f.reste <= 0.0 {
+                self.festin = None;
+            }
+        }
+    }
+
+    /// Crédite les gains depuis `horodatage` (plafond 8 h) ; renvoie le montant. Le bonus du
+    /// repas compte pour le temps qui lui restait.
     pub fn gains_hors_ligne(&mut self, maintenant: u64) -> f64 {
         let ecoule = maintenant.saturating_sub(self.horodatage) as f64;
-        let gain = self.revenu_par_s() * ecoule.min(HORS_LIGNE_MAX_S);
+        let base = self.revenu_sans_festin();
+        let duree = ecoule.min(HORS_LIGNE_MAX_S);
+        let bonus = self
+            .festin
+            .map_or(0.0, |f| (f.nourriture().mult - 1.0) * f.reste.min(duree));
+        let gain = base * (duree + bonus);
         self.crediter(gain);
+        self.user_festin(ecoule);
         self.horodatage = maintenant;
         gain
+    }
+
+    /// Achète `n` exemplaires de la nourriture `i` (réserve plafonnée à `MAX_STOCK`).
+    pub fn acheter_nourriture(&mut self, i: usize, n: u32) -> Result<(), Refus> {
+        let nn = NOURRITURES.get(i).ok_or(Refus::Introuvable)?;
+        self.nourriture.resize(NOURRITURES.len(), 0);
+        let n = n.min(MAX_STOCK.saturating_sub(self.nourriture[i]));
+        if n == 0 {
+            return Err(Refus::Introuvable);
+        }
+        let prix = nn.prix * n as f64;
+        if self.argent < prix {
+            return Err(Refus::PasAssez);
+        }
+        self.argent -= prix;
+        self.nourriture[i] += n;
+        Ok(())
+    }
+
+    /// Prend un exemplaire de la nourriture `i` dans la réserve (pour le jeter).
+    pub fn prendre_nourriture(&mut self, i: usize) -> Result<(), Refus> {
+        match self.nourriture.get_mut(i) {
+            Some(k) if *k > 0 => {
+                *k -= 1;
+                Ok(())
+            }
+            Some(_) => Err(Refus::PasAssez),
+            None => Err(Refus::Introuvable),
+        }
+    }
+
+    /// Un poisson a mangé une bouchée de la nourriture `i` (`part` du repas entier).
+    pub fn manger(&mut self, i: usize, part: f64) {
+        self.festin = crate::nourriture::ajouter(self.festin, i, part);
     }
 
     pub fn tirer_rarete(alea: &mut Alea, oeuf: &Oeuf) -> Rarete {
@@ -901,6 +988,9 @@ impl Partie {
             rarete = rarete.max(Self::tirer_rarete(&mut self.alea, oeuf));
             bonus = (3.0, 2.0);
         }
+        // v0.16 : bonus du repas (calamar, cage, festin) : chance aux éclosions.
+        let chance = self.festin.map_or(1.0, |f| f.nourriture().chance);
+        bonus = (bonus.0 * chance, bonus.1 * chance);
         self.derniere_pitie = false;
         self.pitie.resize(OEUFS.len().max(self.pitie.len()), 0);
         if let Some((min, n)) = oeuf.pitie {
@@ -1064,9 +1154,35 @@ impl Partie {
             .iter()
             .position(|p| p.id == id)
             .ok_or(Refus::Introuvable)?;
+        if self.poissons[i].verrou {
+            return Err(Refus::Verrouille);
+        }
         let prix = self.poissons.remove(i).prix_relache();
         self.argent = (self.argent + prix).min(ARGENT_MAX);
         Ok(prix)
+    }
+
+    /// v0.16 : pose ou retire le cadenas d'une créature.
+    pub fn verrouiller(&mut self, id: u64) -> Result<(), Refus> {
+        let p = self.poisson_mut(id)?;
+        p.verrou = !p.verrou;
+        Ok(())
+    }
+
+    /// v0.16 : ce que rapporterait « Tout vendre » : créatures de la réserve non verrouillées
+    /// (nombre, total).
+    pub fn prix_tout_vendre(&self) -> (usize, f64) {
+        let v = self.poissons.iter().filter(|p| !p.actif && !p.verrou);
+        (v.clone().count(), v.map(Poisson::prix_relache).sum())
+    }
+
+    /// v0.16 : vend (relâche) toute la réserve sauf les créatures verrouillées ; renvoie le
+    /// nombre vendu et le total gagné.
+    pub fn tout_vendre(&mut self) -> (usize, f64) {
+        let (n, total) = self.prix_tout_vendre();
+        self.poissons.retain(|p| p.actif || p.verrou);
+        self.argent = (self.argent + total).min(ARGENT_MAX);
+        (n, total)
     }
 }
 
@@ -1786,5 +1902,96 @@ mod tests {
         // Œuf exceptionnel hors de son moment : refusé.
         p.argent = 1e300;
         assert_eq!(p.acheter_lot(7, 3, 0), Err(Refus::Indisponible));
+    }
+
+    #[test]
+    fn nourriture_achetee_jetee_et_bonus() {
+        let mut p = Partie::nouvelle(0, 4);
+        let base = p.revenu_par_s();
+        assert_eq!(p.acheter_nourriture(5, 1), Err(Refus::PasAssez));
+        p.argent = 1e10;
+        p.acheter_nourriture(5, 2).unwrap();
+        assert_eq!(p.nourriture[5], 2);
+        assert!((p.argent - (1e10 - 3e9)).abs() < 1.0);
+        p.prendre_nourriture(5).unwrap();
+        p.prendre_nourriture(5).unwrap();
+        assert_eq!(p.prendre_nourriture(5), Err(Refus::PasAssez));
+        // Quatre bouchées de cage = un repas : revenu ×4 pendant 4 min.
+        for _ in 0..4 {
+            p.manger(5, 0.25);
+        }
+        assert!((p.revenu_par_s() / base - 4.0).abs() < 1e-9);
+        let avant = p.argent;
+        p.avancer(10.0);
+        assert!((p.argent - avant - base * 40.0).abs() < 1e-6);
+        assert!((p.festin.unwrap().reste - 230.0).abs() < 1e-9);
+        // Hors ligne : le bonus compte pour le temps qui lui restait, puis s'arrête.
+        p.horodatage = 1000;
+        let gain = p.gains_hors_ligne(1000 + 3600);
+        assert!(
+            (gain - base * (3600.0 + 3.0 * 230.0)).abs() < 1e-6,
+            "{gain}"
+        );
+        assert_eq!(p.festin, None);
+        assert_eq!(p.revenu_par_s(), base);
+        // Chance aux éclosions : la cage double les bonus de l'œuf (shiny plus fréquents).
+        let shiny = |festin: bool| {
+            let mut q = Partie::nouvelle(0, 11);
+            q.argent = 1e300;
+            let mut n = 0;
+            for _ in 0..3000 {
+                if festin {
+                    q.festin = Some(Festin {
+                        niveau: 6,
+                        reste: 100.0,
+                    });
+                }
+                let id = q.acheter_oeuf_a(0, 0).unwrap();
+                n += q.poissons.iter().any(|f| f.id == id && f.shiny) as u32;
+                q.poissons.retain(|f| f.id != id);
+                q.oeufs_ouverts[0] = 0;
+            }
+            n
+        };
+        assert!(
+            shiny(true) > shiny(false) * 2,
+            "{} {}",
+            shiny(true),
+            shiny(false)
+        );
+    }
+
+    #[test]
+    fn tout_vendre_epargne_les_verrouilles() {
+        let mut p = Partie::nouvelle(0, 6);
+        p.argent = 1e9;
+        for _ in 0..6 {
+            p.acheter_oeuf(0).unwrap();
+        }
+        let ids: Vec<u64> = p.poissons.iter().map(|f| f.id).collect();
+        for &id in &ids[1..5] {
+            p.basculer(id).unwrap();
+        }
+        p.verrouiller(ids[2]).unwrap();
+        // Vente individuelle refusée tant qu'il est verrouillé, rien ne bouge.
+        let argent = p.argent;
+        assert_eq!(p.relacher(ids[2]), Err(Refus::Verrouille));
+        assert_eq!(p.argent, argent);
+        let attendu: f64 = p
+            .poissons
+            .iter()
+            .filter(|f| !f.actif && !f.verrou)
+            .map(Poisson::prix_relache)
+            .sum();
+        assert_eq!(p.prix_tout_vendre(), (3, attendu));
+        assert_eq!(p.tout_vendre(), (3, attendu));
+        assert!((p.argent - argent - attendu).abs() < 1e-6);
+        // Restent : l'aquarium entier et le verrouillé de la réserve.
+        assert!(p.poissons.iter().any(|f| f.id == ids[2] && !f.actif));
+        assert_eq!(p.poissons.len(), ids.len() - 3);
+        assert_eq!(p.tout_vendre(), (0, 0.0));
+        // Cadenas retiré : il se vend de nouveau.
+        p.verrouiller(ids[2]).unwrap();
+        assert!(p.relacher(ids[2]).is_ok());
     }
 }

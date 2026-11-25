@@ -41,6 +41,9 @@ pub enum Commande {
     ChercherMaj,
 }
 
+/// v0.16 : « poisson » armé au crochet en visant : un appui sur le bureau jette la nourriture.
+const NOURRIR: u64 = u64::MAX;
+
 pub struct Appli {
     pub partie: Partie,
     aquarium: Option<Aquarium>,
@@ -454,6 +457,8 @@ impl Appli {
         let e = self.echelle as f32;
         let r = &self.partie.reglages;
         let attraper = r.attraper && !fige;
+        // v0.16 : nourriture à jeter au prochain clic sur le bureau vide (hors icônes).
+        let nourrir = self.ecloserie.viser.map(|v| v.0).filter(|_| !fige);
         let mut suites: Vec<Suite> = Vec::new();
         #[allow(unused_mut)]
         let mut pos: Option<(f32, f32)> = None;
@@ -464,7 +469,7 @@ impl Appli {
             fait = true;
             // Crochet installé seulement si le réglage est actif (retiré sinon) ; v0.12 : retiré
             // aussi tant que tous les écrans sont recouverts (et le curseur n'est plus lu).
-            let voulu = r.attraper && !self.occulte;
+            let voulu = (r.attraper || nourrir.is_some()) && !self.occulte;
             if self.crochet_voulu != Some(voulu) {
                 self.crochet_voulu = Some(voulu);
                 self.crochet = None;
@@ -485,8 +490,12 @@ impl Appli {
             });
             // Poisson attrapable sous le curseur, sur le bureau vide : publié au crochet.
             let mut arme = None;
-            if let (true, Some((pt, liste)), Some(p)) = (attraper, cur, pos) {
-                if let Some(id) = aq.poisson_sous(p, true).filter(|_| !aq.en_prise()) {
+            if let (true, Some((pt, liste)), Some(p)) = (attraper || nourrir.is_some(), cur, pos) {
+                let id = match nourrir {
+                    Some(_) => Some(NOURRIR),
+                    None => aq.poisson_sous(p, true).filter(|_| !aq.en_prise()),
+                };
+                if let Some(id) = id {
                     // Icône sous le curseur : 10 recherches par seconde au plus.
                     let icone = match self.icone_vue {
                         Some((q, t, v))
@@ -507,7 +516,7 @@ impl Appli {
                     }
                 }
             }
-            crate::crochet::armer(arme, r.attraper_alt);
+            crate::crochet::armer(arme, r.attraper_alt && nourrir.is_none());
             if let Some(c) = &self.crochet {
                 suites = c.suites();
             }
@@ -541,9 +550,10 @@ impl Appli {
                 let (x, y) = px(p);
                 suites.push(if appui {
                     let alt_ok = !r.attraper_alt || ctx.input(|i| i.modifiers.alt);
-                    let id = aq
-                        .poisson_sous((p.x * ppp / e, p.y * ppp / e), true)
-                        .filter(|_| attraper && alt_ok);
+                    let id = nourrir.map(|_| NOURRIR).or_else(|| {
+                        aq.poisson_sous((p.x * ppp / e, p.y * ppp / e), true)
+                            .filter(|_| attraper && alt_ok)
+                    });
                     self.pince.appui(t, x, y, id).1
                 } else {
                     self.pince.relache(t).1
@@ -552,6 +562,16 @@ impl Appli {
         }
         for s in suites {
             match s {
+                // v0.16 : appui sur le bureau en visant : la nourriture tombe là.
+                Suite::Appui(NOURRIR) => {
+                    if let (Some(n), Some(p)) = (nourrir, pos) {
+                        if self.partie.prendre_nourriture(n).is_ok() {
+                            aq.jeter(n, Some(p));
+                        }
+                        self.ecloserie.viser = None;
+                    }
+                }
+                Suite::Clic(NOURRIR) => {}
                 Suite::Appui(id) => aq.appuyer(id),
                 Suite::RendreAppui(..) => aq.annuler(),
                 Suite::Clic(id) => aq.cliquer(id),
@@ -586,7 +606,7 @@ impl Appli {
             return;
         };
         let t = ui.input(|i| i.time);
-        let etapes: [(f64, &str); 13] = [
+        let etapes: [(f64, &str); 17] = [
             (1.0, "ecloserie-oeufs"),
             (1.5, "achat"),
             (3.3, "ecloserie-eclosion"),
@@ -599,7 +619,11 @@ impl Appli {
             (12.0, "decor-achats"),
             (12.8, "ecloserie-decor-boutique"),
             (13.8, "ecloserie-decor-editeur"),
-            (14.8, "fin"),
+            (14.2, "nourriture-achats"),
+            (14.8, "ecloserie-nourriture"),
+            (15.4, "reserve-verrous"),
+            (16.0, "ecloserie-reserve"),
+            (17.0, "fin"),
         ];
         let Some(&(_, nom)) = etapes.get(c.etape) else {
             return;
@@ -653,6 +677,29 @@ impl Appli {
                 }
                 self.partie.argent = 2.4e10;
             }
+            "nourriture-achats" => {
+                // v0.16 : un peu de réserve et un repas en cours (boutique et en-tête).
+                self.partie.nourriture = vec![12, 4, 0, 2, 0, 1, 0];
+                self.partie.manger(5, 0.75);
+                self.partie.argent = 2.4e10;
+            }
+            "reserve-verrous" => {
+                // v0.16 : quatre créatures en réserve, deux sous cadenas.
+                let ids: Vec<u64> = self
+                    .partie
+                    .poissons
+                    .iter()
+                    .filter(|f| f.actif)
+                    .take(4)
+                    .map(|f| f.id)
+                    .collect();
+                for (k, id) in ids.into_iter().enumerate() {
+                    let _ = self.partie.basculer(id);
+                    if k % 2 == 0 {
+                        let _ = self.partie.verrouiller(id);
+                    }
+                }
+            }
             "fin" => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
             _ => {
                 // La capture prend l'image suivante : l'onglet change d'abord.
@@ -667,6 +714,11 @@ impl Appli {
                         Onglet::Poissodex
                     }
                     "ecloserie-reglages" => Onglet::Reglages,
+                    "ecloserie-nourriture" => Onglet::Nourriture,
+                    "ecloserie-reserve" => {
+                        self.ecloserie.reserve = true;
+                        Onglet::Aquarium
+                    }
                     "ecloserie-decor-boutique" | "ecloserie-decor-editeur" => {
                         self.ecloserie.decor.editeur = nom == "ecloserie-decor-editeur";
                         Onglet::Decor
@@ -824,6 +876,24 @@ impl Appli {
         let calque = false;
         if let Some(aq) = &mut self.aquarium {
             aq.synchroniser(&self.partie);
+            // v0.16 : nourriture jetée depuis l'Écloserie (prise dans la réserve), bouchées
+            // mangées (bonus du repas), nourriture qui attend un clic (20 s au plus).
+            for n in self.ecloserie.jets.drain(..) {
+                if self.partie.prendre_nourriture(n).is_ok() {
+                    aq.jeter(n, None);
+                }
+            }
+            for (n, part) in aq.bouchees.drain(..) {
+                self.partie.manger(n, part);
+            }
+            if self
+                .ecloserie
+                .viser
+                .is_some_and(|v| v.1.elapsed() > Duration::from_secs(20))
+            {
+                self.ecloserie.viser = None;
+            }
+            aq.viser = self.ecloserie.viser.map(|v| v.0);
             if !fige || self.image_due {
                 self.image_due = false;
                 self.mesure.0 += 1;

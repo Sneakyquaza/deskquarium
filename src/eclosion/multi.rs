@@ -520,6 +520,7 @@ mod tests {
             variante: 0,
             shiny,
             modif: None,
+            verrou: false,
         }
     }
 

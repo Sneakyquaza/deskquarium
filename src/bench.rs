@@ -84,6 +84,7 @@ pub fn bench(secondes: f32, ips: u32, ancien: bool) -> Result<(), String> {
         abysses: false,
         theme: None,
         objets: Vec::new(),
+        nourrir: Vec::new(),
     };
     let debut = Instant::now();
     let (mut partie, mut aq, fond, e, (lp, hp), _) = preparer(&o)?;

@@ -75,6 +75,7 @@ pub fn partie_demo() -> Partie {
             variante: 0,
             shiny: false,
             modif: None,
+            verrou: false,
         });
         p.eclos[e.rarete.index()] += 1;
         *p.vus.entry(cle.to_string()).or_default() += 1;
@@ -128,6 +129,9 @@ pub struct Options {
     pub theme: Option<u8>,
     /// v0.9 : objets de décor posés (clés), répartis sur l'écran principal.
     pub objets: Vec<String>,
+    /// v0.16 : nourriture jetée : (nourriture, seconde, x en fraction de l'écran principal ou
+    /// au hasard, hauteur en fraction de la toile comme un clic, sinon d'en haut).
+    pub nourrir: Vec<(usize, f32, Option<f32>, Option<f32>)>,
 }
 
 pub type Prepare = (
@@ -189,6 +193,8 @@ pub fn preparer(o: &Options) -> Result<Prepare, String> {
         &d.travail(e as u32),
     );
     aq.synchroniser(&partie);
+    // Captures identiques d'une fois à l'autre : les dessins penchés sont faits tout de suite.
+    aq.budget_penche = None;
     let image_fond = match &o.fond {
         Some(f) => Some(
             image::open(f)
@@ -218,22 +224,40 @@ pub fn capture(o: &Options, sortie: &Path) -> Result<(), String> {
     let dt = 1.0 / 30.0;
     let n = (o.secondes / dt) as usize;
     let debut = Instant::now();
-    for _ in 0..n.max(1) {
+    for k in 0..n.max(1) {
+        nourrir(o, &mut partie, &mut aq, k, dt);
         partie.avancer(dt as f64);
         aq.avancer(dt);
         aq.dessiner(&partie);
     }
     let par_image = debut.elapsed().as_secs_f64() * 1000.0 / n.max(1) as f64;
     println!(
-        "toile {}x{} (x{e}), {} poissons : {par_image:.2} ms par image (simulation + dessin)",
+        "toile {}x{} (x{e}), {} poissons : {par_image:.2} ms par image (simulation + dessin), \
+         dessins penchés {} Ko",
         aq.toile.l,
         aq.toile.h,
-        aq.nageurs.len()
+        aq.nageurs.len(),
+        aq.octets_penches() / 1024
     );
     let mut img = fond::composer(&fond, &aq.toile, e);
     barres(&mut img, &d);
     creer_dossier(sortie)?;
     img.save(sortie).map_err(|e| e.to_string())
+}
+
+/// v0.16 : jette la nourriture prévue à l'image `k` (`Options::nourrir`) et donne les
+/// bouchées mangées à la partie.
+fn nourrir(o: &Options, partie: &mut Partie, aq: &mut Aquarium, k: usize, dt: f32) {
+    for &(n, t, x, y) in &o.nourrir {
+        if (t / dt) as usize == k {
+            let (x0, x1) = (aq.zone_principale().0, aq.zone_principale().1);
+            let y = y.map_or(f32::MIN, |f| aq.toile.h as f32 * f);
+            aq.jeter(n, x.map(|f| (x0 + (x1 - x0) * f, y)));
+        }
+    }
+    for (n, part) in aq.bouchees.drain(..) {
+        partie.manger(n, part);
+    }
 }
 
 pub fn video(o: &Options, sortie: &Path) -> Result<(), String> {
@@ -265,7 +289,8 @@ pub fn video(o: &Options, sortie: &Path) -> Result<(), String> {
     for _ in 0..30 * 30 {
         aq.avancer(dt);
     }
-    for _ in 0..(o.secondes * 30.0) as usize {
+    for k in 0..(o.secondes * 30.0) as usize {
+        nourrir(o, &mut partie, &mut aq, k, dt);
         partie.avancer(dt as f64);
         aq.avancer(dt);
         aq.dessiner(&partie);
@@ -897,6 +922,63 @@ pub fn planche_images(sortie: &Path, cles: &[&str], e: usize) -> Result<(), Stri
     enregistrer(&t, e, sortie)
 }
 
+/// v0.16 : espèces `cles` penchées (RotSprite, `penche.rs`), crans −4..4 (−30° à 30°, tête
+/// en bas à gauche, en haut à droite), tournées à droite puis à gauche, image 0, x`e`.
+pub fn planche_pente(sortie: &Path, cles: &[&str], e: usize) -> Result<(), String> {
+    let f = crate::toile::FIN as i32;
+    let crans: Vec<i8> = (-4..=4).collect();
+    let mut lignes = Vec::new();
+    for cle in cles {
+        let esp = crate::especes::par_cle(cle).ok_or(format!("espèce inconnue : {cle}"))?;
+        let s = crate::poisson::sprite(esp, 0, 1.0);
+        let p: Vec<_> = crans
+            .iter()
+            .map(|&c| crate::penche::pencher(&s, c))
+            .collect();
+        lignes.push((esp.nom, p));
+    }
+    let case = |s: &[crate::poisson::Sprite]| {
+        let l = s.iter().map(|s| s.l).max().unwrap_or(1);
+        let h = s.iter().map(|s| s.h).max().unwrap_or(1);
+        ((l + f - 1) / f + 1, (h + f - 1) / f + 1)
+    };
+    let (mut lt, mut ht) = (0usize, 0usize);
+    for (_, p) in &lignes {
+        let (cl, ch) = case(p);
+        lt = lt.max(crans.len() * cl as usize);
+        ht += 2 * ch as usize + 9;
+    }
+    let mut t = Toile::new(lt, ht);
+    t.rect(0, 0, lt as i32, ht as i32, [0x12, 0x22, 0x3a], 255);
+    let mut y0 = 0i32;
+    for (nom, p) in &lignes {
+        let (cl, ch) = case(p);
+        t.texte(2, y0 + 2, nom, [0xe8, 0xf0, 0xf4], 255, Some([0, 0, 0]));
+        y0 += 9;
+        for (k, s) in p.iter().enumerate() {
+            for (j, gauche) in [false, true].into_iter().enumerate() {
+                let (cx, cy) = (k as i32 * cl, y0 + j as i32 * ch);
+                if (k + j) % 2 == 0 {
+                    t.rect(cx, cy, cl, ch, [0x18, 0x2c, 0x48], 255);
+                }
+                let (ox, oy) = (cx * f + (cl * f - s.l) / 2, cy * f + (ch * f - s.h) / 2);
+                let im = &s.images[0];
+                for y in 0..s.h {
+                    for x in 0..s.l {
+                        let px = im.px((y * s.l + x) as usize);
+                        let xx = if gauche { s.l - 1 - x } else { x };
+                        if px[3] > 0 {
+                            t.poser_fin(ox + xx, oy + y, [px[0], px[1], px[2]], px[3]);
+                        }
+                    }
+                }
+            }
+        }
+        y0 += 2 * ch;
+    }
+    enregistrer(&t, e, sortie)
+}
+
 fn enregistrer(t: &Toile, e: usize, sortie: &Path) -> Result<(), String> {
     creer_dossier(sortie)?;
     image::save_buffer(
@@ -1094,6 +1176,7 @@ pub fn eclosion(
         variante: 0,
         shiny: forme.shiny,
         modif: forme.modif,
+        verrou: false,
     };
     let mut ecl = crate::eclosion::Eclosion::nouvelle(
         &f,

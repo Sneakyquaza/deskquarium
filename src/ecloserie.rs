@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 mod decor_ui;
+mod nourriture_ui;
 
 /// Jetons de couleur.
 pub const EAU: Color32 = Color32::from_rgb(0x10, 0x32, 0x4a);
@@ -123,6 +124,7 @@ pub enum Onglet {
     Aquarium,
     Poissodex,
     Decor,
+    Nourriture,
     Reglages,
 }
 
@@ -140,7 +142,9 @@ pub struct Ecloserie {
     pub index: usize,
     oeufs: Vec<TextureHandle>,
     confirmer: Option<u64>,
-    reserve: bool,
+    pub reserve: bool,
+    /// v0.16 : « Tout vendre » de la réserve en attente de confirmation.
+    confirmer_tout: bool,
     /// Message du haut (gains hors ligne, sauvegarde réparée…).
     pub bandeau: Option<String>,
     info: Option<(String, f64)>,
@@ -169,6 +173,11 @@ pub struct Ecloserie {
     revele_le: Option<f64>,
     /// Langue choisie au premier lancement (appliquée à la partie après l'en-tête).
     langue_choisie: Option<crate::i18n::Langue>,
+    /// v0.16 : nourriture à jeter au hasard (l'appli la jette), nourriture qui attend un clic
+    /// sur le bureau (et depuis quand), icônes de la boutique.
+    pub jets: Vec<usize>,
+    pub viser: Option<(usize, std::time::Instant)>,
+    icones_nourriture: Vec<TextureHandle>,
 }
 
 impl Ecloserie {
@@ -182,6 +191,7 @@ impl Ecloserie {
             oeufs: Vec::new(),
             confirmer: None,
             reserve: false,
+            confirmer_tout: false,
             bandeau: None,
             info: None,
             dossier,
@@ -198,6 +208,9 @@ impl Ecloserie {
             auto_arret: None,
             revele_le: None,
             langue_choisie: None,
+            jets: Vec::new(),
+            viser: None,
+            icones_nourriture: Vec::new(),
         }
     }
 
@@ -217,6 +230,8 @@ impl Ecloserie {
         neuf.disposition = self.disposition.take();
         neuf.lot = self.lot;
         neuf.langue_choisie = self.langue_choisie;
+        neuf.jets = std::mem::take(&mut self.jets);
+        neuf.viser = self.viser;
         neuf.annonces = std::mem::take(&mut self.annonces);
         neuf.annonces.append(&mut self.a_annoncer);
         *self = neuf;
@@ -364,6 +379,7 @@ impl Ecloserie {
                     Onglet::Aquarium => self.onglet_aquarium(ui, p),
                     Onglet::Poissodex => self.onglet_dex(ui, p),
                     Onglet::Decor => self.onglet_decor(ui, p),
+                    Onglet::Nourriture => self.onglet_nourriture(ui, p),
                     Onglet::Reglages => self.onglet_reglages(ui, p),
                 }
             });
@@ -383,6 +399,17 @@ impl Ecloserie {
                 .font(titre(14.0))
                 .color(BRUME),
             );
+            // v0.16 : bonus du repas en cours.
+            if let Some(f) = p.festin {
+                ui.label(
+                    RichText::new(trf(
+                        "Repas ×{} · {}",
+                        &[&decimale(f.nourriture().mult.to_string()), &duree(f.reste)],
+                    ))
+                    .font(titre(14.0))
+                    .color(OR),
+                );
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
                     RichText::new(trf(
@@ -442,6 +469,7 @@ impl Ecloserie {
                 (Onglet::Aquarium, tr("Mon aquarium")),
                 (Onglet::Poissodex, tr("Index")),
                 (Onglet::Decor, tr("Décor")),
+                (Onglet::Nourriture, tr("Nourriture")),
                 (Onglet::Reglages, tr("Réglages")),
             ] {
                 let actif = self.onglet == o;
@@ -968,6 +996,58 @@ impl Ecloserie {
             .color(BRUME)
             .size(14.0),
         );
+        // v0.16 : « Tout vendre » la réserve (les créatures verrouillées restent), confirmé.
+        if self.reserve {
+            let (n, total) = p.prix_tout_vendre();
+            ui.horizontal(|ui| {
+                if !self.confirmer_tout {
+                    let b = egui::Button::new(
+                        RichText::new(trf(
+                            "Tout vendre ({} · +{})",
+                            &[&n.to_string(), &court(total)],
+                        ))
+                        .font(titre(13.0)),
+                    )
+                    .min_size(Vec2::new(0.0, 30.0));
+                    if ui
+                        .add_enabled(n > 0, b)
+                        .on_hover_text(tr("Les créatures verrouillées (cadenas) sont gardées."))
+                        .clicked()
+                    {
+                        self.confirmer_tout = true;
+                    }
+                } else {
+                    ui.label(
+                        RichText::new(trf(
+                            "Vendre {} créatures pour +{} ?",
+                            &[&n.to_string(), &court(total)],
+                        ))
+                        .font(titre(13.0))
+                        .color(OR),
+                    );
+                    let b = egui::Button::new(
+                        RichText::new(tr("Confirmer"))
+                            .font(titre(13.0))
+                            .color(ENCRE),
+                    )
+                    .fill(ALERTE);
+                    if ui.add(b).clicked() {
+                        let (n, total) = p.tout_vendre();
+                        son::jouer(Son::Piece, 1.0);
+                        self.bandeau = Some(trf(
+                            "{} créatures vendues : +{}",
+                            &[&n.to_string(), &court(total)],
+                        ));
+                        self.confirmer_tout = false;
+                    }
+                    if ui.button(tr("Annuler")).clicked() {
+                        self.confirmer_tout = false;
+                    }
+                }
+            });
+        } else {
+            self.confirmer_tout = false;
+        }
         ui.add_space(4.0);
         let mut liste: Vec<Poisson> = p
             .poissons
@@ -1053,6 +1133,20 @@ impl Ecloserie {
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
+                                    // v0.16 : cadenas (un clic le pose ou le retire).
+                                    let (r, rep) = ui.allocate_exact_size(
+                                        Vec2::new(28.0, 32.0),
+                                        egui::Sense::click(),
+                                    );
+                                    cadenas(ui, r, f.verrou, rep.hovered());
+                                    let rep = rep.on_hover_text(if f.verrou {
+                                        tr("Verrouillé : ni vendu ni relâché. Clic pour ouvrir.")
+                                    } else {
+                                        tr("Verrouiller (protège de « Tout vendre »).")
+                                    });
+                                    if rep.clicked() {
+                                        action = Some((f.id, 3));
+                                    }
                                     let confirme = self.confirmer == Some(f.id);
                                     let t = if confirme {
                                         trf(
@@ -1073,7 +1167,11 @@ impl Ecloserie {
                                         }),
                                     )
                                     .fill(if confirme { ALERTE } else { VERRE_FONCE });
-                                    if ui.add(b).clicked() {
+                                    if ui
+                                        .add_enabled(!f.verrou, b)
+                                        .on_disabled_hover_text(tr("Verrouillé"))
+                                        .clicked()
+                                    {
                                         // Peu commun et plus : il faut confirmer.
                                         if confirme || f.rarete == Rarete::Commun {
                                             action = Some((f.id, 2));
@@ -1124,6 +1222,7 @@ impl Ecloserie {
             let _ = match a {
                 0 => p.nourrir(id),
                 1 => p.basculer(id),
+                3 => p.verrouiller(id),
                 _ => p.relacher(id).map(|_| ()),
             };
             self.confirmer = None;
@@ -1731,6 +1830,35 @@ fn texte_rarete(r: Rarete, t: f64, taille: f32) -> egui::text::LayoutJob {
         );
     }
     job
+}
+
+/// v0.16 : cadenas en gros pixels (fermé : or ; ouvert : anse levée, pâle).
+fn cadenas(ui: &Ui, r: egui::Rect, ferme: bool, survol: bool) {
+    let k = 3.0;
+    let p = ui.painter();
+    let c = if ferme {
+        OR
+    } else if survol {
+        ECUME
+    } else {
+        BRUME
+    };
+    let o = r.center() - Vec2::new(4.0 * k, 5.0 * k);
+    let px = |x: f32, y: f32, w: f32, h: f32, c: Color32| {
+        p.rect_filled(
+            egui::Rect::from_min_size(o + Vec2::new(x * k, y * k), Vec2::new(w * k, h * k)),
+            0.0,
+            c,
+        );
+    };
+    // Anse : deux montants et le haut ; ouverte, elle est levée et le montant droit décroché.
+    let lev = if ferme { 0.0 } else { -2.0 };
+    px(2.0, lev, 4.0, 1.0, c);
+    px(1.0, lev + 1.0, 1.0, 3.0, c);
+    px(6.0, lev + 1.0, 1.0, if ferme { 3.0 } else { 1.0 }, c);
+    // Corps, trou de serrure.
+    px(0.0, 4.0, 8.0, 6.0, c);
+    px(3.0, 6.0, 2.0, 2.0, EAU);
 }
 
 fn piece_ui(ui: &Ui, r: egui::Rect) {
