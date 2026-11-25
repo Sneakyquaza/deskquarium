@@ -218,6 +218,7 @@ mod tests {
         let fichiers = [
             "src/ecloserie.rs",
             "src/ecloserie/decor_ui.rs",
+            "src/ecloserie/nourriture_ui.rs",
             "src/appli.rs",
         ];
         let mut fautes = Vec::new();

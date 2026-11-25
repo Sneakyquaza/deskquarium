@@ -21,7 +21,9 @@ mod journal;
 mod maj;
 #[cfg(windows)]
 mod moteur;
+mod nourriture;
 mod occlusion;
+mod penche;
 mod poisson;
 mod sauve;
 mod scene;
@@ -46,6 +48,7 @@ Options (tests) :
   --planche-geantes X.png         créatures énormes et colossales à taille réelle, x2
   --alignement X.png              toutes les espèces à leur taille en 1920x1080 (tailles relatives)
   --planche-images X.png cle,cle  images d'animation des espèces données, x4
+  --planche-pente X.png cle,cle   espèces penchées de −30° à 30°, dans les deux sens, x4
   --planche-formes X.png cle,cle [--modifs]  normal et shiny (ou les 7 modificateurs), x2
   --planche-demi-tour X.png cle   demi-tour image par image (0,1 s), x4
   --demo                          aquarium pré-rempli (raretés et espèces variées)
@@ -60,6 +63,9 @@ Options (tests) :
   --repos-oeufs X.mp4 [--secondes 8]   les 8 œufs au repos (v0.11)
   --planche-oeufs X.png          les œufs et leur animation au repos (x3)
   --objets cle,cle               objets de décor posés (capture / vidéo)
+  --nourrir N@S[@X[@Y]],…        jette la nourriture N (0-6) à la seconde S, en X (fraction de
+                                 l'écran principal) ou au hasard, d'en haut ou en Y comme un
+                                 clic (capture / vidéo)
   --fond image.png                fond d'écran sous l'aquarium (sinon fond factice)
   --captures-ecloserie DOSSIER    (avec --fenetre) captures de chaque onglet puis quitte
   --audit DOSSIER [cle,cle]       planches d'audit des sprites (formes, nage, demi-tour)
@@ -127,6 +133,21 @@ fn lancer() -> Result<(), String> {
                 s.split(',')
                     .filter(|c| !c.is_empty())
                     .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        nourrir: valeur("--nourrir")
+            .map(|s| {
+                s.split(',')
+                    .filter_map(|j| {
+                        let mut p = j.split('@');
+                        Some((
+                            p.next()?.parse().ok()?,
+                            p.next()?.parse().ok()?,
+                            p.next().and_then(|x| x.parse().ok()),
+                            p.next().and_then(|y| y.parse().ok()),
+                        ))
+                    })
                     .collect()
             })
             .unwrap_or_default(),
@@ -206,6 +227,11 @@ fn lancer() -> Result<(), String> {
         let cles = valeur(&f).unwrap_or_default();
         let cles: Vec<&str> = cles.split(',').filter(|c| !c.is_empty()).collect();
         return capture::audit(&PathBuf::from(&f), &cles);
+    }
+    if let Some(f) = valeur("--planche-pente") {
+        let cles = valeur(&f).unwrap_or_default();
+        let cles: Vec<&str> = cles.split(',').filter(|c| !c.is_empty()).collect();
+        return capture::planche_pente(&PathBuf::from(&f), &cles, 4);
     }
     if let Some(f) = valeur("--planche-images") {
         let cles = valeur(&f).unwrap_or_default();

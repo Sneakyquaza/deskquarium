@@ -11,6 +11,8 @@ use std::collections::{HashMap, VecDeque};
 use std::f32::consts::TAU;
 use std::sync::Arc;
 
+mod repas;
+
 /// Couleur de l'eau lointaine : les créatures du fond s'y fondent un peu.
 const EAU_LOIN: Rgb = [0x10, 0x3c, 0x58];
 /// Mode Abysses : eau des grands fonds, presque noire.
@@ -84,6 +86,16 @@ pub struct Nageur {
     fuite: f32,
     /// v0.9 : tenu au bout du curseur (il gigote).
     pub tenu: bool,
+    /// v0.16 : nourriture visée (pixels monde, voir `repas.rs`), délai avant la bouchée
+    /// suivante ; tête penchée (radians, > 0 vers le haut), sa vitesse, cran affiché et
+    /// dessin penché de ce cran (échangé avec `sprite` le temps du dessin), pente maximale.
+    repas: Option<(f32, f32)>,
+    rassasie: f32,
+    pente: f32,
+    pente_v: f32,
+    cran: i8,
+    penche: Option<(i8, Arc<Sprite>)>,
+    pub penche_max: f32,
 }
 
 struct Bulle {
@@ -271,6 +283,14 @@ pub struct Aquarium {
     /// v0.11 : grandes éclosions annoncées près du compteur (Légendaire+, shiny, modificateur
     /// rare), avec une gerbe d'étoiles là où la créature arrive.
     pub annonces: Vec<Annonce>,
+    /// v0.16 : nourriture dans l'eau, bouchées mangées (nourriture, part du repas : l'appli
+    /// les donne à la partie), nourriture à jeter au prochain clic (dessinée au curseur),
+    /// sprites penchés et temps de fabrication permis par image (None : tout, captures).
+    pub morceaux: Vec<crate::nourriture::Morceau>,
+    pub bouchees: Vec<(usize, f64)>,
+    pub viser: Option<usize>,
+    penches: crate::penche::Penches,
+    pub budget_penche: Option<std::time::Duration>,
 }
 
 /// Annonce d'une grande éclosion sur le fond d'écran (v0.11).
@@ -417,6 +437,11 @@ impl Aquarium {
             souris: Souris::default(),
             fiche: None,
             annonces: Vec::new(),
+            morceaux: Vec::new(),
+            bouchees: Vec::new(),
+            viser: None,
+            penches: Default::default(),
+            budget_penche: Some(std::time::Duration::from_millis(3)),
         };
         aq.decorer(0, &[]);
         aq
@@ -1007,6 +1032,7 @@ impl Aquarium {
             n.revenu = p.revenu();
             n.espece = espece_de(p).cle;
             n.forme = p.forme();
+            n.penche_max = repas::penche_max(espece_de(p), &n);
             n.cible = place_libre(a, &occupes, &self.bassin, taille, false);
             self.nageurs.push(n);
         }
@@ -1150,6 +1176,7 @@ impl Aquarium {
             self.souris.vitesse.0.hypot(self.souris.vitesse.1),
             self.souris.immobile,
         );
+        self.nourriture_avant(dt);
         for (i, &pousse) in pousses.iter().enumerate() {
             let n = &mut self.nageurs[i];
             if n.tenu {
@@ -1175,7 +1202,9 @@ impl Aquarium {
                 (ev, pousse, &occupes),
                 &mut self.alea,
             );
+            n.basculer();
             n.effets(dt, t, &mut self.particules, &mut self.alea);
+            n.basculer();
             n.gain_dans -= dt;
             if n.gain_dans <= 0.0 {
                 n.gain_dans = self.alea.entre(7.0, 14.0);
@@ -1215,7 +1244,7 @@ impl Aquarium {
             }
             // Petite bulle par la bouche de temps en temps.
             if !n.fixe && n.sprite.taille < Taille::Colossale && self.alea.f() < dt * 0.08 {
-                let (bx, by) = n.monde(n.sprite.bouche);
+                let (bx, by) = n.bouche();
                 self.bulles.push(Bulle {
                     x: bx,
                     y: by,
@@ -1225,6 +1254,7 @@ impl Aquarium {
                 });
             }
         }
+        self.nourriture_apres(dt);
         // Colonnes de bulles depuis les rochers.
         for s in self.sources.iter().filter(|_| self.decor) {
             // Geyser : une bouffée de 0,7 s toutes les 3,5 s (décalée selon sa place).
@@ -1311,6 +1341,8 @@ impl Aquarium {
         let ab = self.abysses && self.decor;
         for n in self.nageurs.iter_mut() {
             n.contre_jour = ab;
+            // v0.16 : le temps du dessin, chaque nageur porte son dessin penché.
+            n.basculer();
         }
         if self.decor {
             self.toile.px.copy_from_slice(&self.fond.px);
@@ -1385,6 +1417,7 @@ impl Aquarium {
         for n in self.nageurs.iter().filter(fond) {
             n.dessiner_yeux(&mut self.toile);
         }
+        self.dessiner_nourriture();
         for n in self.nageurs.iter().filter(|n| !fond(n) && !n.tenu) {
             n.dessiner(&mut self.toile, t, true);
         }
@@ -1426,7 +1459,11 @@ impl Aquarium {
                 Some([0x10, 0x0a, 0x04]),
             );
         }
+        for n in self.nageurs.iter_mut() {
+            n.basculer();
+        }
         self.dessiner_fiche(partie);
+        self.dessiner_viseur();
         if self.avec_compteur {
             self.compteur(partie);
             self.dessiner_annonces();
@@ -1591,7 +1628,12 @@ impl Aquarium {
 
     fn compteur(&mut self, partie: &Partie) {
         let argent = court(partie.argent);
-        let revenu = format!("+{}/s", court(partie.revenu_par_s()));
+        let mut revenu = format!("+{}/s", court(partie.revenu_par_s()));
+        // v0.16 : bonus du repas en cours (multiplicateur, temps restant).
+        if let Some(f) = partie.festin {
+            let s = f.reste as u64;
+            revenu += &format!(" x{} {}:{:02}", f.nourriture().mult, s / 60, s % 60);
+        }
         let w = largeur_texte(&argent).max(largeur_texte(&revenu) - 4) + 15;
         let (x, y) = (self.bassin.principal.0 + 4, self.bassin.principal.3 - 22);
         let t = &mut self.toile;
@@ -1685,6 +1727,13 @@ impl Nageur {
             curiosite: 0.0,
             fuite: 0.0,
             tenu: false,
+            repas: None,
+            rassasie: 0.0,
+            pente: 0.0,
+            pente_v: 0.0,
+            cran: 0,
+            penche: None,
+            penche_max: 0.0,
         }
     }
 
@@ -1867,6 +1916,12 @@ impl Nageur {
         a: &mut Alea,
     ) {
         self.bob += dt;
+        // v0.16 : en mangeant, il se laisse frôler (les voisins ne l'écartent presque plus).
+        let pousse = if self.repas.is_some() {
+            (pousse.0 * 0.2, pousse.1 * 0.2)
+        } else {
+            pousse
+        };
         let nb = self.sprite.images.len() as f32;
         if self.fixe {
             self.anim = (self.anim + dt * self.cadence(8.0) * nb) % nb;
@@ -1884,7 +1939,8 @@ impl Nageur {
             .or_else(|| b.eau(self.x, self.x))
             .unwrap_or_else(|| b.eau_totale());
         let mut haut = dessus + sh / 2.0 + 10.0;
-        let bas = plancher - sh / 2.0;
+        // v0.16 : pour manger sur le sable, il descend un peu plus bas (le museau y touche).
+        let bas = plancher - sh / 2.0 + if self.repas.is_some() { 5.0 } else { 0.0 };
         if mv == Mouvement::Fond {
             haut = haut.max(bas - 24.0);
         }
@@ -2115,6 +2171,17 @@ impl Nageur {
                 }
             }
         }
+        // v0.16 : nourriture repérée : la bouche va droit dessus, sans pause ni banc.
+        if let Some((fx, fy)) = self.repas {
+            let (bx, by) = self.decalage_bouche();
+            let sens = if fx < self.x { -1.0 } else { 1.0 };
+            // Dos tourné à la nourriture : il va vers elle (et se retourne en chemin).
+            let dos = self.gauche != (sens < 0.0);
+            self.cible = (fx - sens * if dos { -bx - 10.0 } else { bx }, fy - by);
+            self.pause = 0.0;
+            self.minuteur = self.minuteur.max(0.5);
+            vitesse *= 1.3;
+        }
         // Accélérations : foncer (phoque, dauphin), jets (calmars), bonds (fond).
         match mv {
             Mouvement::Fonce if self.elan <= 0.0 && a.f() < dt * 0.1 => self.elan = 1.0,
@@ -2202,15 +2269,20 @@ impl Nageur {
         // (surtout en hauteur : jamais de glissade en arrière, le cap change à la place)
         self.vx += pousse.0 * 1.2 * dt;
         self.vy += pousse.1 * 4.0 * dt;
-        // Nage surtout à l'horizontale : la montée ou la descente reste douce.
-        let vy_max = self.vx.abs() * 0.4 + 2.5;
+        // Nage surtout à l'horizontale : la montée ou la descente reste douce (un peu plus
+        // franche vers la nourriture, qui tombe).
+        let vy_max = if self.repas.is_some() {
+            self.vx.abs() * 0.9 + 8.0
+        } else {
+            self.vx.abs() * 0.4 + 2.5
+        };
         self.vy = self.vy.clamp(-vy_max, vy_max);
         if pousse.0.hypot(pousse.1) > 2.0 && self.banc.is_none() {
             // Trop serré : la cible s'écarte en hauteur (pas de demi-tour).
             self.cible.1 += pousse.1 * dt * 6.0;
         }
-        // Grande créature : la cible ne quitte jamais sa bande.
-        if let Some((b0, b1)) = self.bande {
+        // Grande créature : la cible ne quitte jamais sa bande (sauf pour manger).
+        if let Some((b0, b1)) = self.bande.filter(|_| self.repas.is_none()) {
             let (y0, y1) = (haut + (bas - haut) * b0, haut + (bas - haut) * b1);
             if y1 > y0 {
                 self.cible.1 = self.cible.1.clamp(y0, y1);
@@ -2278,8 +2350,11 @@ impl Nageur {
         };
         self.vigueur += (vigueur - self.vigueur) * (dt * 3.0).min(1.0);
         self.anim = (self.anim + dt * self.cadence(v) * nb) % nb;
+        self.pencher(dt, sl);
         if self.rarete == Rarete::Mythique {
+            self.basculer();
             let p = self.monde(self.queue());
+            self.basculer();
             self.traine.push_front(p);
             self.traine.truncate(30);
         }

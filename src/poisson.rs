@@ -1019,7 +1019,7 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8], forme: Form
     }
 }
 
-type Points = Vec<(i16, i16)>;
+pub type Points = Vec<(i16, i16)>;
 
 /// Point d'attache de la queue d'une image (classes des pixels, tournée à droite) : pixel du
 /// dessin le plus à l'arrière parmi ceux proches de l'axe du quart arrière (voir `queue`).
@@ -1046,7 +1046,7 @@ pub fn queue_de(cl: &[u8], w: i32, h: i32) -> Option<(i32, i32)> {
     })
 }
 
-fn halos(cl: &[u8], w: i32, h: i32) -> (Points, Points) {
+pub fn halos(cl: &[u8], w: i32, h: i32) -> (Points, Points) {
     let plein =
         |x: i32, y: i32| x >= 0 && y >= 0 && x < w && y < h && cl[(y * w + x) as usize] != VIDE;
     let mut h1 = Vec::new();

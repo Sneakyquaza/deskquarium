@@ -25,7 +25,7 @@ pub struct EtatDecor {
     choisi: Option<usize>,
 }
 
-fn image_img(img: &Img) -> egui::ColorImage {
+pub(super) fn image_img(img: &Img) -> egui::ColorImage {
     egui::ColorImage::from_rgba_unmultiplied(
         [img.l as usize, img.h as usize],
         img.px.as_flattened(),
@@ -33,7 +33,7 @@ fn image_img(img: &Img) -> egui::ColorImage {
 }
 
 /// Taille d'affichage d'une icône : agrandie d'un facteur entier pour tenir dans `max`.
-fn taille_icone(img: &Img, max: f32) -> Vec2 {
+pub(super) fn taille_icone(img: &Img, max: f32) -> Vec2 {
     let k = (max / img.l.max(img.h) as f32).floor().max(1.0);
     let k = if img.l.max(img.h) as f32 > max {
         max / img.l.max(img.h) as f32
