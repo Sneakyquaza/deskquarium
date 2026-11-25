@@ -62,6 +62,7 @@ Options (tests) :
   --objets cle,cle               objets de décor posés (capture / vidéo)
   --fond image.png                fond d'écran sous l'aquarium (sinon fond factice)
   --captures-ecloserie DOSSIER    (avec --fenetre) captures de chaque onglet puis quitte
+  --audit DOSSIER [cle,cle]       planches d'audit des sprites (formes, nage, demi-tour)
   --bench [--secondes 60] [--ips 24] [--ancien]  coût du fond d'écran (3840x1080, 40 poissons)
   --simulation                    jalons de l'équilibrage (docs/equilibrage.md)";
 
@@ -200,6 +201,11 @@ fn lancer() -> Result<(), String> {
     if let Some(f) = valeur("--planche-demi-tour") {
         let cle = valeur(&f).unwrap_or_default();
         return capture::planche_demi_tour(&PathBuf::from(&f), &cle);
+    }
+    if let Some(f) = valeur("--audit") {
+        let cles = valeur(&f).unwrap_or_default();
+        let cles: Vec<&str> = cles.split(',').filter(|c| !c.is_empty()).collect();
+        return capture::audit(&PathBuf::from(&f), &cles);
     }
     if let Some(f) = valeur("--planche-images") {
         let cles = valeur(&f).unwrap_or_default();

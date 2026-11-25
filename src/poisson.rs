@@ -169,9 +169,9 @@ pub struct Sprite {
     pub l: i32,
     pub h: i32,
     pub images: Vec<Image>,
-    /// Point d'attache de la queue (traînée), bouche (bulles), leurre lumineux, dans l'image 0,
-    /// tournée à droite.
-    pub queue: (i32, i32),
+    /// Point d'attache de la queue (traînée) dans chaque image d'animation, bouche (bulles),
+    /// leurre lumineux dans l'image 0, tournée à droite.
+    pub queue: Vec<(i32, i32)>,
     pub bouche: (i32, i32),
     pub lueur: Option<(i32, i32)>,
     /// Étoiles du corps (Céleste) : position et phase.
@@ -710,6 +710,14 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8], forme: Form
     // Palette du sprite (le dessin a une quarantaine de couleurs ; variante et réduction n'en
     // ajoutent pas).
     let mut couleurs: Vec<[u8; 4]> = vec![[0; 4]];
+    // Yeux et lumières d'abord : toujours leur couleur exacte (v0.14 : l'Arc-en-ciel dépasse
+    // 255 couleurs et les derniers yeux prenaient une couleur voisine du corps).
+    for p in src.iter().filter(|p| p[3] == 254 || p[3] == 253) {
+        let c = [p[0], p[1], p[2], 255];
+        if couleurs.len() < 256 && !couleurs.contains(&c) {
+            couleurs.push(c);
+        }
+    }
     let src_idx: Vec<u8> = src
         .iter()
         .map(|p| {
@@ -723,7 +731,8 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8], forme: Form
                     couleurs.push(c);
                     (couleurs.len() - 1) as u8
                 }
-                // raccourci : au-delà de 255 couleurs, la plus proche (jamais vu : ≤ 41).
+                // raccourci : au-delà de 255 couleurs (Arc-en-ciel : bandes par colonne), la plus
+                // proche ; à revoir si une bande visible apparaît (palette u16).
                 None => (1..couleurs.len())
                     .min_by_key(|&k| {
                         (0..3)
@@ -946,17 +955,22 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8], forme: Form
         [0x20, 0x18, 0x20]
     };
     let lueur = (lum.2 > 0).then(|| ((lum.0 / lum.2) as i32, (lum.1 / lum.2) as i32));
-    // Queue et bouche : pixels du dessin les plus à gauche et à droite (milieu de la colonne) :
-    // (la traînée part vraiment du bout de la queue, les bulles de la bouche).
+    // Bouche : pixel du dessin le plus à droite (milieu de la colonne) : les bulles en partent.
     let bande = |x: i32| {
         let ys: Vec<i32> = (0..ht)
             .filter(|&y| im0.classe[(y * l + x) as usize] != VIDE)
             .collect();
         (!ys.is_empty()).then(|| ys[ys.len() / 2])
     };
-    let queue = (0..l)
-        .find_map(|x| bande(x).map(|y| (x + 1, y)))
-        .unwrap_or((bord, bord + h / 2));
+    // Queue (traînée, étincelles), image par image (la caudale bat) : bout arrière du corps
+    // près de son axe. Bug v0.13 (requin-lutin) : le milieu de la colonne la plus à gauche
+    // tombait au bout du long lobe supérieur, la traînée flottait dans l'eau. Axe = hauteur
+    // moyenne du quart arrière ; on prend la colonne la plus à gauche qui a un pixel près de
+    // cet axe, et ce pixel.
+    let queue = images
+        .iter()
+        .map(|im| queue_de(&im.classe, l, ht).unwrap_or((bord, bord + h / 2)))
+        .collect();
     let bouche = (0..l)
         .rev()
         .find_map(|x| bande(x).map(|y| (x, y)))
@@ -1006,6 +1020,31 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8], forme: Form
 }
 
 type Points = Vec<(i16, i16)>;
+
+/// Point d'attache de la queue d'une image (classes des pixels, tournée à droite) : pixel du
+/// dessin le plus à l'arrière parmi ceux proches de l'axe du quart arrière (voir `queue`).
+pub fn queue_de(cl: &[u8], w: i32, h: i32) -> Option<(i32, i32)> {
+    let plein = |x: i32, y: i32| cl[(y * w + x) as usize] != VIDE;
+    let x0 = (0..w).find(|&x| (0..h).any(|y| plein(x, y)))?;
+    let x1 = (0..w).rev().find(|&x| (0..h).any(|y| plein(x, y)))?;
+    let fin = x0 + (x1 - x0 + 4) / 4;
+    let (mut sy, mut n) = (0i64, 0i64);
+    let (mut haut, mut bas) = (h, 0);
+    for x in x0..fin {
+        for y in (0..h).filter(|&y| plein(x, y)) {
+            (sy, n) = (sy + y as i64, n + 1);
+            (haut, bas) = (haut.min(y), bas.max(y));
+        }
+    }
+    let axe = (sy / n.max(1)) as i32;
+    let ecart = ((bas - haut) / 6).max(2);
+    (x0..=x1).find_map(|x| {
+        (0..h)
+            .filter(|&y| plein(x, y) && (y - axe).abs() <= ecart)
+            .min_by_key(|&y| (y - axe).abs())
+            .map(|y| (x, y))
+    })
+}
 
 fn halos(cl: &[u8], w: i32, h: i32) -> (Points, Points) {
     let plein =
@@ -1168,5 +1207,108 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn queue_sur_le_dessin_dans_chaque_image() {
+        // v0.14 (requin-lutin) : la traînée partait de la queue de l'image 0, jusqu'à 23 pixels
+        // dans l'eau quand la caudale battait. Le point d'attache de chaque image est un pixel
+        // du dessin de cette image (Ombre : dessin agrandi).
+        let ombre = Forme {
+            shiny: false,
+            modif: Some(Modif::Ombre),
+        };
+        for e in catalogue() {
+            for f in [Forme::default(), ombre] {
+                let s = sprite_forme(e, 0, 1.0, f);
+                assert_eq!(s.queue.len(), s.images.len(), "{}", e.cle);
+                for (k, (im, &(x, y))) in s.images.iter().zip(&s.queue).enumerate() {
+                    assert!(
+                        x >= 0 && y >= 0 && x < s.l && y < s.h,
+                        "{} image {k} : queue hors du sprite",
+                        e.cle
+                    );
+                    assert_ne!(
+                        im.classe((y * s.l + x) as usize),
+                        VIDE,
+                        "{} image {k} : queue ({x}, {y}) dans l'eau",
+                        e.cle
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn yeux_sans_couture_avec_le_corps() {
+        // v0.14 (orque Électrique shiny) : les yeux (alpha 254) étaient des disques qui
+        // débordaient sur le corps : tache restée naturelle dans un corps recoloré. Un pixel
+        // d'œil n'a jamais la même couleur qu'un pixel du corps qui le touche (sauf quasi-noirs :
+        // pupille collée au contour, que le shiny ne recolore pas). `tools/yeux_affiner.py`.
+        let mut fautes = Vec::new();
+        for e in catalogue() {
+            let img = image::load_from_memory(png_espece(e.cle))
+                .unwrap()
+                .to_rgba8();
+            let (w, h) = (img.width() as i32, img.height() as i32);
+            let px = |x: i32, y: i32| img.get_pixel(x as u32, y as u32).0;
+            for y in 0..h {
+                for x in 0..w {
+                    let p = px(x, y);
+                    if p[3] != 254 || p[..3].iter().all(|&c| c < 51) {
+                        continue;
+                    }
+                    let couture = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|(dx, dy)| {
+                        let (xx, yy) = (x + dx, y + dy);
+                        xx >= 0 && yy >= 0 && xx < w && yy < h && {
+                            let q = px(xx, yy);
+                            q[3] == 255 && q[..3] == p[..3]
+                        }
+                    });
+                    if couture {
+                        fautes.push(format!("{} ({x}, {y})", e.cle));
+                    }
+                }
+            }
+        }
+        assert!(fautes.is_empty(), "{fautes:?}");
+    }
+
+    #[test]
+    fn yeux_gardent_leurs_couleurs_dans_toutes_les_formes() {
+        // Shiny, chaque modificateur, shiny + Électrique (l'orque du bug) : chaque pixel d'œil
+        // garde exactement sa couleur naturelle (même traitement pour toutes les espèces).
+        // Ombre : dessin agrandi (positions différentes), voir `sprite_png`.
+        let formes: Vec<Forme> = [(true, None), (true, Some(Modif::Electrique))]
+            .into_iter()
+            .chain(Modif::TOUS.iter().map(|&m| (false, Some(m))))
+            .filter(|f| f.1 != Some(Modif::Ombre))
+            .map(|(shiny, modif)| Forme { shiny, modif })
+            .collect();
+        let especes: Vec<&Espece> = catalogue().iter().collect();
+        std::thread::scope(|sc| {
+            for lot in especes.chunks(especes.len().div_ceil(8)) {
+                let formes = &formes;
+                sc.spawn(move || {
+                    for e in lot {
+                        let base = sprite(e, 0, 1.0);
+                        let (b, n) = (&base.images[0], base.l * base.h);
+                        let yeux: Vec<usize> =
+                            (0..n as usize).filter(|&i| b.classe(i) == OEIL).collect();
+                        for &f in formes {
+                            let s = sprite_forme(e, 0, 1.0, f);
+                            let im = &s.images[0];
+                            for &i in &yeux {
+                                assert!(
+                                    im.classe(i) == OEIL && im.px(i) == b.px(i),
+                                    "{} {f:?} : œil recoloré",
+                                    e.cle
+                                );
+                            }
+                        }
+                    }
+                });
+            }
+        });
     }
 }

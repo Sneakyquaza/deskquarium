@@ -1919,6 +1919,14 @@ impl Nageur {
                 }
                 let y0 = sol(self.x) + 2.0 + MARGE as f32 - sh;
                 self.y = y0 + (sh / 2.0).floor();
+                // v0.14 : isopode, trilobite se retournent vers où ils marchent (avant : à
+                // reculons vers la gauche) ; le crabe, vu de face, marche de côté.
+                self.tourne = (self.tourne - dt).max(0.0);
+                let recule = (self.vx < -3.0 && !self.gauche) || (self.vx > 3.0 && self.gauche);
+                if recule && self.espece != "crabe" {
+                    self.gauche = !self.gauche;
+                    self.tourne = self.duree_tour();
+                }
                 self.anim = (self.anim + dt * self.cadence(0.0) * nb) % nb;
                 return;
             }
@@ -2271,19 +2279,42 @@ impl Nageur {
         self.vigueur += (vigueur - self.vigueur) * (dt * 3.0).min(1.0);
         self.anim = (self.anim + dt * self.cadence(v) * nb) % nb;
         if self.rarete == Rarete::Mythique {
-            let p = self.monde(self.sprite.queue);
+            let p = self.monde(self.queue());
             self.traine.push_front(p);
             self.traine.truncate(30);
         }
     }
 
-    /// Position écran (toile) d'un point du sprite (coordonnées de l'image tournée à droite).
+    /// Position écran (toile) d'un point du sprite (coordonnées de l'image tournée à droite),
+    /// colonne placée comme au dessin (sens et repli du demi-tour).
     pub fn monde(&self, (sx, sy): (i32, i32)) -> (f32, f32) {
-        let s = &self.sprite;
-        let (x0, y0) = self.origine_fine();
-        let sx = if self.gauche { s.l - 1 - sx } else { sx };
+        let (_, y0) = self.origine_fine();
         let f = FIN as f32;
-        ((x0 + sx) as f32 / f, (y0 + sy) as f32 / f)
+        (self.colonne_fine(sx) as f32 / f, (y0 + sy) as f32 / f)
+    }
+
+    /// Point d'attache de la queue dans l'image d'animation en cours.
+    fn queue(&self) -> (i32, i32) {
+        let q = &self.sprite.queue;
+        q[self.anim as usize % q.len()]
+    }
+
+    /// Colonne de la toile (pixels fins) de la colonne `x` du dessin. Demi-tour (v0.8.1) : il
+    /// ralentit (voir `bouger`), puis la largeur se replie par colonnes entières du vrai dessin
+    /// (1 → 0,5, miroir, 0,5 → 1) en ~5 images ; pendant la première moitié, l'ancien sens.
+    fn colonne_fine(&self, x: i32) -> i32 {
+        let s = &self.sprite;
+        let d = self.duree_tour();
+        let ecart = (self.tourne - d * 0.5).abs();
+        let ratio = if self.tourne <= 0.0 || ecart >= REPLI {
+            1.0
+        } else {
+            0.5 + 0.5 * ecart / REPLI
+        };
+        let cx = s.l as f32 / 2.0;
+        let gauche = self.gauche ^ (self.tourne > d * 0.5);
+        let x = if gauche { s.l - 1 - x } else { x };
+        self.origine_fine().0 + (cx + (x as f32 + 0.5 - cx) * ratio).floor() as i32
     }
 
     /// Coin haut gauche du sprite sur la toile, en pixels fins.
@@ -2361,7 +2392,7 @@ impl Nageur {
             }
             Rarete::Mythique => {
                 if a.f() < dt * 4.0 {
-                    let (x, y) = self.monde(s.queue);
+                    let (x, y) = self.monde(self.queue());
                     parts.push(Particule {
                         x,
                         y,
@@ -2420,7 +2451,7 @@ impl Nageur {
         let recule = if self.gauche { 1.0 } else { -1.0 };
         if self.forme.shiny {
             if a.f() < dt * 12.0 {
-                let (x, y) = self.monde(s.queue);
+                let (x, y) = self.monde(self.queue());
                 let c = [[255, 244, 176], [255, 196, 236], [184, 240, 255]][a.n(3) as usize];
                 parts.push(Particule {
                     x: x + a.entre(-1.0, 1.0),
@@ -2501,26 +2532,11 @@ impl Nageur {
         let im = &s.images[k];
         let (x0, y0) = self.origine_fine();
         let fw = FIN as f32;
-        // Demi-tour (v0.8.1) : il ralentit (voir `bouger`), puis la largeur se replie par
-        // colonnes entières du vrai dessin (1 → 0,5, miroir, 0,5 → 1) en ~5 images ; la
-        // hauteur ne change jamais (aucune ligne écrasée, plus de fausse vue de face). Les corps
-        // longs ne se replient pas : ils font demi-tour hors de l'écran (`bouger`).
-        let d = self.duree_tour();
-        let ecart = (self.tourne - d * 0.5).abs();
-        let ratio = if self.tourne <= 0.0 || ecart >= REPLI {
-            1.0
-        } else {
-            0.5 + 0.5 * ecart / REPLI
-        };
-        let cx = s.l as f32 / 2.0;
-        // Pendant la première moitié du demi-tour, l'ancien sens.
-        let gauche = self.gauche ^ (self.tourne > d * 0.5);
-        let colonnes: Vec<i32> = (0..s.l)
-            .map(|x| {
-                let x = if gauche { s.l - 1 - x } else { x };
-                x0 + (cx + (x as f32 + 0.5 - cx) * ratio).floor() as i32
-            })
-            .collect();
+        // Demi-tour : repli par colonnes (`colonne_fine`) ; la hauteur ne change jamais (aucune
+        // ligne écrasée, plus de fausse vue de face). Les corps longs ne se replient pas : ils
+        // font demi-tour hors de l'écran (`bouger`).
+        let gauche = self.gauche ^ (self.tourne > self.duree_tour() * 0.5);
+        let colonnes: Vec<i32> = (0..s.l).map(|x| self.colonne_fine(x)).collect();
         let tx = |x: i32| -> i32 { colonnes[x as usize] };
         // Pas de rotation du pixel art (scintillement) : le corps reste horizontal.
         let ty = |_x: i32, y: i32| -> i32 { y0 + y };
@@ -2540,7 +2556,7 @@ impl Nageur {
         // Traînée de flammes (Mythique) : part du bout de la queue, épaisse puis effilée,
         // bord qui vacille (pixels fins).
         if r == Rarete::Mythique {
-            let (qx, qy) = self.monde(s.queue);
+            let (qx, qy) = self.monde(self.queue());
             let pts: Vec<(f32, f32)> = if self.fixe {
                 let sens = if gauche { 1.0 } else { -1.0 };
                 (0..30)
@@ -3379,6 +3395,41 @@ fn plante(t: &mut Toile, p: &Plante, temps: f32, devant: bool, sol: &[i32], abys
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn traine_part_du_dessin_dans_les_deux_sens_et_au_demi_tour() {
+        // v0.14 (requin-lutin) : la traînée et les étincelles partent d'un pixel DESSINÉ de
+        // la queue (image d'animation en cours), vers la droite, vers la gauche et pendant le
+        // repli du demi-tour (le point suit les colonnes du dessin).
+        let mut a = Alea(3);
+        for e in crate::especes::catalogue() {
+            let s = Arc::new(poisson::sprite(e, 0, 1.0));
+            let (l, h) = (s.lw() as usize * 2 + 8, s.hw() as usize * 2 + 8);
+            let mut t = Toile::new(l, h);
+            // Commun : ni halo ni traînée, seul le dessin est posé.
+            let mut n = Nageur::new(1, Rarete::Commun, s, l as f32 / 2.0, h as f32 / 2.0, &mut a);
+            let d = n.duree_tour();
+            for gauche in [false, true] {
+                for tourne in [0.0, d * 0.5 + REPLI * 0.6, d * 0.5 - REPLI * 0.6, d * 0.25] {
+                    for k in [0, 5, 11] {
+                        n.gauche = gauche;
+                        n.tourne = tourne;
+                        n.anim = (k % n.sprite.images.len()) as f32;
+                        t.effacer();
+                        n.dessiner(&mut t, 0.0, false);
+                        let (qx, qy) = n.monde(n.queue());
+                        let f = FIN as f32;
+                        let (x, y) = ((qx * f).round() as usize, (qy * f).round() as usize);
+                        assert!(
+                            t.px[y * t.lf() + x][3] > 0,
+                            "{} gauche {gauche} tourne {tourne} image {k} : queue dans l'eau",
+                            e.cle
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn echelle_entiere() {

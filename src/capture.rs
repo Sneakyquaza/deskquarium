@@ -617,6 +617,209 @@ pub fn planche_demi_tour(sortie: &Path, cle: &str) -> Result<(), String> {
     enregistrer(&t, 4, sortie)
 }
 
+/// Audit des sprites (v0.14) : une planche par espèce dans `dossier`, une ligne par forme
+/// (variantes, Shiny, chaque modificateur, Shiny + modificateur, Abysses), la créature qui NAGE
+/// vraiment (traînées et auras animées) : 2 images vers la droite, 2 vers la gauche et une
+/// pendant le demi-tour. `<clé>.png` à l'échelle du jeu en 1080p (x4), `zoom/<clé>_x2.png`
+/// (x8) pour les créatures jusqu'à Grande.
+pub fn audit(dossier: &Path, cles: &[&str]) -> Result<(), String> {
+    use crate::jeu::{Forme, Modif};
+    let especes: Vec<&Espece> = if cles.is_empty() {
+        crate::especes::catalogue().iter().collect()
+    } else {
+        cles.iter()
+            .map(|c| crate::especes::par_cle(c).ok_or(format!("espèce inconnue : {c}")))
+            .collect::<Result<_, _>>()?
+    };
+    std::fs::create_dir_all(dossier.join("zoom")).map_err(|e| e.to_string())?;
+    let suivante = std::sync::atomic::AtomicUsize::new(0);
+    let erreurs = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|sc| {
+        for _ in 0..std::thread::available_parallelism().map_or(4, |n| n.get()) {
+            sc.spawn(|| loop {
+                let i = suivante.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(e) = especes.get(i) else { break };
+                // Lignes : (nom, variante, forme, Abysses).
+                let normal = Forme::default();
+                let shiny = Forme {
+                    shiny: true,
+                    modif: None,
+                };
+                let mut lignes: Vec<(String, usize, Forme, bool)> = (0..e.variantes.len())
+                    .map(|v| match v {
+                        0 => ("NORMAL".to_string(), 0, normal, false),
+                        _ => (format!("VARIANTE {v}"), v, normal, false),
+                    })
+                    .collect();
+                lignes.push(("SHINY".into(), 0, shiny, false));
+                for s in [false, true] {
+                    for &m in &Modif::TOUS {
+                        let nom = if s {
+                            format!("SHINY {}", m.nom())
+                        } else {
+                            m.nom().into()
+                        };
+                        lignes.push((
+                            nom,
+                            0,
+                            Forme {
+                                shiny: s,
+                                modif: Some(m),
+                            },
+                            false,
+                        ));
+                    }
+                }
+                lignes.push(("ABYSSES".into(), 0, normal, true));
+                lignes.push(("ABYSSES SHINY".into(), 0, shiny, true));
+                let cases: Vec<Vec<Option<Toile>>> = lignes
+                    .iter()
+                    .map(|&(_, v, forme, ab)| audit_ligne(e, v, forme, ab))
+                    .collect();
+                let s = crate::poisson::sprite(e, 0, 1.0);
+                let (cw, ch) = ((s.lw() + 44.0) as usize, (s.hw() + 28.0) as usize);
+                let (g, haut) = (70usize, 9usize);
+                let colonnes = ["DROITE 1", "DROITE 2", "GAUCHE 1", "GAUCHE 2", "DEMI-TOUR"];
+                let mut t = Toile::new(g + cw * colonnes.len(), haut + ch * lignes.len());
+                t.rect(0, 0, t.l as i32, t.h as i32, [0x0a, 0x14, 0x24], 255);
+                for (k, nom) in colonnes.iter().enumerate() {
+                    t.texte(
+                        (g + k * cw) as i32 + 2,
+                        2,
+                        nom,
+                        [0xff, 0xea, 0xa8],
+                        255,
+                        None,
+                    );
+                }
+                for (j, ((nom, ..), ligne)) in lignes.iter().zip(&cases).enumerate() {
+                    let y = (haut + j * ch) as i32;
+                    t.texte(2, y + ch as i32 / 2 - 2, nom, [0xe8, 0xf0, 0xf4], 255, None);
+                    for (k, c) in ligne.iter().enumerate() {
+                        let x = (g + k * cw) as i32;
+                        let fond = if (j + k) % 2 == 0 {
+                            [0x18, 0x2c, 0x48]
+                        } else {
+                            [0x12, 0x22, 0x3a]
+                        };
+                        t.rect(x, y, cw as i32, ch as i32, fond, 255);
+                        let Some(c) = c else {
+                            t.texte(x + 2, y + 2, "HORS ECRAN", [0x80, 0x80, 0x80], 255, None);
+                            continue;
+                        };
+                        let f = crate::toile::FIN as i32;
+                        for yy in 0..(c.hf() as i32).min(ch as i32 * f) {
+                            for xx in 0..(c.lf() as i32).min(cw as i32 * f) {
+                                let d = crate::toile::demultiplier(
+                                    c.px[yy as usize * c.lf() + xx as usize],
+                                );
+                                t.poser_fin(x * f + xx, y * f + yy, [d[0], d[1], d[2]], d[3]);
+                            }
+                        }
+                    }
+                }
+                let mut r = enregistrer(&t, 4, &dossier.join(format!("{}.png", e.cle)));
+                if r.is_ok() && e.taille <= Taille::Grande {
+                    r = enregistrer(&t, 8, &dossier.join(format!("zoom/{}_x2.png", e.cle)));
+                }
+                if let Err(x) = r {
+                    erreurs.lock().unwrap().push(format!("{} : {x}", e.cle));
+                }
+            });
+        }
+    });
+    let erreurs = erreurs.into_inner().unwrap();
+    if erreurs.is_empty() {
+        Ok(())
+    } else {
+        Err(erreurs.join(" ; "))
+    }
+}
+
+/// Une ligne de l'audit : la créature nage seule (vers la droite puis vers la gauche), cases
+/// recadrées autour d'elle (pixels transparents hors du dessin et de ses effets) ; `None` si
+/// elle était hors de l'écran (corps longs : demi-tour dehors).
+fn audit_ligne(
+    e: &Espece,
+    variante: usize,
+    forme: crate::jeu::Forme,
+    abysses: bool,
+) -> Vec<Option<Toile>> {
+    let s = Arc::new(crate::poisson::sprite_forme(e, variante, 1.0, forme));
+    let f = crate::toile::FIN as f32;
+    let (cw, ch) = ((s.lw() + 44.0) as usize, (s.hw() + 28.0) as usize);
+    let (l, h) = (cw * 4, (ch * 2).max(160));
+    let mut aq = Aquarium::new(l, h, 3);
+    aq.avec_compteur = false;
+    aq.decor = abysses;
+    let mut p = Partie::nouvelle(0, 1);
+    p.reglages.teinte = 0.0;
+    p.reglages.abysses = abysses;
+    let mut a = Alea(11);
+    let mut n = Nageur::new(1, e.rarete, s, l as f32 * 0.2, h as f32 * 0.45, &mut a);
+    n.gauche = false;
+    n.espece = e.cle;
+    n.forme = forme;
+    n.forcer_cible((l as f32 - 4.0, h as f32 * 0.45));
+    aq.nageurs.push(n);
+    let mut cases: Vec<Option<Toile>> = vec![None; 5];
+    let (mut depuis, mut gauche, mut premier) = (0usize, false, [0usize; 2]);
+    // Serpents (Traverse) : sens tiré à chaque traversée, il faut parfois plusieurs minutes.
+    for k in 0..30 * 300 {
+        aq.avancer(1.0 / 30.0);
+        let n = &mut aq.nageurs[0];
+        if n.gauche != gauche {
+            (depuis, gauche) = (k, n.gauche);
+            // Corps longs : retournés hors de l'écran, ils reviennent vers le milieu.
+            if gauche {
+                n.forcer_cible((l as f32 * 0.3, h as f32 * 0.45));
+            }
+        }
+        // Vers la droite jusqu'aux 3/4, puis vers la gauche.
+        if !gauche && n.x > l as f32 * 0.7 {
+            n.forcer_cible((4.0, h as f32 * 0.45));
+        }
+        let n = &aq.nageurs[0];
+        let dedans = n.x - cw as f32 / 2.0 >= 0.0 && n.x + cw as f32 / 2.0 <= l as f32;
+        let d = if gauche { 2 } else { 0 };
+        let case = if !dedans {
+            None
+        } else if k - depuis < 45 {
+            (n.en_demi_tour() && k - depuis >= 4 && k > 51 && cases[4].is_none()).then_some(4)
+        } else if cases[d].is_none() {
+            premier[d / 2] = k;
+            Some(d)
+        } else {
+            (k == premier[d / 2] + 6).then_some(d + 1)
+        };
+        let Some(i) = case else { continue };
+        let (x0, y0) = (
+            ((n.x - cw as f32 / 2.0) * f) as i32,
+            ((n.y - ch as f32 / 2.0) * f) as i32,
+        );
+        aq.dessiner(&p);
+        let mut c = Toile::new(cw, ch);
+        for y in 0..c.hf() as i32 {
+            for x in 0..c.lf() as i32 {
+                let (sx, sy) = (x0 + x, y0 + y);
+                if sx >= 0
+                    && sy >= 0
+                    && (sx as usize) < aq.toile.lf()
+                    && (sy as usize) < aq.toile.hf()
+                {
+                    let j = y as usize * c.lf() + x as usize;
+                    c.px[j] = aq.toile.px[sy as usize * aq.toile.lf() + sx as usize];
+                }
+            }
+        }
+        cases[i] = Some(c);
+        if cases[..4].iter().all(Option::is_some) && (cases[4].is_some() || k - depuis > 60) {
+            break;
+        }
+    }
+    cases
+}
+
 fn rendre_planche(
     aq: &mut Aquarium,
     secondes: f32,

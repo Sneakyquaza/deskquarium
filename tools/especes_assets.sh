@@ -9,4 +9,6 @@ grep -v '^#' tools/choix.tsv | while IFS=$'\t' read -r cle img opts; do
   echo "== $cle ($img)"
   # shellcheck disable=SC2086
   python3 tools/pixeliser.py "$IA/$img.png" "assets/especes/$cle.png" --fond "${fond:-magenta}" $opts | tail -2
+  # Disques d'yeux -> vrai contour de l'œil (v0.14).
+  python3 tools/yeux_affiner.py "assets/especes/$cle.png" --ecrire
 done
