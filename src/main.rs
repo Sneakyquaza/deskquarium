@@ -51,6 +51,8 @@ Options (tests) :
   --planche-souris X.png         curiosité, fuite, poisson attrapé, fiche (avec --demo)
   --eclosion X.mp4 --oeuf N --espece cle [--forme shiny,galaxie] [--dore]
                                  éclosion en vidéo (60 i/s) + planche X.png
+  --multi X.mp4 --oeuf N [--nombre 10] [--graine G]   ouverture ×N (v0.11)
+  --repos-oeufs X.mp4 [--secondes 8]   les 8 œufs au repos (v0.11)
   --planche-oeufs X.png          les œufs et leur animation au repos (x3)
   --objets cle,cle               objets de décor posés (capture / vidéo)
   --fond image.png                fond d'écran sous l'aquarium (sinon fond factice)
@@ -124,6 +126,21 @@ fn lancer() -> Result<(), String> {
     };
     if let Some(f) = valeur("--capture") {
         return capture::capture(&o, &PathBuf::from(f));
+    }
+    if let Some(f) = valeur("--multi") {
+        // --multi X.mp4 --oeuf N [--nombre 10] [--graine G]
+        let oeuf = valeur("--oeuf").and_then(|v| v.parse().ok()).unwrap_or(0);
+        let n = valeur("--nombre")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10);
+        let g = valeur("--graine").and_then(|v| v.parse().ok()).unwrap_or(1);
+        return capture::multi(&PathBuf::from(f), oeuf, n, g);
+    }
+    if let Some(f) = valeur("--repos-oeufs") {
+        let s = valeur("--secondes")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(8.0);
+        return capture::repos_oeufs(&PathBuf::from(f), s);
     }
     if let Some(f) = valeur("--planche-oeufs") {
         return capture::planche_oeufs(&PathBuf::from(f));

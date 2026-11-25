@@ -15,7 +15,7 @@ use crate::scene::{sprite_ajuste, Aquarium, Nageur};
 use crate::son::Son;
 use crate::toile::{hsv, melange, rgb_hsv, Rgb, Toile, FIN};
 use calques::{calques, fenetre};
-use paliers::{couleur_palier, Deroule, Extra, PAUSE};
+use paliers::{couleur_palier, lumiere_palier, Deroule, Extra, ARC_EN_CIEL, PAUSE};
 use std::f32::consts::{PI, TAU};
 use std::sync::{Arc, OnceLock};
 
@@ -152,6 +152,16 @@ fn pixel_repos(i: usize, x: i32, sy: i32, temps: f32) -> Option<Rgb> {
                 return None;
             }
             if !fenetre(p) {
+                let c = &cq.cosmique_coque;
+                // Le biseau blanc autour de la fenêtre : lilas (une ligne blanche dure sinon).
+                let (_, sa, va) = rgb_hsv([p[0], p[1], p[2]]);
+                let bord = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|(dx, dy)| {
+                    let (u, v) = (x + dx, sy + dy);
+                    u >= 0 && v >= 0 && u < c.l && v < c.h && fenetre(c.px(u, v))
+                });
+                if bord && sa < 0.25 && va > 0.8 {
+                    return Some([0xc8, 0xb0, 0xff]);
+                }
                 return Some([p[0], p[1], p[2]]);
             }
             // Fenêtre : la nébuleuse tourne lentement autour du centre de l'œuf.
@@ -166,6 +176,10 @@ fn pixel_repos(i: usize, x: i32, sy: i32, temps: f32) -> Option<Rgb> {
             );
             let q = n.px(u.rem_euclid(n.l), v.rem_euclid(n.h));
             let mut col = [q[0], q[1], q[2]];
+            // Trous noirs de la nébuleuse : indigo profond.
+            if rgb_hsv(col).2 < 0.12 {
+                col = [0x1c, 0x10, 0x3c];
+            }
             // Étoiles de la nébuleuse : scintillent une à une.
             let (_, sat, val) = rgb_hsv(col);
             if val > 0.8 && sat < 0.35 {
@@ -215,8 +229,8 @@ fn pixel_repos(i: usize, x: i32, sy: i32, temps: f32) -> Option<Rgb> {
                 // Le fossile dérive lentement dans l'ambre (parallaxe), assombri et teinté.
                 let f = &cq.fossile;
                 let (fx, fy) = (
-                    (a.l - f.l) / 2 + ((temps * 0.37).sin() * 2.5).round() as i32,
-                    a.h * 11 / 20 - f.h / 2 + ((temps * 0.29).cos() * 1.6).round() as i32,
+                    (a.l - f.l) / 2 + ((temps * 0.37).sin() * 5.5).round() as i32,
+                    a.h * 11 / 20 - f.h / 2 + ((temps * 0.29).cos() * 3.0).round() as i32,
                 );
                 let (u, v) = (x - fx, sy - fy);
                 if u >= 0 && v >= 0 && u < f.l && v < f.h {
@@ -237,10 +251,13 @@ fn pixel_repos(i: usize, x: i32, sy: i32, temps: f32) -> Option<Rgb> {
                         + (temps * 1.3 + b as f32).sin() * 1.2)
                         .round() as i32;
                     let by = (a.h as f32 * (0.85 - 0.62 * w)).round() as i32;
-                    if (x, sy) == (bx, by) {
-                        col = melange(col, [255, 246, 200], 0.75);
-                    } else if (x - bx).abs() + (sy - by).abs() == 1 && b % 2 == 0 {
-                        col = melange(col, [255, 220, 140], 0.3);
+                    // Bulle de 2 x 2 : reflet clair en haut à gauche, bord plus sombre.
+                    if (x == bx || x == bx + 1) && (sy == by || sy == by + 1) {
+                        col = if (x, sy) == (bx, by) {
+                            [255, 250, 220]
+                        } else {
+                            melange(col, [255, 230, 160], 0.55)
+                        };
                     }
                 }
             }
@@ -313,23 +330,28 @@ fn peindre_oeuf(
                     if o > 1.55 {
                         c = melange(c, [236, 255, 246], 0.28);
                     }
-                    // Gouttes qui coulent : tête claire, traîne mouillée plus sombre.
-                    for g in 0..3 {
-                        let periode = 4.2 + g as f32 * 1.1;
-                        let w = ((temps + g as f32 * 1.7) / periode).fract();
-                        if w > 0.75 {
+                    // Gouttes qui coulent (deux à la fois, ~0,8 s du haut en bas) : tête de
+                    // 2 x 3 blanc-cyan, traînée mouillée d'un pixel.
+                    for g in 0..4 {
+                        let periode = 2.2;
+                        let w = ((temps + g as f32 * 0.55) / periode).fract();
+                        if w > 0.4 {
                             continue;
                         }
-                        let gx = (img.l as f32 * (0.28 + 0.2 * g as f32)) as i32;
-                        let gy = (img.h as f32 * (0.08 + 0.85 * (w / 0.75).powf(1.6))) as i32;
-                        if x == gx {
-                            if sy == gy {
-                                c = [235, 252, 255];
-                            } else if sy == gy - 1 {
-                                c = melange(c, [180, 225, 240], 0.7);
-                            } else if (gy - 6..gy - 1).contains(&sy) {
-                                c = melange(c, [70, 100, 90], 0.25);
-                            }
+                        let k = w / 0.4;
+                        let gx = (img.l as f32 * (0.25 + 0.17 * g as f32)) as i32;
+                        let gy = (img.h as f32 * (0.1 + 0.8 * k * k)) as i32;
+                        // Goutte contrastée : bord sombre à droite et dessous, reflet blanc.
+                        if (gx..=gx + 2).contains(&x) && (gy - 3..=gy + 1).contains(&sy) {
+                            c = if x == gx + 2 || sy == gy + 1 {
+                                [0x2c, 0x68, 0x78]
+                            } else if sy == gy - 3 && x == gx {
+                                [255, 255, 255]
+                            } else {
+                                [0x9c, 0xe4, 0xff]
+                            };
+                        } else if x == gx && (gy - 10..gy - 3).contains(&sy) {
+                            c = melange(c, [0x40, 0x78, 0x70], 0.4);
                         }
                     }
                 }
@@ -348,7 +370,7 @@ fn peindre_oeuf(
                 ARC => {
                     // Bandes de couleur qui coulent vers le bas.
                     if s > 0.2 {
-                        c = hsv(h + temps * 0.15 - sy as f32 * 0.012, s, vv);
+                        c = hsv(h + temps * 0.25 - sy as f32 * 0.03, s, vv);
                     }
                     // Éclat de prisme : bande blanche bordée d'arc-en-ciel qui traverse.
                     let pos = (temps / 3.7).fract() * (img.l + img.h) as f32 * 1.6 - 10.0;
@@ -460,20 +482,22 @@ pub fn dessiner_oeuf(
                 x0 + (img.l as f32 * fx) as i32,
                 y0 + (hh as f32 * fy) as i32,
             );
-            petit_oeil(t, (ex, ey), ouvert, regard, 1);
+            // Œil de 22 x 14 pixels du dessin : on le voit s'ouvrir dans la boutique.
+            petit_oeil(t, (ex, ey), ouvert, regard, 2);
         }
     }
     // Fêlures : trait sombre ; la lumière passe à travers, avec un petit halo.
     if let Some((f, k)) = fiss {
         let n = (f.pts.len() as f32 * k.clamp(0.0, 1.0)) as usize;
         let (lc, lf) = lumiere.unwrap_or(([0, 0, 0], 0.0));
-        // Bords sombres d'abord (on lit un trait de fêlure, même sur un œuf clair).
+        // Bords sombres d'abord (on lit un trait de fêlure, même sur un œuf clair) ; fêlure
+        // éclairée de 2 pixels d'épaisseur, la couleur du palier pure au cœur.
         if lf > 0.05 {
             for &(x, sy) in &f.pts[..n] {
                 let y = (sy as f32 * ecrase) as i32;
                 let (px, py) = (x0 + x + dec(y), y0 + y);
-                for dy in [-1, 1] {
-                    t.poser_fin(px, py + dy, [0x14, 0x0c, 0x10], 255);
+                for dy in [-1, 2] {
+                    t.poser_fin(px, py + dy, [0x10, 0x08, 0x0c], 255);
                 }
             }
         }
@@ -481,18 +505,36 @@ pub fn dessiner_oeuf(
             let y = (sy as f32 * ecrase) as i32;
             let (px, py) = (x0 + x + dec(y), y0 + y);
             if lf > 0.05 {
-                let c = melange(lc, [255, 255, 255], 0.45);
-                t.poser_fin(px, py, c, 255);
-                for (dx, dy) in [(1, 0), (-1, 0)] {
-                    t.eclairer_fin(px + dx, py + dy, lc, (lf * 120.0) as u8);
-                }
+                let lc = teinte(lc, px, py, temps);
+                t.poser_fin(px, py, melange(lc, [255, 255, 255], 0.55), 255);
+                t.poser_fin(px, py + 1, lc, 255);
                 if (x + sy).rem_euclid(3) == 0 {
-                    for (dx, dy) in [(2, 0), (-2, 0), (0, 2), (0, -2)] {
-                        t.eclairer_fin(px + dx, py + dy, lc, (lf * 70.0) as u8);
+                    for (dx, dy) in [(0, -2), (0, 3)] {
+                        t.eclairer_fin(px + dx, py + dy, lc, (lf * 110.0) as u8);
                     }
                 }
             } else {
                 t.poser_fin(px, py, [0x10, 0x0c, 0x18], 255);
+            }
+        }
+        // Liseré de lumière autour de l'œuf, de la couleur du palier (lisible sur tout œuf).
+        if lf > 0.3 {
+            let a = ((lf - 0.3) / 0.7 * 230.0) as u8;
+            for y in 0..hh {
+                for x in 0..img.l {
+                    if img.px(x, src_y(y))[3] == 0 {
+                        continue;
+                    }
+                    for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                        let (u, v) = (x + dx, y + dy);
+                        let dehors =
+                            u < 0 || v < 0 || u >= img.l || v >= hh || img.px(u, src_y(v))[3] == 0;
+                        if dehors {
+                            let (px, py) = (x0 + u + dec(y), y0 + v);
+                            t.eclairer_fin(px, py, teinte(lc, px, py, temps), a);
+                        }
+                    }
+                }
             }
         }
     }
@@ -524,6 +566,15 @@ pub fn dessiner_oeuf(
     }
 }
 
+/// Couleur de lumière d'un pixel : `ARC_EN_CIEL` → teinte qui coule le long de l'œuf.
+fn teinte(c: Rgb, x: i32, y: i32, temps: f32) -> Rgb {
+    if c == ARC_EN_CIEL {
+        hsv(x as f32 * 0.035 + y as f32 * 0.025 - temps * 0.9, 0.75, 1.0)
+    } else {
+        c
+    }
+}
+
 /// Pierre précieuse (pixel rouge ou bleu saturé) de l'œuf d'or la plus proche de (x, y).
 fn pierre_proche(x: i32, y: i32) -> Option<(i32, i32)> {
     static P: OnceLock<Vec<(i32, i32)>> = OnceLock::new();
@@ -550,33 +601,56 @@ fn pierre_proche(x: i32, y: i32) -> Option<(i32, i32)> {
         .copied()
 }
 
-/// Petit œil des abysses posé sur la coquille (`g` = taille d'un pixel) : paupières qui
-/// s'ouvrent (`ouvert` 0..1), pupille fendue qui regarde de côté (`regard` -2..2).
+/// Petit œil des abysses posé sur la coquille (`g` = taille d'un pixel) : amande de 11 x 7,
+/// blanc jaunâtre, iris d'or, pupille fendue qui regarde de côté (`regard` -2..2), reflet ;
+/// les paupières s'ouvrent depuis la ligne du milieu (`ouvert` 0..1).
 pub fn petit_oeil(t: &mut Toile, (cx, cy): (i32, i32), ouvert: f32, regard: i32, g: i32) {
-    let demi = (ouvert * 2.4).round() as i32;
-    for dx in -4i32..=4 {
-        let bord = ((1.0 - (dx as f32 / 4.6).powi(2)).max(0.0).sqrt() * demi as f32).round() as i32;
-        for dy in -bord - 1..=bord + 1 {
-            let c = if dy.abs() > bord || dx.abs() == 4 {
-                [0x06, 0x08, 0x14]
-            } else if dx == regard {
-                [0x02, 0x02, 0x06]
-            } else if (dx - regard).abs() == 1 {
-                [0xc8, 0xff, 0x6a]
-            } else {
-                [0xff, 0xe0, 0x58]
-            };
-            for j in 0..g {
-                for i in 0..g {
-                    t.poser_fin(cx + dx * g + i, cy + dy * g + j, c, 255);
-                }
-            }
-        }
-    }
-    if demi > 0 {
+    // Demi-hauteur de l'amande par colonne (-5..=5), rognée par l'ouverture des paupières.
+    const AMANDE: [i32; 11] = [0, 1, 2, 2, 3, 3, 3, 2, 2, 1, 0];
+    let demi = (ouvert * 3.4).round() as i32;
+    let mut px = |x: i32, y: i32, c: Rgb| {
         for j in 0..g {
             for i in 0..g {
-                t.poser_fin(cx + (regard - 1) * g + i, cy - g + j, [255, 255, 255], 255);
+                t.poser_fin(cx + x * g + i, cy + y * g + j, c, 255);
+            }
+        }
+    };
+    for dx in -5i32..=5 {
+        let h = AMANDE[(dx + 5) as usize].min(demi);
+        // Paupières (contour sombre) au-dessus et au-dessous.
+        px(dx, -h - 1, [0x04, 0x06, 0x10]);
+        px(dx, h + 1, [0x04, 0x06, 0x10]);
+        if demi == 0 {
+            continue;
+        }
+        for dy in -h..=h {
+            let r = dx - regard;
+            // Iris rond jaune-vert qui luit, pupille fendue verticale, blanc d'œil sombre.
+            let c = if r == 0 && dy.abs() <= 2 {
+                [0x02, 0x02, 0x04]
+            } else if r * r + dy * dy <= 5 {
+                if r * r + dy * dy >= 4 {
+                    [0x6c, 0xc8, 0x28]
+                } else {
+                    [0xe0, 0xff, 0x60]
+                }
+            } else {
+                [0x26, 0x3c, 0x30]
+            };
+            px(dx, dy, c);
+        }
+    }
+    if demi >= 2 {
+        px(regard + 1, -1, [255, 255, 255]);
+        // Lueur autour de l'œil ouvert.
+        for dx in -6i32..=6 {
+            let h = AMANDE[(dx.clamp(-5, 5) + 5) as usize].min(demi);
+            for dy in [-h - 2, h + 2] {
+                for j in 0..g {
+                    for i in 0..g {
+                        t.eclairer_fin(cx + dx * g + i, cy + dy * g + j, [0x90, 0xff, 0x40], 60);
+                    }
+                }
             }
         }
     }
@@ -607,7 +681,7 @@ fn derriere_eclipse(t: &mut Toile, (cx, cy): (i32, i32), temps: f32) {
         }
     }
     let l = &c.lune;
-    let lx = cx + (w * s.l as f32 * 0.45) as i32;
+    let lx = cx + (w * s.l as f32 * 0.22) as i32;
     calques::poser(t, l, (lx - l.l / 2, cy - l.h / 2), 1, 255, |c| c);
 }
 
@@ -800,8 +874,9 @@ pub struct Eclosion {
     objets: Vec<Objet>,
     /// Ondes de choc (début, couleur) : anneaux qui s'élargissent à chaque temps fort.
     ondes: Vec<(f32, Rgb)>,
-    /// Éclair blanc plein écran jusqu'à cet instant.
+    /// Éclair plein écran jusqu'à cet instant, et sa couleur.
     flash: f32,
+    flash_c: Rgb,
     /// Dernier instant dessiné (les particules avancent par petits pas).
     t_prec: f32,
     alea: Alea,
@@ -821,6 +896,8 @@ const SOL: i32 = HT * 2 - 6;
 const K: i32 = 2;
 /// Fond de la scène.
 const FOND: Rgb = [0x0c, 0x22, 0x35];
+/// Centre vertical de la créature révélée (pixels fins), sous le bandeau.
+const BAS_CREATURE: i32 = 122;
 
 impl Eclosion {
     /// Prépare l'éclosion du poisson `f` sorti de l'œuf `oeuf`.
@@ -846,6 +923,7 @@ impl Eclosion {
             objets: Vec::new(),
             ondes: Vec::new(),
             flash: -1.0,
+            flash_c: [255, 255, 255],
             t_prec: 0.0,
             alea: Alea(f.id ^ 0xec1a),
             trauma: 0.0,
@@ -862,15 +940,15 @@ impl Eclosion {
         let m = 2.0 * crate::poisson::MARGE as f32;
         let fin = FIN as f32;
         // La créature tient dans ~75 % de la scène (sous le bandeau).
-        let petit = e.dims.0 as f32 * k + m <= 48.0 * fin && e.dims.1 as f32 * k + m <= 34.0 * fin;
+        let petit = e.dims.0 as f32 * k + m <= 48.0 * fin && e.dims.1 as f32 * k + m <= 28.0 * fin;
         let tres_petit =
-            e.dims.0 as f32 * k + m <= 32.0 * fin && e.dims.1 as f32 * k + m <= 22.0 * fin;
+            e.dims.0 as f32 * k + m <= 32.0 * fin && e.dims.1 as f32 * k + m <= 20.0 * fin;
         let (s, zoom) = if tres_petit {
             (crate::scene::sprite_de(f), 3)
         } else if petit {
             (crate::scene::sprite_de(f), 2)
         } else {
-            (sprite_ajuste(f, 98 * 2, 68 * 2), 1)
+            (sprite_ajuste(f, 98 * 2, 56 * 2), 1)
         };
         let (al, ah) = (128 / zoom as usize, 96 / zoom as usize);
         let mut aq = Aquarium::new(al, ah, 9);
@@ -906,6 +984,13 @@ impl Eclosion {
     /// shiny et les modificateurs (la montée fait partie de la récompense).
     pub fn suspense(&self) -> f64 {
         self.d.eclat() as f64
+    }
+
+    /// Instants des sauts de palier et des temps forts en plus (captures).
+    pub fn temps_forts(&self) -> Vec<f32> {
+        let mut v: Vec<f32> = self.d.paliers.iter().map(|d| d + PAUSE).collect();
+        v.extend(self.d.extras.iter().map(|(d, _)| d + PAUSE));
+        v
     }
 
     /// Scène renforcée (haute rareté, shiny, modificateur).
@@ -973,6 +1058,7 @@ impl Eclosion {
         } else if t < eclat {
             let u = (t - self.d.scene.0) / (eclat - self.d.scene.0);
             self.scene_oeuf(&mut scene, t, u, couleur);
+            self.dessiner_objets(&mut scene, 1.0);
         } else {
             self.revelation(&mut scene, t - eclat);
         }
@@ -981,18 +1067,6 @@ impl Eclosion {
             let (x, y) = (p.x.round() as i32 & !1, p.y.round() as i32 & !1);
             // Étincelles sur la grille monde (comme l'œuf).
             scene.eclairer(x / 2, y / 2, p.c, a);
-        }
-        for o in &self.objets {
-            let a = (255.0 * (1.0 - ((o.vie - 2.2) / 0.6).clamp(0.0, 1.0))) as u8;
-            let (x, y) = (o.x.round() as i32 & !1, o.y.round() as i32 & !1);
-            calques::poser(
-                &mut scene,
-                o.img,
-                (x - o.img.l / 2, y - o.img.h),
-                1,
-                a,
-                |c| c,
-            );
         }
         // Ondes de choc des temps forts : anneau d'un pixel monde qui s'élargit.
         for &(d, c) in &self.ondes {
@@ -1010,7 +1084,12 @@ impl Eclosion {
             }
         }
         if t < self.flash {
-            calques::assombrir(&mut scene, [255, 255, 255], 0.85);
+            // Éclair teinté de la couleur du temps fort (pas un gris plat).
+            calques::assombrir(
+                &mut scene,
+                melange(self.flash_c, [255, 255, 255], 0.45),
+                0.7,
+            );
         }
         // Secousse de l'écran : décalage entier (pixels monde), force = trauma².
         let k = self.trauma * self.trauma;
@@ -1086,8 +1165,25 @@ impl Eclosion {
     }
 
     /// Temps fort : éclair, secousse, onde de choc, gerbe.
+    /// Pièces, pierres, gouttes : `a` = opacité commune (fondu à la révélation).
+    fn dessiner_objets(&self, scene: &mut Toile, a: f32) {
+        for o in &self.objets {
+            let al = 255.0 * a * (1.0 - ((o.vie - 2.2) / 0.6).clamp(0.0, 1.0));
+            let (x, y) = (o.x.round() as i32 & !1, o.y.round() as i32 & !1);
+            calques::poser(
+                scene,
+                o.img,
+                (x - o.img.l / 2, y - o.img.h),
+                1,
+                al as u8,
+                |c| c,
+            );
+        }
+    }
+
     fn temps_fort(&mut self, t: f32, c: Rgb, force: f32) {
         self.flash = t + 0.035;
+        self.flash_c = c;
         self.trauma = (self.trauma + force).min(1.0);
         self.ondes.push((t, c));
         let centre = (L as f32, (SOL - 90) as f32);
@@ -1151,7 +1247,8 @@ impl Eclosion {
         // Fêlures qui s'élargissent avec chaque palier.
         fiss += 0.4 * p as f32 / paliers::NB_PALIERS as f32
             + 0.1 * ((t - paliers::ENTREE) / 3.0).clamp(0.0, 1.0);
-        let mut lumiere = (t > 0.8).then_some((couleur, 0.35 + 0.15 * p as f32 + 0.2 * u));
+        let mut lumiere =
+            (t > 0.8).then_some((lumiere_palier(p, t), 0.35 + 0.15 * p as f32 + 0.2 * u));
         // Paliers : pause (l'œuf se fige, la lumière baisse), puis le saut.
         for k in 0..self.d.paliers.len() {
             let d0 = self.d.paliers[k];
@@ -1162,6 +1259,10 @@ impl Eclosion {
             if t >= d0 + PAUSE && self.une_fois(8 + k as u32) {
                 let c = couleur_palier(k + 1, t);
                 self.temps_fort(t, c, 0.3 + 0.1 * k as f32);
+                // Éclair plein écran seulement à partir de l'or (sinon : liseré et secousse).
+                if k + 1 < 3 {
+                    self.flash = -1.0;
+                }
                 self.son(Son::Palier(k as u8 + 1), 1.0);
             }
         }
@@ -1174,10 +1275,26 @@ impl Eclosion {
             }
             if t >= d0 + PAUSE && t < d0 + paliers::TEMPS_EXTRA {
                 let c = match e {
-                    Extra::Shiny => hsv(t * 1.4, 0.45, 1.0),
+                    // Shiny : l'arc-en-ciel reste, avec un éclat blanc-or en plus.
+                    Extra::Shiny => ARC_EN_CIEL,
                     Extra::Modif => self.modif.map_or(couleur, |m| m.couleur()),
                 };
                 lumiere = Some((c, 1.0));
+                let c = if c == ARC_EN_CIEL {
+                    [0xff, 0xf0, 0xb0]
+                } else {
+                    c
+                };
+                // Cœur blanc-or qui pulse au centre de l'œuf pendant le temps fort.
+                let pulse = 0.5 + 0.5 * (t * 14.0).sin();
+                calques::halo(
+                    scene,
+                    (cx, base - ih / 2),
+                    30.0 + 20.0 * pulse,
+                    [0xff, 0xf0, 0xb0],
+                    0.6,
+                    2,
+                );
                 if self.une_fois(16 + k as u32) {
                     self.temps_fort(t, c, 0.4);
                     match e {
@@ -1242,6 +1359,7 @@ impl Eclosion {
         }
         // Rayons qui sortent des fêlures dès le premier palier (plus nombreux ensuite).
         if let Some((c, f)) = lumiere.filter(|_| p >= 1 && !self.d.en_pause(t)) {
+            let c = if c == ARC_EN_CIEL { couleur } else { c };
             let n = 6 + 2 * p;
             for k in 0..n {
                 let ang = k as f32 / n as f32 * TAU + t * 0.6;
@@ -1365,6 +1483,12 @@ impl Eclosion {
                 scene.eclairer(x.round() as i32, y.round() as i32, m.couleur(), a);
             }
         }
+        // Objets de la scène (pièces, gouttes) derrière la créature, effacés en 0,4 s.
+        let fondu = 1.0 - ((apres - 0.3) / 0.4).clamp(0.0, 1.0);
+        self.dessiner_objets(scene, fondu);
+        if apres > 0.7 {
+            self.objets.clear();
+        }
         // Éclats de coquille, derrière le poisson, qui s'effacent.
         for e in &self.eclats {
             let a = (255.0 * (1.0 - ((e.vie - 0.7) / 0.7).clamp(0.0, 1.0))) as u8;
@@ -1379,17 +1503,28 @@ impl Eclosion {
         self.poisson.dessiner(&Partie::nouvelle(0, 0));
         let u = (apres - 0.04).max(0.0);
         let rebond = if self.oeuf == RIVIERE {
-            let w = (u / 0.7).min(1.0);
-            (110.0 * (1.0 - w) * (1.0 - w) - 70.0 * (w * PI).sin() * (1.0 - w)).round() as i32
+            // Saut hors du remous : part du bas, monte au-dessus de sa place, retombe.
+            let w = (u / 0.9).min(1.0);
+            let arc = 130.0 * (1.0 - w).powi(2) - 60.0 * (w * PI).sin();
+            (arc * (1.0 - w * w * 0.2)).round() as i32
         } else {
             (-44.0 * (-6.0 * u).exp() * (15.0 * u).cos()).round() as i32
         };
         let blanc = u < 0.06;
+        // Lueur pâle derrière la créature : les dessins sombres se détachent du fond.
+        calques::halo(
+            scene,
+            (L, BAS_CREATURE + rebond),
+            80.0,
+            [0x50, 0x80, 0xa0],
+            0.45,
+            2,
+        );
         let src = &self.poisson.toile;
         let z = self.zoom;
         let (sl, sh) = (src.lf() as i32, src.hf() as i32);
-        // Au milieu de la scène, sous le bandeau.
-        let (ox, oy) = (L - sl * z / 2, HT + 14 - sh * z / 2 + rebond);
+        // Sous le bandeau et ses plaques (haut réservé : 64 pixels fins).
+        let (ox, oy) = (L - sl * z / 2, BAS_CREATURE - sh * z / 2 + rebond);
         for y in 0..sh {
             for x in 0..sl {
                 let p = src.px[(y * sl + x) as usize];
@@ -1416,14 +1551,17 @@ impl Eclosion {
                 self.trauma = (self.trauma + 0.35).min(1.0);
                 self.gerbe((cx as f32, 30.0), 18, couleur, 90.0);
             }
+            let nom = self.rarete.nom().to_uppercase();
+            // Le claquement ne sort jamais du cadre (noms longs : « PRÉHISTORIQUE »).
+            let kmax = ((L - 6) / (crate::toile::largeur_texte(&nom) + 4)).max(1);
             let k = if v < 0.05 {
                 4
             } else if v < 0.1 {
                 3
             } else {
                 2
-            };
-            let nom = self.rarete.nom().to_uppercase();
+            }
+            .min(kmax);
             let large = (v / 0.12).min(1.0);
             // Bande sombre bordée de la couleur, qui s'ouvre depuis le centre.
             let bande = (L as f32 * large) as i32;
@@ -1449,13 +1587,22 @@ impl Eclosion {
             if self.pitie {
                 lignes.push((crate::i18n::tr("GARANTI !").into(), [0xa8, 0xf0, 0xff]));
             }
+            // Plaques côte à côte sur une seule ligne (sinon deux), au-dessus de la créature.
+            let larg: Vec<i32> = lignes
+                .iter()
+                .map(|(l, _)| crate::toile::largeur_texte(l) + 8)
+                .collect();
+            let total: i32 = larg.iter().sum::<i32>() + 2 * larg.len().saturating_sub(1) as i32;
+            let (mut x, mut y) = (L / 2 - total.min(L - 4) / 2, y0 + 5 * 2 + 6 + 2);
             for (j, (l, c)) in lignes.iter().enumerate() {
-                // Sur sa propre plaque sombre, sous le bandeau.
-                let w = crate::toile::largeur_texte(l) + 8;
-                let y = y0 + hb + 2 + j as i32 * 9;
-                scene.rect(L / 2 - w / 2, y, w, 9, [0x08, 0x12, 0x20], 220);
-                scene.rect(L / 2 - w / 2, y + 8, w, 1, *c, 200);
-                texte_gros(scene, l, (L / 2, y + 2), 1, *c);
+                if x + larg[j] > L - 2 {
+                    x = L / 2 - larg[j] / 2;
+                    y += 10;
+                }
+                scene.rect(x, y, larg[j], 9, [0x08, 0x12, 0x20], 220);
+                scene.rect(x, y + 8, larg[j], 1, *c, 200);
+                texte_gros(scene, l, (x + larg[j] / 2, y + 2), 1, *c);
+                x += larg[j] + 2;
             }
         }
     }

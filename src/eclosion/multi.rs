@@ -80,7 +80,7 @@ impl Multi {
                     sprite: sprite_ajuste(f, cl - 12, ch - 34),
                     fiss: Fissures::nouvelles(image_oeuf(oeuf), f.id),
                     x: (x0 + ki * cl + cl / 2) & !1,
-                    y: (MH * 2 - (lignes - ligne) * ch + ch / 2 + 4) & !1,
+                    y: (MH * 2 - (lignes - ligne) * ch + ch / 2 - 4) & !1,
                 }
             })
             .collect::<Vec<_>>();
@@ -125,7 +125,7 @@ impl Multi {
     fn retourne(&self, k: usize) -> f32 {
         let mut t = self.eclat() + 0.35 + k as f32 * self.pas_carte();
         if k + 1 == self.ordre.len() && self.derniere_rare() {
-            t += 0.5;
+            t += 0.8;
         }
         t
     }
@@ -134,6 +134,11 @@ impl Multi {
         self.ordre
             .last()
             .is_some_and(|&i| self.cartes[i].palier >= 2 || self.cartes[i].shiny)
+    }
+
+    /// Fin de l'animation (secondes) : toutes les cartes retournées.
+    pub fn fin(&self) -> f32 {
+        self.retourne(self.ordre.len().saturating_sub(1)) + 0.7
     }
 
     /// Toutes les cartes sont retournées (texte et boutons sous la grille).
@@ -197,13 +202,19 @@ impl Multi {
                     self.gerbe((x as f32, y as f32), 10, couleur_palier(p, 0.0), 110.0);
                 }
             }
+            // Avant la dernière carte rare : la grille tremble (suspense).
+            let tr = self.retourne(self.ordre.len().saturating_sub(1));
+            if self.derniere_rare() && (tr - 0.6..tr).contains(&t) {
+                self.trauma = self.trauma.max(0.35);
+            }
+            self.rayons_derniere(&mut scene, t);
             self.cartes_dessin(&mut scene, t);
             if t - eclat < 0.15 {
-                calques::assombrir(
-                    &mut scene,
-                    [255, 255, 255],
-                    0.8 * (1.0 - (t - eclat) / 0.15),
-                );
+                // Éclair de la couleur du meilleur palier, pas un gris plat.
+                // Blanc, puis la couleur du plus beau palier.
+                let v = (t - eclat) / 0.15;
+                let c = melange([255, 255, 255], couleur_palier(self.palier_max(), t), v);
+                calques::assombrir(&mut scene, c, 0.8 * (1.0 - v));
             }
         }
         for p in &self.etincelles {
@@ -273,9 +284,12 @@ impl Multi {
             };
             let penche = (t * (8.0 + atteint as f32 * 2.0) + k as f32).sin() * amp;
             let fiss = ((t - ARRIVEE) / 1.0).clamp(0.0, 0.6) + 0.1 * atteint as f32;
-            let lum = (t > ARRIVEE + 0.4)
-                .then_some((couleur_palier(atteint, t), 0.5 + 0.12 * atteint as f32));
-            if let Some((col, _)) = lum {
+            let lum = (t > ARRIVEE + 0.4).then_some((
+                super::paliers::lumiere_palier(atteint, t),
+                0.5 + 0.12 * atteint as f32,
+            ));
+            if let Some((_, _)) = lum {
+                let col = couleur_palier(atteint, t);
                 calques::halo(
                     scene,
                     (c.x, c.y - 4),
@@ -301,6 +315,36 @@ impl Multi {
                 c.dore,
                 false,
             );
+        }
+    }
+
+    /// Rayons derrière la dernière carte (la plus rare), sous toutes les cartes.
+    fn rayons_derniere(&self, scene: &mut Toile, t: f32) {
+        let Some(&i) = self.ordre.last() else {
+            return;
+        };
+        let derniere = self.derniere_rare();
+        // Rayons dès la pause qui précède la dernière carte (suspense), puis derrière elle.
+        let face = t >= self.retourne(self.ordre.len() - 1) - 0.6;
+        let c = &self.cartes[i];
+        // La plus rare en dernier : rayons derrière sa carte, de sa couleur.
+        if face && derniere {
+            let col = couleur_palier(c.palier, t);
+            for k in 0..14 {
+                let ang = k as f32 / 14.0 * TAU + t * 0.5;
+                for r in 10..70 {
+                    let (x, y) = (
+                        c.x as f32 / 2.0 + ang.cos() * r as f32,
+                        c.y as f32 / 2.0 + ang.sin() * r as f32,
+                    );
+                    scene.eclairer(
+                        x.round() as i32,
+                        y.round() as i32,
+                        col,
+                        (110.0 * (1.0 - r as f32 / 70.0)) as u8,
+                    );
+                }
+            }
         }
     }
 
@@ -347,34 +391,19 @@ impl Multi {
             let face = v >= 0.0;
             let w = ((cl as f32 * largeur) as i32 / 2 * 2).max(2);
             let (x0, y0) = (c.x - w / 2, c.y - ch / 2);
-            // La plus rare en dernier : rayons derrière sa carte, de sa couleur.
-            if face && derniere {
-                let col = couleur_palier(c.palier, t);
-                for k in 0..14 {
-                    let ang = k as f32 / 14.0 * TAU + t * 0.5;
-                    for r in 10..70 {
-                        let (x, y) = (
-                            c.x as f32 / 2.0 + ang.cos() * r as f32,
-                            c.y as f32 / 2.0 + ang.sin() * r as f32,
-                        );
-                        scene.eclairer(
-                            x.round() as i32,
-                            y.round() as i32,
-                            col,
-                            (110.0 * (1.0 - r as f32 / 70.0)) as u8,
-                        );
-                    }
-                }
-            }
             let bord = if face {
-                couleur_palier(c.palier, t)
+                // Cadre de la couleur de la rareté (Mythique ≠ Légendaire).
+                c.rarete.couleur()
             } else {
                 OEUFS[self.oeuf].coquille[1]
             };
             for y in 0..ch {
                 for x in 0..w {
                     let cadre = x < 2 || y < 2 || x >= w - 2 || y >= ch - 2;
-                    let col = if cadre {
+                    let col = if cadre && face && c.shiny {
+                        // Shiny : cadre arc-en-ciel qui tourne.
+                        hsv((x + y) as f32 / 60.0 + t * 0.8, 0.6, 1.0)
+                    } else if cadre {
                         bord
                     } else if face {
                         melange(FOND, bord, 0.18)
@@ -385,14 +414,20 @@ impl Multi {
                 }
             }
             if !face {
-                if w > 10 {
-                    texte_gros(
-                        scene,
-                        "?",
-                        (c.x / 2, c.y / 2 - 3),
-                        2,
-                        OEUFS[self.oeuf].coquille[1],
-                    );
+                // Dos de carte : point d'interrogation dessiné (5 x 7, pixels monde ×2),
+                // écrasé avec la carte qui se replie.
+                const Q: [&str; 7] = [
+                    ".###.", "#...#", "....#", "..##.", "..#..", ".....", "..#..",
+                ];
+                let col = OEUFS[self.oeuf].coquille[1];
+                for (j, l) in Q.iter().enumerate() {
+                    for (i, ch) in l.chars().enumerate() {
+                        if ch == '#' {
+                            let x = c.x + ((i as i32 - 2) * 4 * w) / cl;
+                            let y = c.y - 14 + j as i32 * 4;
+                            scene.rect(x / 2, y / 2, (2 * w / cl).max(1), 2, col, 255);
+                        }
+                    }
                 }
                 continue;
             }
@@ -419,7 +454,22 @@ impl Multi {
             let col = c.rarete.couleur();
             let nom = c.rarete.nom().to_uppercase();
             let nom: String = nom.chars().take(9).collect();
-            texte_gros(scene, &nom, (c.x / 2, (c.y + ch / 2) / 2 - 6), 1, col);
+            // Petite police sans agrandissement : tient dans la carte (« UNCOMMON »).
+            // Trop long pour la carte (« UNCOMMON ») : coupé avec un point.
+            let mut nom = nom;
+            while crate::toile::largeur_texte(&nom) > cl / 2 - 6 && nom.chars().count() > 3 {
+                let n = nom.trim_end_matches('.').chars().count();
+                nom = nom.chars().take(n - 1).collect::<String>() + ".";
+            }
+            let lw = crate::toile::largeur_texte(&nom);
+            scene.texte(
+                c.x / 2 - lw / 2,
+                (c.y + ch / 2) / 2 - 8,
+                &nom,
+                col,
+                255,
+                Some([0x04, 0x08, 0x10]),
+            );
             let mut marques = Vec::new();
             if c.shiny {
                 marques.push(([0xff, 0xb8, 0xe8], "S"));

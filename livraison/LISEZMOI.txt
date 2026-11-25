@@ -1,4 +1,4 @@
-AQUARIUM v0.10 - fond d'écran aquarium pixel art + petit jeu idle (Windows 10/11, 64 bits)
+AQUARIUM v0.11 - fond d'écran aquarium pixel art + petit jeu idle (Windows 10/11, 64 bits)
 
 MISES À JOUR (depuis la v0.8)
 - Plus besoin de dézipper : l'appli se met à jour elle-même depuis
@@ -12,6 +12,21 @@ MISES À JOUR (depuis la v0.8)
   n'est changé : l'ancienne version reste en place. Le dossier de l'exe doit être
   modifiable (pas dans C:\Program Files) ; sinon, télécharge le zip sur la page ci-dessus.
 - Seule la demande envoyée à GitHub (« aquarium-maj », sans donnée personnelle) sort de ton PC.
+
+NOUVEAU (v0.11) : DES ÉCLOSIONS SPECTACULAIRES, EN FRANÇAIS OU EN ANGLAIS
+- Langue : français ou anglais (Réglages > Langue ; au premier lancement, celle de Windows).
+- Chaque œuf vit dans la boutique (nébuleuse qui tourne dans le cristal cosmique, fossile qui
+  dérive dans l'ambre, œil qui s'ouvre sur l'œuf des abysses, éclipse derrière l'œuf noir…) et a
+  sa propre éclosion : trou noir et galaxie, éclipse et anneau de diamant, ambre qui fond, yeux
+  dans le noir et lanterne, vague et huître géante, tourbillon, pluie de trésor, prisme.
+- La lumière des fêlures monte par paliers (blanc, bleu, violet, or, arc-en-ciel) jusqu'à la
+  vraie rareté : chaque palier est un petit temps fort. Shiny et modificateur en ajoutent un.
+- Ouvrir ×3 ou ×10 d'un coup (cartes qui se retournent, la plus rare en dernier) et ouverture
+  auto (s'arrête sur la rareté choisie ou un shiny).
+- Malchance limitée : après une longue série sans, la rareté affichée sur la carte de l'œuf est
+  garantie (« Épique ou mieux garanti dans 12 œufs »).
+- Sons dans l'Écloserie seulement (volume et coupure dans les Réglages) ; le fond d'écran reste
+  silencieux. Les grandes éclosions s'annoncent sur le fond d'écran, près du compteur.
 
 NOUVEAU (v0.10) : LES ŒUFS
 - Chaque œuf a son propre dessin et sa petite animation (galet moucheté, nacre du lagon,

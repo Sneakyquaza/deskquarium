@@ -900,6 +900,11 @@ pub fn eclosion(
         false,
     );
     let duree = ecl.suspense() + 2.6;
+    println!(
+        "temps forts : {:?} ; éclatement {:.2}",
+        ecl.temps_forts(),
+        ecl.suspense()
+    );
     let k = 3usize;
     let (l, h) = (ecl.toile.lf() * k, ecl.toile.hf() * k);
     creer_dossier(sortie)?;
@@ -1031,4 +1036,115 @@ pub fn planche_oeufs(sortie: &Path) -> Result<(), String> {
         }
     }
     enregistrer(&p, 6, sortie)
+}
+
+/// Vidéo mp4 60 i/s (RGBA brut → ffmpeg H.264) de `n` images de `l` x `h` pixels, chaque
+/// image donnée par `image(i)` ; renvoie le chemin d'ffmpeg (pour le son).
+fn filmer(
+    sortie: &Path,
+    (l, h): (usize, usize),
+    n: usize,
+    mut image: impl FnMut(usize) -> Vec<u8>,
+) -> Result<String, String> {
+    creer_dossier(sortie)?;
+    let ffmpeg = std::env::var("AQUARIUM_FFMPEG").unwrap_or_else(|_| "ffmpeg".into());
+    let mut enfant = std::process::Command::new(&ffmpeg)
+        .args([
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "-s",
+        ])
+        .arg(format!("{l}x{h}"))
+        .args([
+            "-r", "60", "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18",
+        ])
+        .arg(sortie.with_extension("mp4"))
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("{ffmpeg} : {e} (AQUARIUM_FFMPEG pour donner le chemin)"))?;
+    let mut entree = enfant.stdin.take().ok_or("ffmpeg sans entrée")?;
+    for i in 0..n {
+        entree.write_all(&image(i)).map_err(|e| e.to_string())?;
+    }
+    drop(entree);
+    let s = enfant.wait().map_err(|e| e.to_string())?;
+    if !s.success() {
+        return Err(format!("ffmpeg : {s}"));
+    }
+    Ok(ffmpeg)
+}
+
+/// Ouverture ×`n` (v0.11) sans écran : une vraie partie achète un lot de l'œuf `oeuf`
+/// (graine `graine`), la grille est filmée à 60 i/s avec ses sons.
+pub fn multi(sortie: &Path, oeuf: usize, n: u32, graine: u64) -> Result<(), String> {
+    let mut p = Partie::nouvelle(0, graine);
+    p.argent = 1e300;
+    let quand = crate::jeu::OEUFS
+        .get(oeuf)
+        .ok_or("œuf inconnu")?
+        .dispo
+        .map_or(0, |(_, debut, _)| debut + 1);
+    let v = p
+        .acheter_lot(oeuf, n, quand)
+        .map_err(|e| format!("{e:?}"))?;
+    let poissons: Vec<_> = v
+        .iter()
+        .filter_map(|o| {
+            let f = p.poissons.iter().find(|f| f.id == o.id)?.clone();
+            Some((f, o.dore, o.pitie))
+        })
+        .collect();
+    for (f, _, _) in &poissons {
+        println!(
+            "{} {:?} shiny {} {:?}",
+            f.espece, f.rarete, f.shiny, f.modif
+        );
+    }
+    let fin = crate::eclosion::multi::Multi::nouvelle(&poissons, oeuf, 0.0).fin() as f64 + 1.6;
+    let mut m = crate::eclosion::multi::Multi::nouvelle(&poissons, oeuf, 0.0);
+    let k = 3usize;
+    let (l, h) = (m.toile.lf() * k, m.toile.hf() * k);
+    let nb = (fin * 60.0) as usize;
+    let mut sons = Vec::new();
+    let ffmpeg = filmer(sortie, (l, h), nb, |i| {
+        let t = i as f64 / 60.0;
+        m.dessiner(t);
+        sons.extend(m.sons.drain(..).map(|(s, hh)| (t, s, hh)));
+        m.toile.agrandie_rgba(k * crate::toile::FIN)
+    })?;
+    ajouter_son(&ffmpeg, &sortie.with_extension("mp4"), &sons, fin)
+}
+
+/// Les 8 œufs au repos côte à côte (v0.11), `secondes` de vidéo à 60 i/s (×3).
+pub fn repos_oeufs(sortie: &Path, secondes: f64) -> Result<(), String> {
+    let n = crate::jeu::OEUFS.len();
+    let (vl, vh) = crate::eclosion::VIGNETTE;
+    let (cols, k) = (4usize, 3usize);
+    let mut t = Toile::new(vl * cols, vh * n.div_ceil(cols));
+    let (l, h) = (t.lf() * k, t.hf() * k);
+    let nb = (secondes * 60.0) as usize;
+    let ffmpeg = filmer(sortie, (l, h), nb, |i| {
+        let temps = i as f32 / 60.0;
+        t.rect(0, 0, t.l as i32, t.h as i32, [0x10, 0x32, 0x4a], 255);
+        for o in 0..n {
+            let v = crate::eclosion::vignette(o, temps);
+            let (x, y) = (((o % cols) * vl * 2) as i32, ((o / cols) * vh * 2) as i32);
+            for yy in 0..v.hf() as i32 {
+                for xx in 0..v.lf() as i32 {
+                    let d = crate::toile::demultiplier(v.px[(yy * v.lf() as i32 + xx) as usize]);
+                    if d[3] > 0 {
+                        t.poser_fin(x + xx, y + yy, [d[0], d[1], d[2]], d[3]);
+                    }
+                }
+            }
+        }
+        t.agrandie_rgba(k * crate::toile::FIN)
+    })?;
+    let _ = ffmpeg;
+    Ok(())
 }

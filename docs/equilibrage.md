@@ -126,3 +126,34 @@ Prix : même règle `base × (1 + n/10)²`. Placés entre les œufs ordinaires (
 ## Œuf doré par hasard (v0.10)
 
 Chaque œuf ordinaire acheté a 3 % de chances (`CHANCE_OEUF_DORE`) de devenir doré : rareté = la meilleure de deux tirages, shiny ×3, modificateurs ×2, éclosion dorée. Effet mesuré (test `oeuf_dore_par_hasard`, 40 000 œufs de rivière) : Rare ou mieux ≈ ×1,9. Espérance de revenu d'un œuf : +≈ 4 % (sans effet visible sur les jalons de la simulation).
+
+## Pitié (v0.11)
+
+Malchance limitée, par œuf : un compteur (`Partie.pitie`, sauvegarde v6) compte les œufs de ce type ouverts de suite SANS la rareté garantie ; le N-ième la donne d'office (tirage limité aux raretés garanties de l'œuf, mêmes proportions entre elles : test `pitie_respecte_les_proportions`), puis le compteur repart à zéro (aussi quand la rareté sort d'elle-même). La carte de l'œuf affiche « Épique ou mieux garanti dans 12 œufs » ; l'éclosion forcée porte la plaque GARANTI !. Le seuil vise la rareté « notable » de chaque œuf (Épique ou mieux pour les premiers, plus haut quand Épique est déjà courant) ; l'œuf d'ambre n'en a pas (80 % de Préhistorique).
+
+| Œuf | Garanti | Chance normale | N | Taux réel avec pitié | Séries qui vont au bout |
+|---|---|---|---|---|---|
+| Rivière | Épique+ | 0,5 % | 40 | 2,75 % | 82 % |
+| Lagon | Épique+ | 8 % | 25 | 9,1 % | 13,5 % |
+| Abysses | Légendaire+ | 12 % | 25 | 12,5 % | 4,7 % |
+| Cosmique | Mythique+ | 16 % | 25 | 16,2 % | 1,5 % |
+| Ambre | — | | | | |
+| Doré | Légendaire+ | 10 % | 20 | 11,4 % | 13,5 % |
+| Arc-en-ciel | Mythique+ | 10 % | 20 | 11,4 % | 13,5 % |
+| Éclipse | Irréel+ | 10 % | 20 | 11,4 % | 13,5 % |
+
+(Taux réel = 1 / durée moyenne d'une série = p / (1 − (1 − p)^N).) La rivière est volontairement généreuse : l'Épique du 40e œuf (≈ 2 000 de prix) est la première vraie surprise de la partie. Ailleurs la pitié ne change presque rien en moyenne, elle coupe seulement les très mauvaises séries.
+
+Ouvertures ×3 / ×10 : prix = somme des prix successifs (`Partie::prix_lot`, même pente `(1 + n/10)²`), tout ou rien ; chaque œuf du lot est tiré exactement comme un œuf seul (doré par hasard, pitié comprise). Ouverture auto : relance le même lot 1 s après chaque révélation, s'arrête sur la rareté choisie ou mieux (Légendaire par défaut), sur un shiny (case cochée par défaut) ou quand l'argent manque. Tout se paie avec l'argent du jeu.
+
+Simulation (600 h, mêmes 3 parties ; le flux aléatoire change dès qu'une pitié tombe) :
+
+| Jalon | v0.10 (1 / 2 / 3) | v0.11 (1 / 2 / 3) |
+|---|---|---|
+| 1 k/s | 1 h 15 / 34 min / 1 h 31 | 38 min / 24 min / 1 h 15 |
+| 10 k/s | 6 h 54 / 10 h 02 / 10 h 39 | 7 h 00 / 5 h 31 / 8 h 01 |
+| 1er œuf cosmique | 1 j 2 h / 23 h 53 / 1 j 6 h | 1 j 3 h / 18 h 34 / 23 h 35 |
+| 1er œuf d'ambre | 7 j 17 h / 8 j 1 h / 12 j 14 h | 12 j 9 h / 13 j 19 h / 16 j 2 h |
+| Fin (25 j) | 39,2 / 50,9 / 47 M/s | 47,1 / 54 / 59,8 M/s |
+
+Lecture : la pitié de la rivière accélère la première heure (un Épique arrive tôt), le reste de la courbe bouge dans le bruit des tirages ; revenu final +10 à +25 %. Levier si c'est trop généreux : le N de la rivière (40 → 60).

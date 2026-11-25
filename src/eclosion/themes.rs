@@ -41,6 +41,52 @@ impl Eclosion {
         (L, SOL - image_oeuf(self.oeuf).h * K / 2)
     }
 
+    /// L'œuf ouvert agrandi ×`e` (2 → 1 : il recule pour laisser le ciel à la scène), posé
+    /// sur le sol, au plus proche (toujours dans le cadre).
+    fn oeuf_reduit(&self, scene: &mut Toile, t: f32, e: f32, couleur: Rgb, penche: f32) {
+        let img = image_oeuf(self.oeuf);
+        let mut tmp = Toile::new((img.l / 2 + 24) as usize, (img.h / 2 + 24) as usize);
+        let (tcx, tb) = (tmp.lf() as i32 / 2, tmp.hf() as i32 - 12);
+        dessiner_oeuf(
+            &mut tmp,
+            self.oeuf,
+            (tcx, tb),
+            t,
+            penche / e,
+            1.0,
+            Some((&self.fissures, 1.0)),
+            Some((
+                if self.d.palier >= 4 {
+                    paliers::ARC_EN_CIEL
+                } else {
+                    couleur
+                },
+                1.0,
+            )),
+            self.dore,
+            false,
+        );
+        let (lf, hf) = (tmp.lf() as i32, tmp.hf() as i32);
+        let (cx, base) = (L + (penche * 0.5).round() as i32, SOL);
+        let (w, h) = ((lf as f32 * e) as i32, (hf as f32 * e) as i32);
+        for y in -h..h {
+            for x in -w..w {
+                let (sx, sy) = (
+                    tcx + (x as f32 / e).floor() as i32,
+                    tb + (y as f32 / e).floor() as i32,
+                );
+                if sx < 0 || sy < 0 || sx >= lf || sy >= hf {
+                    continue;
+                }
+                let p = tmp.px[(sy * lf + sx) as usize];
+                if p[3] > 0 {
+                    let d = crate::toile::demultiplier(p);
+                    scene.poser_fin(cx + x, base + y, [d[0], d[1], d[2]], d[3]);
+                }
+            }
+        }
+    }
+
     /// L'œuf, ses fêlures grandes ouvertes, dans la lumière du palier final, décalé de `dy`.
     fn oeuf_ouvert(&self, scene: &mut Toile, t: f32, dy: i32, couleur: Rgb, penche: f32) {
         dessiner_oeuf_k(
@@ -52,7 +98,14 @@ impl Eclosion {
             penche,
             1.0,
             Some((&self.fissures, 1.0)),
-            Some((couleur, 1.0)),
+            Some((
+                if self.d.palier >= 4 {
+                    paliers::ARC_EN_CIEL
+                } else {
+                    couleur
+                },
+                1.0,
+            )),
             self.dore,
             false,
         );
@@ -74,7 +127,7 @@ impl Eclosion {
         }
         // Raretés hautes : la couleur du palier balaie l'écran.
         if fort {
-            balayage(scene, couleur, u);
+            let _ = couleur;
         }
         self.trauma = self.trauma.max(0.12 + 0.3 * u);
     }
@@ -145,7 +198,7 @@ impl Eclosion {
         // Le point de lumière juste avant l'explosion.
         if u > 0.86 {
             let v = lisse(0.86, 1.0, u);
-            calques::halo(scene, (cx, cy), 20.0 + 60.0 * v, [255, 255, 255], v, 2);
+            calques::halo(scene, (cx, cy), 14.0 + 22.0 * v, [0xff, 0xf0, 0xff], v, 2);
         }
     }
 
@@ -208,9 +261,9 @@ impl Eclosion {
                 self.son(Son::Shiny, 0.8);
             }
         }
-        // L'œuf descend sous le soleil, ses fêlures de lave brûlent.
-        let dy = (lisse(0.0, 0.3, u) * 110.0) as i32 & !1;
-        self.oeuf_ouvert(scene, t, dy, couleur, tremble);
+        // L'œuf recule sous le soleil (il rapetisse, posé au sol), ses fêlures brûlent.
+        let e = 2.0 - lisse(0.0, 0.25, u);
+        self.oeuf_reduit(scene, t, e, couleur, tremble);
         if u > 0.95 {
             calques::assombrir(scene, [255, 250, 230], lisse(0.95, 1.0, u));
         }
@@ -229,7 +282,7 @@ impl Eclosion {
         let m = lisse(0.0, 0.75, u);
         let ambre = &c.ambre_coque;
         for x in 0..img.l {
-            let mx = (m * (0.65 + 0.45 * bruit(x, 9, 4))).min(1.0);
+            let mx = (m * (0.8 + 0.25 * (x as f32 * 0.3).sin())).min(1.0);
             for sy in 0..img.h {
                 if ambre.px(x, sy)[3] == 0 {
                     continue;
@@ -241,9 +294,12 @@ impl Eclosion {
                 let etale = 1.0 + 0.6 * mx * (sy as f32 / img.h as f32);
                 let xx = img.l as f32 / 2.0 + (x as f32 - img.l as f32 / 2.0) * etale;
                 let col = melange([p[0], p[1], p[2]], [0xff, 0xa8, 0x30], 0.25 * mx);
-                scene.poser(
-                    (x0 / 2) + xx.round() as i32,
+                // Blocs assez larges pour ne jamais laisser de jour entre deux colonnes.
+                scene.rect(
+                    (x0 / 2) + xx.floor() as i32,
                     (y0 / 2) + y.round() as i32,
+                    etale.ceil() as i32,
+                    1,
                     col,
                     255,
                 );
@@ -321,8 +377,8 @@ impl Eclosion {
         // Yeux autour, un à un (les grands au bord, les petits plus près) ; ils se ferment
         // quand la lumière arrive.
         let places = [
-            (30, 40, true),
-            (226, 120, true),
+            (58, 44, true),
+            (198, 128, true),
             (70, 150, false),
             (196, 46, false),
             (52, 100, false),
@@ -356,7 +412,7 @@ impl Eclosion {
                 );
             } else {
                 let regard = if lx < x { -2 } else { 2 };
-                petit_oeil(scene, (x & !1, y & !1), ouvert, regard, 2);
+                petit_oeil(scene, (x & !1, y & !1), ouvert, regard, 3);
             }
         }
         if v > 0.0 {
@@ -388,6 +444,7 @@ impl Eclosion {
         let ouvre = lisse(0.4, 0.75, u);
         let (bx, by) = (L, SOL);
         let b = &c.huitre_bas;
+        poser(&mut apres, b, (bx - b.l / 2, by - b.h), 1, 255, |c| c);
         // Perle au creux de l'huître, de plus en plus lumineuse.
         let perle = lisse(0.5, 1.0, u);
         let (px, py) = (bx, by - b.h + 10);
@@ -406,7 +463,7 @@ impl Eclosion {
                 melange(col, [255, 255, 255], blanc)
             });
         }
-        poser(&mut apres, b, (bx - b.l / 2, by - b.h), 1, 255, |c| c);
+
         let h = &c.huitre_haut;
         let lev = (ouvre * 70.0) as i32 & !1;
         poser_tourne(
@@ -454,7 +511,9 @@ impl Eclosion {
                 } else {
                     [0x1c, 0x60, 0x9c]
                 };
-                scene.poser_fin(x & !1, y & !1, col, 235);
+                if x % 2 == 0 && y % 2 == 0 {
+                    scene.poser(x / 2, y / 2, col, 235);
+                }
             }
         }
     }
@@ -580,8 +639,8 @@ impl Eclosion {
     fn scene_arc(&mut self, scene: &mut Toile, t: f32, u: f32, couleur: Rgb, tremble: f32) {
         let c = calques();
         let (px, py) = (L, 44);
-        let dy = (lisse(0.0, 0.2, u) * 56.0) as i32 & !1;
-        self.oeuf_ouvert(scene, t, dy, couleur, tremble);
+        let e = 2.0 - 0.3 * lisse(0.0, 0.2, u);
+        self.oeuf_reduit(scene, t, e, couleur, tremble);
         // Le prisme tombe en place.
         let v = lisse(0.08, 0.24, u);
         if v > 0.0 {
@@ -598,8 +657,11 @@ impl Eclosion {
             let x1 = (px as f32 * r) as i32;
             for x in 0..x1 / 2 {
                 let y = (py - 20) / 2 + (x * 20 / (px / 2)).min(10);
-                scene.eclairer(x, y, [255, 255, 255], 230);
-                scene.eclairer(x, y + 1, [255, 255, 240], 120);
+                // Rayon de 2 pixels avec une lueur d'un pixel de chaque côté.
+                scene.eclairer(x, y, [255, 255, 255], 255);
+                scene.eclairer(x, y + 1, [255, 255, 255], 255);
+                scene.eclairer(x, y - 1, [200, 230, 255], 90);
+                scene.eclairer(x, y + 2, [200, 230, 255], 90);
             }
         }
         // L'éventail : sept bandes de couleur qui s'ouvrent vers le bas, plus larges ensuite.
@@ -621,9 +683,10 @@ impl Eclosion {
                         continue;
                     }
                     let bande = (w * 7.0).floor() / 7.0;
-                    let col = hsv(0.0 - bande * 0.8 + 0.8, 0.7, 1.0);
+                    // Bandes pures et saturées, rouge en haut jusqu'au violet.
+                    let col = hsv(0.8 - bande * 0.8, 1.0, 1.0);
                     let palier = (3.0 - (d / long * 3.0).floor()).clamp(1.0, 3.0);
-                    scene.eclairer(x, y, col, (palier * 40.0 * f) as u8);
+                    scene.poser(x, y, col, (palier * 50.0 * f) as u8);
                 }
             }
         }
@@ -702,7 +765,7 @@ impl Eclosion {
                     [0x06, 0x04, 0x14],
                     0.9 * (1.0 - lisse(1.5, 3.0, apres)),
                 );
-                let e = 0.2 + 0.9 * lisse(0.0, 0.6, apres);
+                let e = 0.45 + 0.7 * lisse(0.0, 0.5, apres);
                 let a = (255.0 * (1.0 - 0.55 * lisse(0.6, 1.6, apres))) as u8;
                 poser_tourne(
                     scene,
@@ -753,6 +816,7 @@ impl Eclosion {
             LAGON => {
                 let b = &c.huitre_bas;
                 poser(scene, b, (L - b.l / 2, SOL - b.h), 1, 255, |c| c);
+                // Le couvercle s'efface sous le bandeau (0,2 → 0,6 s).
                 let h = &c.huitre_haut;
                 poser_tourne(
                     scene,
@@ -762,12 +826,16 @@ impl Eclosion {
                     0.0,
                     1.0,
                     0.75,
-                    255,
+                    (255.0 * (1.0 - lisse(0.2, 0.6, apres))) as u8,
                     false,
                     |c, _, _| c,
                 );
             }
             RIVIERE => {
+                // La gerbe d'eau reste derrière la créature qui en sort, puis s'efface.
+                let s = &c.eclaboussure;
+                let a = (255.0 * (1.0 - lisse(0.5, 1.1, apres))) as u8;
+                poser(scene, s, (cx - s.l / 2, cy + 40 - 30 - s.h), 1, a, |c| c);
                 // Ronds dans l'eau qui s'élargissent.
                 for k in 0..3 {
                     let r = ((apres * 50.0 + k as f32 * 22.0) % 66.0) + 6.0;
@@ -783,7 +851,23 @@ impl Eclosion {
                 }
             }
             DORE => {
-                calques::halo(scene, (cx, cy), 150.0, [0xff, 0xd8, 0x60], 0.6, 2);
+                // Rayons d'or chauds qui tournent sur fond sombre.
+                for k in 0..18 {
+                    let ang = k as f32 / 18.0 * TAU + apres * 0.3;
+                    for r in 8..90 {
+                        let (x, y) = (
+                            cx as f32 / 2.0 + ang.cos() * r as f32,
+                            cy as f32 / 2.0 + ang.sin() * r as f32 * 0.8,
+                        );
+                        let a = (70.0 * (1.0 - r as f32 / 90.0)) as u8;
+                        let col = if k % 2 == 0 {
+                            [0xff, 0xd0, 0x50]
+                        } else {
+                            [0xff, 0xa0, 0x30]
+                        };
+                        scene.eclairer(x.round() as i32, y.round() as i32, col, a);
+                    }
+                }
             }
             _ => {
                 // Éventail arc-en-ciel qui tourne lentement derrière la créature.

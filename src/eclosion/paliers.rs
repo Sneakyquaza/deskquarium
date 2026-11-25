@@ -27,7 +27,20 @@ pub fn couleur_palier(k: usize, t: f32) -> Rgb {
         1 => [0x52, 0xa8, 0xff],
         2 => [0xbc, 0x6c, 0xff],
         3 => [0xff, 0xc8, 0x45],
-        _ => hsv(t * 0.9, 0.62, 1.0),
+        _ => hsv(t * 0.9, 0.8, 1.0),
+    }
+}
+
+/// Lumière « arc-en-ciel » (palier 4) pour les fêlures et le liseré : chaque pixel prend sa
+/// teinte (jamais une seule couleur froide qui se lirait comme une baisse).
+pub const ARC_EN_CIEL: Rgb = [1, 2, 3];
+
+/// Lumière des fêlures d'un palier : arc-en-ciel au palier 4.
+pub fn lumiere_palier(k: usize, t: f32) -> Rgb {
+    if k >= 4 {
+        ARC_EN_CIEL
+    } else {
+        couleur_palier(k, t)
     }
 }
 
@@ -57,7 +70,7 @@ pub struct Deroule {
 /// Arrivée et premières fêlures.
 pub const ENTREE: f32 = 1.9;
 /// Durée d'un temps fort de palier, et la pause qui le précède.
-pub const TEMPS_PALIER: f32 = 0.72;
+pub const TEMPS_PALIER: f32 = 0.6;
 pub const PAUSE: f32 = 0.2;
 pub const TEMPS_EXTRA: f32 = 0.66;
 /// Révélation : texte et boutons après ce délai.
