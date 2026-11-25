@@ -7,7 +7,7 @@ use crate::poisson::{self, Sprite, CONTOUR, CORPS, LUMIERE, MARGE, NAGEOIRE, OEI
 use crate::toile::{
     bayer, crans, hsv, largeur_texte, melange, melange_crans, rgb_hsv, Rgb, Toile, FIN,
 };
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::f32::consts::TAU;
 use std::sync::Arc;
 
@@ -49,7 +49,6 @@ pub struct Nageur {
     tourne: f32,
     phase: f32,
     banc: Option<(u64, f32, f32)>,
-    traine: VecDeque<(f32, f32)>,
     glitch: f32,
     prochain_glitch: f32,
     /// Clignement des yeux : négatif pendant le clignement, sinon temps avant le prochain.
@@ -98,12 +97,15 @@ struct Bulle {
 enum Genre {
     Scintille,
     Poussiere,
-    Braise,
     Eclat,
     /// Shiny : étoile à quatre branches qui s'ouvre puis se referme.
     Etoile,
     /// Ombre : volute de fumée sombre.
     Fumee,
+    /// Mythique : poussière qui luit, cramoisi → rose → or (pixels fins).
+    Poudre,
+    /// Mythique : petite étoile à quatre branches (pixels fins).
+    Eclat4,
 }
 
 struct Particule {
@@ -1665,7 +1667,6 @@ impl Nageur {
             tourne: 0.0,
             phase: a.f() * TAU,
             banc: None,
-            traine: VecDeque::new(),
             glitch: 0.0,
             bob: 0.0,
             elan: 0.0,
@@ -2278,11 +2279,6 @@ impl Nageur {
         };
         self.vigueur += (vigueur - self.vigueur) * (dt * 3.0).min(1.0);
         self.anim = (self.anim + dt * self.cadence(v) * nb) % nb;
-        if self.rarete == Rarete::Mythique {
-            let p = self.monde(self.queue());
-            self.traine.push_front(p);
-            self.traine.truncate(30);
-        }
     }
 
     /// Position écran (toile) d'un point du sprite (coordonnées de l'image tournée à droite),
@@ -2391,18 +2387,38 @@ impl Nageur {
                 }
             }
             Rarete::Mythique => {
-                if a.f() < dt * 4.0 {
-                    let (x, y) = self.monde(self.queue());
-                    parts.push(Particule {
-                        x,
-                        y,
-                        vx: a.entre(-3.0, 3.0),
-                        vy: a.entre(2.0, 6.0),
-                        vie: 0.0,
-                        duree: a.entre(0.6, 1.2),
-                        c: [255, 140, 60],
-                        genre: Genre::Braise,
+                // Poussière magique qui se détache du tiers arrière du corps et monte en
+                // dérivant ; quelques éclats d'or (pas un jet : rien ne part d'un seul point).
+                if a.f() < dt * (12.0 + s.lw() * 0.05) {
+                    let qx = self.queue().0;
+                    let tiers = s.l / 3;
+                    let h = &im.halo1;
+                    let p = (0..6).map(|_| h[a.n(h.len() as u32) as usize]).find(|p| {
+                        // Tiers arrière, au-dessus du corps ou derrière la queue : en
+                        // montant, rien ne repasse sur le dessin.
+                        let (x, y) = (p.0 as i32, p.1 as i32);
+                        let derriere = (x - qx) * (qx - s.l / 2).signum() >= 0;
+                        (x - qx).abs() <= tiers && (y < s.h / 2 || derriere)
                     });
+                    if let Some((x, y)) = p {
+                        let (x, y) = self.monde((x as i32, y as i32));
+                        let recule = if self.gauche { 1.0 } else { -1.0 };
+                        let (genre, c) = if a.f() < 0.16 {
+                            (Genre::Eclat4, [0xff, 0xd8, 0x80])
+                        } else {
+                            (Genre::Poudre, [0xff, 0x50, 0x60])
+                        };
+                        parts.push(Particule {
+                            x,
+                            y,
+                            vx: recule * a.entre(1.0, 4.0),
+                            vy: a.entre(-4.0, -1.0),
+                            vie: 0.0,
+                            duree: a.entre(1.4, 2.4),
+                            c,
+                            genre,
+                        });
+                    }
                 }
             }
             Rarete::Prehistorique => {
@@ -2535,7 +2551,6 @@ impl Nageur {
         // Demi-tour : repli par colonnes (`colonne_fine`) ; la hauteur ne change jamais (aucune
         // ligne écrasée, plus de fausse vue de face). Les corps longs ne se replient pas : ils
         // font demi-tour hors de l'écran (`bouger`).
-        let gauche = self.gauche ^ (self.tourne > self.duree_tour() * 0.5);
         let colonnes: Vec<i32> = (0..s.l).map(|x| self.colonne_fine(x)).collect();
         let tx = |x: i32| -> i32 { colonnes[x as usize] };
         // Pas de rotation du pixel art (scintillement) : le corps reste horizontal.
@@ -2552,57 +2567,6 @@ impl Nageur {
             s.taille.profondeur() * 0.5
         };
         let cligne = self.cligne < 0.0 && !self.fixe;
-
-        // Traînée de flammes (Mythique) : part du bout de la queue, épaisse puis effilée,
-        // bord qui vacille (pixels fins).
-        if r == Rarete::Mythique {
-            let (qx, qy) = self.monde(self.queue());
-            let pts: Vec<(f32, f32)> = if self.fixe {
-                let sens = if gauche { 1.0 } else { -1.0 };
-                (0..30)
-                    .map(|i| {
-                        (
-                            qx + sens * i as f32 * 0.9,
-                            qy + (t * 5.0 - i as f32 * 0.35).sin() * 1.5 * (i as f32 / 30.0),
-                        )
-                    })
-                    .collect()
-            } else {
-                std::iter::once((qx, qy))
-                    .chain(self.traine.iter().copied())
-                    .collect()
-            };
-            let n = pts.len().max(1) as f32;
-            let epais = (s.hw() * 0.18).clamp(1.5, 5.0);
-            for (i, w) in pts.windows(2).enumerate() {
-                let f = i as f32 / n;
-                let pas = ((w[1].0 - w[0].0).abs().max((w[1].1 - w[0].1).abs()) * fw).ceil() as i32;
-                for j in 0..pas.clamp(1, 16) {
-                    let u = j as f32 / pas.max(1) as f32;
-                    let (px, py) = (
-                        (w[0].0 + (w[1].0 - w[0].0) * u) * fw,
-                        (w[0].1 + (w[1].1 - w[0].1) * u) * fw,
-                    );
-                    let vacille = 1.0 + 0.3 * (t * 17.0 + i as f32 * 1.3).sin();
-                    let ray = (epais * fw * (1.0 - f).powf(1.3) * vacille).max(0.6);
-                    for dy in -(ray.ceil() as i32)..=(ray.ceil() as i32) {
-                        let k = dy.abs() as f32 / ray;
-                        if k > 1.0 {
-                            continue;
-                        }
-                        // Cœur jaune pâle, bords orange puis rouge sombre.
-                        let chaleur = (1.0 - f) * (1.0 - k * 0.8);
-                        let c = if chaleur > 0.6 {
-                            melange([255, 200, 90], [255, 246, 190], (chaleur - 0.6) / 0.4)
-                        } else {
-                            melange([150, 20, 50], [255, 110, 50], chaleur / 0.6)
-                        };
-                        let a = (220.0 * (1.0 - f) * (1.0 - k * k * 0.6)) as u8;
-                        toile.eclairer_fin(px.round() as i32, py.round() as i32 + dy, c, a);
-                    }
-                }
-            }
-        }
 
         // Halos (lueurs), pixels fins. L'Irréel n'a pas d'anneau : son contour est irisé.
         // Abysses : fine lueur de contre-jour autour du corps (le poisson se détache du noir).
@@ -3257,7 +3221,49 @@ fn dessiner_particules(toile: &mut Toile, parts: &[Particule]) {
                 // Bord violet à peine éclairé : la fumée se voit aussi sur l'eau sombre.
                 toile.eclairer(x, y - 1, [0x50, 0x20, 0x70], a / 4);
             }
-            Genre::Poussiere | Genre::Braise | Genre::Eclat => {
+            Genre::Poudre | Genre::Eclat4 => {
+                // Mythique, pixels fins. Phase propre à chaque grain (sa durée est tirée au
+                // hasard) : léger balancement, scintillement lent (pas de bruit).
+                let fw = FIN as f32;
+                let ph = p.duree * 9.7;
+                let x = ((p.x + (p.vie * 2.2 + ph).sin() * 0.8) * fw).round() as i32;
+                let y = (p.y * fw).round() as i32;
+                if p.genre == Genre::Poudre {
+                    // Apparition douce puis effacement, cramoisi → rose → or.
+                    let fondu = (f * 6.0).min(1.0) * (1.0 - f).powf(1.3);
+                    let c = if f < 0.5 {
+                        melange([0xe0, 0x28, 0x50], [0xff, 0x80, 0x9c], f * 2.0)
+                    } else {
+                        melange([0xff, 0x80, 0x9c], [0xff, 0xd0, 0x70], f * 2.0 - 1.0)
+                    };
+                    let a = 255.0 * fondu * (0.7 + 0.3 * (p.vie * 4.0 + ph).sin());
+                    // Cœur clair (1 pixel fin, un grain sur trois 2x2), lueur autour.
+                    let coeur = melange(c, [0xff, 0xf0, 0xf0], 0.45);
+                    let d = ((p.duree * 100.0) as i32 % 3 == 0) as i32;
+                    for (cx, cy) in [(0, 0), (d, 0), (0, d), (d, d)] {
+                        toile.eclairer_fin(x + cx, y + cy, coeur, a as u8);
+                    }
+                    for (dx, dy) in [(-1, 0), (0, -1), (1 + d, 0), (0, 1 + d)] {
+                        for k in 0..=d {
+                            let (kx, ky) = if dx == 0 { (k, 0) } else { (0, k) };
+                            toile.eclairer_fin(x + dx + kx, y + dy + ky, c, (a * 0.5) as u8);
+                        }
+                    }
+                } else {
+                    // Petit éclat d'or à quatre branches qui s'ouvre et se referme.
+                    let o = ((1.0 - (2.0 * f - 1.0).abs()) * 3.5).round() as i32;
+                    let a = 255.0 * (1.0 - f * 0.6);
+                    toile.eclairer_fin(x, y, [0xff, 0xf4, 0xd8], a as u8);
+                    for k in 1..=o {
+                        let ak = (a * (1.0 - k as f32 / 4.5)) as u8;
+                        let ck = if k == 1 { p.c } else { [0xff, 0x60, 0x78] };
+                        for (dx, dy) in [(k, 0), (-k, 0), (0, k), (0, -k)] {
+                            toile.eclairer_fin(x + dx, y + dy, ck, ak);
+                        }
+                    }
+                }
+            }
+            Genre::Poussiere | Genre::Eclat => {
                 // Scintillement : une image sur trois plus faible.
                 let a = (255.0 * (1.0 - f)) as u8;
                 let a = if ((p.vie * 20.0) as i32) % 3 == 0 {
