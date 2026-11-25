@@ -15,15 +15,23 @@ pub const OEIL: u8 = 4;
 pub const LUMIERE: u8 = 5;
 
 pub struct Image {
-    /// Index dans `pal` (0 = vide) : un octet par pixel (mémoire : les images des grandes
-    /// créatures sont nombreuses).
+    /// Index dans `pal` / `cls` (0 = vide) : un octet par pixel (mémoire : les images des
+    /// grandes créatures sont nombreuses). v0.12 : la classe du pixel est dans la palette
+    /// (une entrée par couple couleur + classe), plus d'octet de classe par pixel.
     pub idx: Vec<u8>,
     /// Couleurs RGBA non prémultipliées du sprite (partagées par ses images).
     pub pal: std::sync::Arc<Vec<[u8; 4]>>,
-    pub classe: Vec<u8>,
+    /// Classe de chaque entrée de la palette.
+    pub cls: std::sync::Arc<Vec<u8>>,
+    /// Classe de chaque pixel quand la palette ne peut pas la porter (plus de 256 couples).
+    pub classes: Option<Vec<u8>>,
     /// Halo à 1 et 2 pixels autour de la silhouette (lueurs).
-    pub halo1: Vec<(i32, i32)>,
-    pub halo2: Vec<(i32, i32)>,
+    pub halo1: Vec<(i16, i16)>,
+    pub halo2: Vec<(i16, i16)>,
+    /// Pixels non vides de chaque ligne : [début, fin) (le reste est sauté au dessin).
+    pub rangs: Vec<(u16, u16)>,
+    /// Nombre de pixels CORPS (étincelles des Rares).
+    pub nb_corps: u32,
 }
 
 impl Image {
@@ -32,6 +40,129 @@ impl Image {
     pub fn px(&self, i: usize) -> [u8; 4] {
         self.pal[self.idx[i] as usize]
     }
+
+    /// Classe du pixel `i` (VIDE, CONTOUR, CORPS…).
+    #[inline]
+    pub fn classe(&self, i: usize) -> u8 {
+        match &self.classes {
+            None => self.cls[self.idx[i] as usize],
+            Some(c) => c[i],
+        }
+    }
+
+    /// Indice du `k`-ième pixel (0 = premier) de la classe `c`.
+    pub fn kieme(&self, c: u8, k: usize) -> Option<usize> {
+        match &self.classes {
+            None => self
+                .idx
+                .iter()
+                .enumerate()
+                .filter(|(_, &j)| self.cls[j as usize] == c)
+                .nth(k)
+                .map(|(i, _)| i),
+            Some(cl) => cl
+                .iter()
+                .enumerate()
+                .filter(|(_, &x)| x == c)
+                .nth(k)
+                .map(|(i, _)| i),
+        }
+    }
+
+    /// Classes de tous les pixels, dans l'ordre.
+    pub fn classes(&self) -> impl Iterator<Item = u8> + '_ {
+        (0..self.idx.len()).map(|i| self.classe(i))
+    }
+
+    /// Halos en coordonnées i32.
+    pub fn halo1(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
+        self.halo1.iter().map(|&(x, y)| (x as i32, y as i32))
+    }
+
+    pub fn halo2(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
+        self.halo2.iter().map(|&(x, y)| (x as i32, y as i32))
+    }
+}
+
+/// Image en cours de fabrication : index de couleur et classe séparés.
+struct Brute {
+    idx: Vec<u8>,
+    classe: Vec<u8>,
+    halo1: Vec<(i16, i16)>,
+    halo2: Vec<(i16, i16)>,
+}
+
+/// Images finales : une palette commune de couples (couleur, classe) ; l'index 0 reste
+/// (vide, VIDE). Plus de 256 couples (couleurs par colonne de l'Arc-en-ciel…) : palette des
+/// couleurs seules et un octet de classe par pixel, comme avant la v0.12.
+fn combiner(couleurs: &[[u8; 4]], bruts: Vec<Brute>, l: i32) -> Vec<Image> {
+    let mut couples: Vec<(u8, u8)> = vec![(0, VIDE)];
+    let mut table = [[None::<u8>; 8]; 256];
+    table[0][VIDE as usize] = Some(0);
+    let mut indexes: Vec<Vec<u8>> = Vec::with_capacity(bruts.len());
+    'images: for b in &bruts {
+        let mut v = Vec::with_capacity(b.idx.len());
+        for (&c, &k) in b.idx.iter().zip(&b.classe) {
+            let j = match table[c as usize][k as usize] {
+                Some(j) => j,
+                None if couples.len() < 256 => {
+                    couples.push((c, k));
+                    let j = (couples.len() - 1) as u8;
+                    table[c as usize][k as usize] = Some(j);
+                    j
+                }
+                None => {
+                    indexes.clear();
+                    break 'images;
+                }
+            };
+            v.push(j);
+        }
+        indexes.push(v);
+    }
+    let rangs_de = |classe: &[u8]| -> Vec<(u16, u16)> {
+        classe
+            .chunks(l.max(1) as usize)
+            .map(|cl| {
+                let a = cl.iter().position(|&k| k != VIDE).unwrap_or(0);
+                let z = cl.iter().rposition(|&k| k != VIDE).map_or(0, |z| z + 1);
+                (a as u16, z.max(a) as u16)
+            })
+            .collect()
+    };
+    if indexes.len() != bruts.len() {
+        let pal = std::sync::Arc::new(couleurs.to_vec());
+        let cls = std::sync::Arc::new(Vec::new());
+        return bruts
+            .into_iter()
+            .map(|b| Image {
+                rangs: rangs_de(&b.classe),
+                nb_corps: b.classe.iter().filter(|&&k| k == CORPS).count() as u32,
+                idx: b.idx,
+                pal: std::sync::Arc::clone(&pal),
+                cls: std::sync::Arc::clone(&cls),
+                classes: Some(b.classe),
+                halo1: b.halo1,
+                halo2: b.halo2,
+            })
+            .collect();
+    }
+    let pal = std::sync::Arc::new(couples.iter().map(|&(c, _)| couleurs[c as usize]).collect());
+    let cls = std::sync::Arc::new(couples.iter().map(|&(_, k)| k).collect());
+    bruts
+        .into_iter()
+        .zip(indexes)
+        .map(|(b, idx)| Image {
+            rangs: rangs_de(&b.classe),
+            nb_corps: b.classe.iter().filter(|&&k| k == CORPS).count() as u32,
+            idx,
+            pal: std::sync::Arc::clone(&pal),
+            cls: std::sync::Arc::clone(&cls),
+            classes: None,
+            halo1: b.halo1,
+            halo2: b.halo2,
+        })
+        .collect()
 }
 
 pub struct Sprite {
@@ -603,8 +734,7 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8], forme: Form
             }
         })
         .collect();
-    let pal = std::sync::Arc::new(couleurs);
-    let mut images = Vec::with_capacity(n);
+    let mut images: Vec<Brute> = Vec::with_capacity(n);
     for f in 0..n {
         let ph = if n == 1 {
             0.0
@@ -778,9 +908,8 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8], forme: Form
             }
         }
         let (halo1, halo2) = halos(&cl, l, ht);
-        images.push(Image {
+        images.push(Brute {
             idx: px,
-            pal: pal.clone(),
             classe: cl,
             halo1,
             halo2,
@@ -803,7 +932,7 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8], forme: Form
                 .iter()
                 .any(|&j| im0.classe[j] == OEIL);
             if pres {
-                for (c, v) in somme.iter_mut().zip(im0.px(i)) {
+                for (c, v) in somme.iter_mut().zip(couleurs[im0.idx[i] as usize]) {
                     *c += v as u32;
                 }
                 nb += 1;
@@ -854,12 +983,13 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8], forme: Form
     let (mut sl, mut sn) = (0f32, 0f32);
     for (i, &c) in images[0].classe.iter().enumerate() {
         if c == CORPS {
-            let p = images[0].px(i);
+            let p = couleurs[images[0].idx[i] as usize];
             sl += p[0] as f32 * 0.3 + p[1] as f32 * 0.59 + p[2] as f32 * 0.11;
             sn += 1.0;
         }
     }
     let sombre = (1.0 - sl / sn.max(1.0) / 255.0 / 0.4).clamp(0.0, 1.0);
+    let images = combiner(&couleurs, images, l);
     Sprite {
         l,
         h: ht,
@@ -875,7 +1005,7 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8], forme: Form
     }
 }
 
-type Points = Vec<(i32, i32)>;
+type Points = Vec<(i16, i16)>;
 
 fn halos(cl: &[u8], w: i32, h: i32) -> (Points, Points) {
     let plein =
@@ -898,8 +1028,8 @@ fn halos(cl: &[u8], w: i32, h: i32) -> (Points, Points) {
                 }
             }
             match d {
-                1 => h1.push((x, y)),
-                2 => h2.push((x, y)),
+                1 => h1.push((x as i16, y as i16)),
+                2 => h2.push((x as i16, y as i16)),
                 _ => {}
             }
         }
@@ -920,12 +1050,12 @@ mod tests {
                 assert_eq!(s.images.len(), images_par_cycle(e.taille), "{}", e.cle);
                 for im in &s.images {
                     assert!(
-                        im.classe.contains(&CONTOUR) && im.classe.contains(&CORPS),
+                        im.classes().any(|c| c == CONTOUR) && im.classes().any(|c| c == CORPS),
                         "{} sans corps ou contour",
                         e.cle
                     );
                     // Le contour ne touche aucun bord (marge pour les halos).
-                    let bord = |x: i32, y: i32| im.classe[(y * s.l + x) as usize] == VIDE;
+                    let bord = |x: i32, y: i32| im.classe((y * s.l + x) as usize) == VIDE;
                     assert!(
                         (0..s.l).all(|x| bord(x, 0) && bord(x, s.h - 1))
                             && (0..s.h).all(|y| bord(0, y) && bord(s.l - 1, y)),
@@ -985,7 +1115,7 @@ mod tests {
             let n0 = morceaux(&plein, w, h);
             let s = sprite(e, 0, 1.0);
             for (k, im) in s.images.iter().enumerate() {
-                let p: Vec<bool> = im.classe.iter().map(|&c| c != VIDE).collect();
+                let p: Vec<bool> = im.classes().map(|c| c != VIDE).collect();
                 let n = morceaux(&p, s.l, s.h);
                 if n > n0 {
                     fautes.push(format!(
@@ -1025,12 +1155,17 @@ mod tests {
                 n
             };
             for (k, im) in s.images.iter().enumerate() {
-                let aire = im.classe.iter().filter(|&&c| c != VIDE).count() as f32;
+                let aire = im.classes().filter(|&c| c != VIDE).count() as f32;
                 // Les ailes s'étirent et se replient (±15 %, +20 % avec les traits fins
                 // reliés, v0.10) ; une déchirure perdrait bien plus.
                 let r = aire / aire0;
                 assert!((0.85..1.2).contains(&r), "{} image {k} : aire {r}", e.cle);
-                assert_eq!(trous(&im.classe), 0, "{} image {k} : trous", e.cle);
+                assert_eq!(
+                    trous(&im.classes().collect::<Vec<u8>>()),
+                    0,
+                    "{} image {k} : trous",
+                    e.cle
+                );
             }
         }
     }

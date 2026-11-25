@@ -288,6 +288,29 @@ mod tests {
     }
 
     #[test]
+    fn sauvegarde_v011_passe_a_24_images() {
+        // v0.11 (version 6) : 30 i/s, l'ancien défaut, devient 24 ; un choix de 60 reste.
+        let d = dossier_test("v011");
+        for (avant, apres) in [(30, 24), (60, 60), (15, 15)] {
+            let json = format!(
+                r#"{{"version":6,"argent":5.0,"total_gagne":5.0,"horodatage":1700000000,
+                "prochain_id":1,"alea":9,"poissons":[],"oeufs_ouverts":[0,0,0,0,0,0,0,0],
+                "eclos":[0,0,0,0,0,0,0,0,0],"reglages":{{"ips":{avant}}}}}"#
+            );
+            std::fs::write(fichier(&d), json).unwrap();
+            let (q, msg) = charger(&d);
+            assert!(msg.is_none(), "{msg:?}");
+            assert_eq!(q.reglages.ips, apres);
+            assert_eq!(q.version, crate::jeu::VERSION);
+            // Aller-retour : le 30 choisi en v0.12 reste 30.
+            let mut q = q;
+            q.reglages.ips = 30;
+            ecrire(&d, &q).unwrap();
+            assert_eq!(charger(&d).0.reglages.ips, 30);
+        }
+    }
+
+    #[test]
     fn sauvegarde_v08_migree_avec_decor_vide() {
         // Format v0.8 (version 4) : ni thème, ni souris, ni objets de décor.
         let d = dossier_test("v08");

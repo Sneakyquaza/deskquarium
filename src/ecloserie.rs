@@ -201,6 +201,28 @@ impl Ecloserie {
         }
     }
 
+    #[cfg_attr(not(windows), allow(dead_code))]
+    /// Fenêtre fermée (v0.12, Windows) : textures, animations en cours et images oubliées
+    /// (le contexte egui est détruit avec la fenêtre) ; restent l'onglet, les messages, les
+    /// mises à jour et les annonces à faire (celles qui attendaient la fin d'une éclosion
+    /// partent tout de suite).
+    pub fn liberer(&mut self) {
+        let mut neuf = Ecloserie::new(std::mem::take(&mut self.dossier));
+        neuf.onglet = self.onglet;
+        neuf.index = self.index;
+        neuf.bandeau = self.bandeau.take();
+        neuf.windows = self.windows;
+        neuf.maj = self.maj.take();
+        neuf.relancer = self.relancer.take();
+        neuf.disposition = self.disposition.take();
+        neuf.lot = self.lot;
+        neuf.langue_choisie = self.langue_choisie;
+        neuf.annonces = std::mem::take(&mut self.annonces);
+        neuf.annonces.append(&mut self.a_annoncer);
+        *self = neuf;
+        son::liberer();
+    }
+
     /// Lance une éclosion (pour les captures automatiques).
     pub fn acheter(&mut self, ui: &Ui, p: &mut Partie, oeuf: usize) {
         self.acheter_lot(ui, p, oeuf, 1);
@@ -1424,9 +1446,11 @@ impl Ecloserie {
             ligne(
                 ui,
                 tr("Fluidité"),
-                tr("30 images par seconde suffisent et ménagent le processeur."),
+                tr("24 images par seconde suffisent et ménagent le processeur."),
                 &mut |ui| {
                     ui.horizontal(|ui| {
+                        ui.radio_value(&mut r.ips, 15, "15 i/s");
+                        ui.radio_value(&mut r.ips, 24, "24 i/s");
                         ui.radio_value(&mut r.ips, 30, "30 i/s");
                         ui.radio_value(&mut r.ips, 60, "60 i/s");
                     });

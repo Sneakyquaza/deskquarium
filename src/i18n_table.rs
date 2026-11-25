@@ -2,7 +2,7 @@
 pub static TABLE: &[(&str, &str)] = &[
     ("…", "…"),
     ("0 % : ton fond d'écran reste intact derrière les poissons.", "0 %: your wallpaper stays untouched behind the fish."),
-    ("30 images par seconde suffisent et ménagent le processeur.", "30 frames per second is plenty and spares the CPU."),
+    ("24 images par seconde suffisent et ménagent le processeur.", "24 frames per second is plenty and spares the CPU."),
     ("Acheter · {}", "Buy · {}"),
     ("À découvrir", "To discover"),
     ("Affichage", "Display"),

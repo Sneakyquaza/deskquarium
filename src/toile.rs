@@ -47,10 +47,15 @@ impl Toile {
     /// pixel monde (x, y).
     #[inline]
     pub fn poser(&mut self, x: i32, y: i32, c: Rgb, a: u8) {
-        let f = FIN as i32;
-        for dy in 0..f {
-            for dx in 0..f {
-                self.poser_fin(x * f + dx, y * f + dy, c, a);
+        if a == 0 || x < 0 || y < 0 || x as usize >= self.l || y as usize >= self.h {
+            return;
+        }
+        // Les FIN x FIN pixels fins du pixel monde, sans revérifier les bornes (v0.12).
+        let lf = self.lf();
+        let i0 = y as usize * FIN * lf + x as usize * FIN;
+        for dy in 0..FIN {
+            for dx in 0..FIN {
+                poser_px(&mut self.px[i0 + dy * lf + dx], c, a);
             }
         }
     }
@@ -62,27 +67,22 @@ impl Toile {
             return;
         }
         if let Some(i) = self.idx(x, y) {
-            if a == 255 {
-                self.px[i] = [c[0], c[1], c[2], 255];
-                return;
-            }
-            let d = &mut self.px[i];
-            let a16 = a as u16;
-            let inv = 255 - a16;
-            for k in 0..3 {
-                d[k] = ((c[k] as u16 * a16 + d[k] as u16 * inv + 127) / 255) as u8;
-            }
-            d[3] = ((a16 * 255 + d[3] as u16 * inv + 127) / 255) as u8;
+            poser_px(&mut self.px[i], c, a);
         }
     }
 
     /// Ajoute de la lumière (lueurs) sur un pixel monde.
     #[inline]
     pub fn eclairer(&mut self, x: i32, y: i32, c: Rgb, a: u8) {
-        let f = FIN as i32;
-        for dy in 0..f {
-            for dx in 0..f {
-                self.eclairer_fin(x * f + dx, y * f + dy, c, a);
+        if a == 0 || x < 0 || y < 0 || x as usize >= self.l || y as usize >= self.h {
+            return;
+        }
+        // Les FIN x FIN pixels fins du pixel monde, sans revérifier les bornes (v0.12).
+        let lf = self.lf();
+        let i0 = y as usize * FIN * lf + x as usize * FIN;
+        for dy in 0..FIN {
+            for dx in 0..FIN {
+                eclairer_px(&mut self.px[i0 + dy * lf + dx], c, a);
             }
         }
     }
@@ -94,16 +94,7 @@ impl Toile {
             return;
         }
         if let Some(i) = self.idx(x, y) {
-            let d = &mut self.px[i];
-            for k in 0..3 {
-                d[k] = (d[k] as u16 + c[k] as u16 * a as u16 / 255).min(255) as u8;
-            }
-            d[3] = (d[3] as u16 + a as u16).min(255) as u8;
-            // Prémultiplié : la couleur ne dépasse jamais l'opacité.
-            let m = d[0].max(d[1]).max(d[2]);
-            if m > d[3] {
-                d[3] = m;
-            }
+            eclairer_px(&mut self.px[i], c, a);
         }
     }
 
@@ -203,6 +194,35 @@ fn police(s: &str) -> Vec<char> {
         prec_nombre = nombre;
     }
     out
+}
+
+/// Couleur posée sur un pixel avec l'opacité `a` (source-over, prémultiplié).
+#[inline]
+fn poser_px(d: &mut [u8; 4], c: Rgb, a: u8) {
+    if a == 255 {
+        *d = [c[0], c[1], c[2], 255];
+        return;
+    }
+    let a16 = a as u16;
+    let inv = 255 - a16;
+    for k in 0..3 {
+        d[k] = ((c[k] as u16 * a16 + d[k] as u16 * inv + 127) / 255) as u8;
+    }
+    d[3] = ((a16 * 255 + d[3] as u16 * inv + 127) / 255) as u8;
+}
+
+/// Lumière ajoutée à un pixel : additif plafonné, rend aussi le pixel plus opaque.
+#[inline]
+fn eclairer_px(d: &mut [u8; 4], c: Rgb, a: u8) {
+    for k in 0..3 {
+        d[k] = (d[k] as u16 + c[k] as u16 * a as u16 / 255).min(255) as u8;
+    }
+    d[3] = (d[3] as u16 + a as u16).min(255) as u8;
+    // Prémultiplié : la couleur ne dépasse jamais l'opacité.
+    let m = d[0].max(d[1]).max(d[2]);
+    if m > d[3] {
+        d[3] = m;
+    }
 }
 
 pub fn largeur_texte(s: &str) -> i32 {
@@ -333,8 +353,18 @@ pub fn hsv(h: f32, s: f32, v: f32) -> Rgb {
 
 #[inline]
 pub fn melange(a: Rgb, b: Rgb, t: f32) -> Rgb {
-    // Calcul entier (appelé pour chaque pixel des sprites) : t sur 256 crans.
-    let t = (t.clamp(0.0, 1.0) * 256.0) as u32;
+    melange_crans(a, b, crans(t))
+}
+
+/// `t` (0..1) en 256 crans, comme le fait `melange`.
+#[inline]
+pub fn crans(t: f32) -> u32 {
+    (t.clamp(0.0, 1.0) * 256.0) as u32
+}
+
+/// `melange` avec `t` déjà en crans (calcul entier, appelé pour chaque pixel des sprites).
+#[inline]
+pub fn melange_crans(a: Rgb, b: Rgb, t: u32) -> Rgb {
     [0, 1, 2].map(|k| ((a[k] as u32 * (256 - t) + b[k] as u32 * t + 128) >> 8) as u8)
 }
 

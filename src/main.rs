@@ -2,9 +2,11 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod appli;
+mod bench;
 #[cfg(windows)]
 mod calque;
 mod capture;
+mod compo;
 #[cfg(windows)]
 mod crochet;
 mod decor;
@@ -17,6 +19,9 @@ mod i18n;
 mod jeu;
 mod journal;
 mod maj;
+#[cfg(windows)]
+mod moteur;
+mod occlusion;
 mod poisson;
 mod sauve;
 mod scene;
@@ -57,6 +62,7 @@ Options (tests) :
   --objets cle,cle               objets de décor posés (capture / vidéo)
   --fond image.png                fond d'écran sous l'aquarium (sinon fond factice)
   --captures-ecloserie DOSSIER    (avec --fenetre) captures de chaque onglet puis quitte
+  --bench [--secondes 60] [--ips 24] [--ancien]  coût du fond d'écran (3840x1080, 40 poissons)
   --simulation                    jalons de l'équilibrage (docs/equilibrage.md)";
 
 fn main() {
@@ -124,6 +130,14 @@ fn lancer() -> Result<(), String> {
             })
             .unwrap_or_default(),
     };
+    if a("--bench") {
+        // --bench [--secondes 60] [--ips 24] [--ancien]
+        let ips = valeur("--ips").and_then(|v| v.parse().ok()).unwrap_or(24);
+        let s = valeur("--secondes")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60.0);
+        return bench::bench(s, ips, a("--ancien"));
+    }
     if let Some(f) = valeur("--capture") {
         return capture::capture(&o, &PathBuf::from(f));
     }

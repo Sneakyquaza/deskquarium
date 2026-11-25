@@ -130,7 +130,7 @@ pub struct Options {
     pub objets: Vec<String>,
 }
 
-type Prepare = (
+pub type Prepare = (
     Partie,
     Aquarium,
     image::RgbaImage,
@@ -157,7 +157,7 @@ fn barres(img: &mut image::RgbaImage, d: &Disposition) {
     }
 }
 
-fn preparer(o: &Options) -> Result<Prepare, String> {
+pub fn preparer(o: &Options) -> Result<Prepare, String> {
     let mut partie = if o.demo {
         partie_demo()
     } else {

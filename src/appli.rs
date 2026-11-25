@@ -41,8 +41,8 @@ pub enum Commande {
     ChercherMaj,
 }
 
-struct Appli {
-    partie: Partie,
+pub struct Appli {
+    pub partie: Partie,
     aquarium: Option<Aquarium>,
     echelle: usize,
     toile_tex: Option<TextureHandle>,
@@ -61,20 +61,36 @@ struct Appli {
     #[cfg_attr(not(windows), allow(dead_code))]
     verif_ecrans: Instant,
     message_depart: Option<String>,
-    ecloserie: Ecloserie,
-    ecloserie_ouverte: bool,
+    pub ecloserie: Ecloserie,
+    pub ecloserie_ouverte: bool,
+    /// Écloserie à mettre au premier plan (déjà ouverte).
+    pub focus_ecloserie: bool,
+    /// Quitter demandé (menu, mise à jour installée).
+    pub quitter: bool,
+    /// v0.12 : tous les écrans cachés (fenêtres, verrouillage, écran éteint) : rien n'est dessiné.
+    occulte: bool,
+    #[cfg_attr(not(windows), allow(dead_code))]
+    verif_occlusion: Instant,
+    /// v0.12 : ligne « Performance » du journal toutes les 60 s (Windows).
+    #[cfg(windows)]
+    perf: Option<(Instant, u64, u64)>,
+    /// Images dessinées depuis le lancement.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    images_total: u64,
     #[cfg_attr(not(windows), allow(dead_code))]
     fenetre: bool,
     demo: bool,
     captures: Option<CapturesAuto>,
     #[cfg(windows)]
-    systeme: Option<crate::windows::Systeme>,
+    pub systeme: Option<crate::windows::Systeme>,
     demarrage_applique: Option<bool>,
     /// Mode fenêtre et méthode d'incrustation appliqués (Windows).
     #[cfg_attr(not(windows), allow(dead_code))]
-    affichage_applique: Option<(bool, u8)>,
+    pub affichage_applique: Option<(bool, u8)>,
     /// Première image dessinée (journal).
-    premiere_image: bool,
+    premiere_image: Option<Instant>,
+    /// Aquarium refait (écrans, affichage) : une image même en pause.
+    image_due: bool,
     /// Mesure : images dessinées depuis `mesure_depuis` (affichées si AQUARIUM_IPS est défini).
     mesure: (u32, Instant, Duration),
     /// Dernière recherche automatique de mise à jour (au lancement puis toutes les 6 h).
@@ -184,6 +200,13 @@ pub fn lancer(o: Options) -> Result<(), String> {
         ecloserie_ouverte: o.fenetre
             && o.captures.is_none()
             && std::env::var_os("AQUARIUM_IPS").is_none(),
+        focus_ecloserie: false,
+        quitter: false,
+        occulte: false,
+        verif_occlusion: Instant::now(),
+        #[cfg(windows)]
+        perf: None,
+        images_total: 0,
         fenetre: o.fenetre,
         demo: o.demo,
         captures: o.captures.map(|dossier| CapturesAuto { dossier, etape: 0 }),
@@ -191,7 +214,8 @@ pub fn lancer(o: Options) -> Result<(), String> {
         systeme: None,
         demarrage_applique: None,
         affichage_applique: None,
-        premiere_image: false,
+        premiere_image: None,
+        image_due: true,
         mesure: (0, Instant::now(), Duration::ZERO),
         maj_le: None,
         maj_annoncee: None,
@@ -206,6 +230,12 @@ pub fn lancer(o: Options) -> Result<(), String> {
     };
     // Ancienne version laissée par une mise à jour : supprimée.
     crate::maj::nettoyer();
+    // v0.12 : sous Windows, le fond d'écran tourne sans eframe (boucle à nous) ; l'Écloserie
+    // s'ouvre dans sa propre fenêtre quand on la demande (`moteur.rs`).
+    #[cfg(windows)]
+    if !o.fenetre {
+        return crate::moteur::lancer(appli);
+    }
     eframe::run_native(
         "aquarium",
         options,
@@ -243,7 +273,7 @@ pub fn icone_rgba() -> Vec<u8> {
     out
 }
 
-fn icone() -> egui::IconData {
+pub fn icone() -> egui::IconData {
     egui::IconData {
         rgba: icone_rgba(),
         width: 32,
@@ -252,7 +282,7 @@ fn icone() -> egui::IconData {
 }
 
 impl Appli {
-    fn sauver(&mut self) {
+    pub fn sauver(&mut self) {
         // Démo et captures automatiques : la vraie sauvegarde n'est jamais touchée.
         if self.demo || self.captures.is_some() {
             return;
@@ -267,14 +297,14 @@ impl Appli {
         self.sauve_le = Instant::now();
     }
 
-    fn commande(&mut self, ctx: &egui::Context, c: Commande) {
+    fn commande(&mut self, c: Commande) {
         match c {
             Commande::Ouvrir => {
                 self.ecloserie_ouverte = true;
-                ctx.send_viewport_cmd_to(ecloserie_id(), egui::ViewportCommand::Focus);
+                self.focus_ecloserie = true;
             }
             Commande::Pause => self.pause = !self.pause,
-            Commande::Quitter => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Commande::Quitter => self.quitter = true,
             Commande::ModeFenetre => {
                 let r = &mut self.partie.reglages;
                 r.mode_fenetre = !r.mode_fenetre;
@@ -291,7 +321,7 @@ impl Appli {
                 if let Some(m) = &self.ecloserie.maj {
                     m.chercher(false);
                 }
-                ctx.send_viewport_cmd_to(ecloserie_id(), egui::ViewportCommand::Focus);
+                self.focus_ecloserie = true;
             }
             Commande::Abysses => {
                 let r = &mut self.partie.reglages;
@@ -311,7 +341,7 @@ impl Appli {
     /// Mises à jour : recherche discrète au lancement puis toutes les 6 h (jamais en démo ni
     /// en captures), infobulle de l'icône, installation (après le clic « Installer ») puis
     /// fermeture propre et relance.
-    fn mises_a_jour(&mut self, ctx: &egui::Context) {
+    fn mises_a_jour(&mut self) {
         let Some(m) = &self.ecloserie.maj else {
             return;
         };
@@ -343,7 +373,7 @@ impl Appli {
         if matches!(m.etat(), crate::maj::Etat::Pret(_)) {
             if let Some(exe) = m.installer() {
                 self.ecloserie.relancer = Some(exe);
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                self.quitter = true;
             }
         }
     }
@@ -364,13 +394,7 @@ impl Appli {
     }
 
     /// Toile à la taille de la fenêtre (pixels physiques / échelle entière de l'écran principal).
-    fn preparer(&mut self, ui: &Ui) -> (f32, f32) {
-        let ppp = ui.ctx().pixels_per_point();
-        let taille = ui.ctx().content_rect().size() * ppp;
-        let (lp, hp) = (
-            taille.x.round().max(64.0) as u32,
-            taille.y.round().max(64.0) as u32,
-        );
+    fn preparer(&mut self, (lp, hp): (u32, u32)) -> (f32, f32) {
         let disp = self.disposition(lp, hp);
         // Windows : la toile suit le calque du fond (la boîte des écrans), pas la fenêtre eframe.
         #[cfg(windows)]
@@ -397,13 +421,18 @@ impl Appli {
             }
             aq.synchroniser(&self.partie);
             self.aquarium = Some(aq);
+            self.image_due = true;
             self.echelle = e;
             self.fond_tex = None;
             if self.fond_img.is_none() {
                 let img = self.charger_fond(&disp, lp, hp);
                 #[cfg(windows)]
                 if let Some(s) = &self.systeme {
+                    // v0.12 : le calque garde sa copie ; ici une image vide (mémoire), qui
+                    // dit seulement « fond envoyé ».
                     s.fond(&img);
+                    self.fond_img = Some(image::RgbaImage::new(0, 0));
+                    return (lp as f32, hp as f32);
                 }
                 self.fond_img = Some(img);
             }
@@ -414,7 +443,7 @@ impl Appli {
     /// Souris (v0.9) : curseur sur le bureau (curiosité, fuite) et poisson attrapé. Windows :
     /// position par GetCursorPos (le fond ne reçoit aucun clic) et crochet souris ; fenêtre de
     /// test : la souris d'egui, même règle (`souris.rs`).
-    fn souris(&mut self, ctx: &egui::Context, dt: f32, fige: bool) {
+    fn souris(&mut self, ctx: Option<&egui::Context>, dt: f32, fige: bool) {
         use crate::souris::Suite;
         let Some(aq) = &mut self.aquarium else {
             return;
@@ -430,15 +459,21 @@ impl Appli {
         #[cfg(windows)]
         if let Some(s) = &self.systeme {
             fait = true;
-            // Crochet installé seulement si le réglage est actif (retiré sinon).
-            if self.crochet_voulu != Some(r.attraper) {
-                self.crochet_voulu = Some(r.attraper);
+            // Crochet installé seulement si le réglage est actif (retiré sinon) ; v0.12 : retiré
+            // aussi tant que tous les écrans sont recouverts (et le curseur n'est plus lu).
+            let voulu = r.attraper && !self.occulte;
+            if self.crochet_voulu != Some(voulu) {
+                self.crochet_voulu = Some(voulu);
                 self.crochet = None;
-                if r.attraper {
+                if voulu {
                     self.crochet = crate::crochet::Crochet::demarrer();
                 }
             }
-            let cur = crate::crochet::curseur_bureau(s.calque_hwnd());
+            let cur = if self.occulte {
+                None
+            } else {
+                crate::crochet::curseur_bureau(s.calque_hwnd())
+            };
             pos = cur.map(|(pt, _)| {
                 (
                     (pt.x - self.origine.0) as f32 / e,
@@ -474,7 +509,7 @@ impl Appli {
                 suites = c.suites();
             }
         }
-        if !fait {
+        if let (false, Some(ctx)) = (fait, ctx) {
             // Fenêtre de test : pixels physiques de la fenêtre.
             let ppp = ctx.pixels_per_point();
             let (survol, t, evts) = ctx.input(|i| {
@@ -667,9 +702,13 @@ fn ecloserie_id() -> ViewportId {
     ViewportId::from_hash_of("ecloserie")
 }
 
-impl eframe::App for Appli {
-    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
+impl Appli {
+    /// Une image du fond (partagée par la fenêtre eframe et la boucle Windows `moteur.rs`) :
+    /// commandes, économie, écrans, souris, dessin de la toile et envoi au calque, annonces,
+    /// sauvegarde, mises à jour. `ctx` : fenêtre eframe (Linux, `--fenetre`), None pour la
+    /// boucle Windows ; `taille` : taille de la fenêtre en pixels physiques. Renvoie l'attente
+    /// avant l'image suivante.
+    pub fn pas(&mut self, ctx: Option<&egui::Context>, taille: (u32, u32)) -> Duration {
         // Langue choisie (sinon celle de Windows) : appliquée tout de suite partout.
         crate::i18n::regler(
             self.partie
@@ -677,23 +716,6 @@ impl eframe::App for Appli {
                 .langue
                 .unwrap_or_else(crate::i18n::langue_systeme),
         );
-        #[cfg(windows)]
-        if !self.fenetre && self.systeme.is_none() {
-            let r = &self.partie.reglages;
-            let voulu = (r.mode_fenetre, r.incrustation);
-            match crate::windows::Systeme::demarrer(frame, &ctx, voulu.0, voulu.1) {
-                Ok(s) => {
-                    self.systeme = Some(s);
-                    self.affichage_applique = Some(voulu);
-                }
-                Err(e) => {
-                    crate::journal::ecrire(&format!("démarrage impossible : {e}"));
-                    crate::windows::alerte(&e);
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    return;
-                }
-            }
-        }
         // Mode fenêtre ou méthode changés (menu, Réglages), Explorateur relancé : réappliquer.
         #[cfg(windows)]
         {
@@ -717,7 +739,6 @@ impl eframe::App for Appli {
                 self.affichage_applique = Some(voulu);
             }
         }
-        let _ = frame;
         #[cfg(windows)]
         let commandes: Vec<Commande> = self
             .systeme
@@ -727,20 +748,7 @@ impl eframe::App for Appli {
         #[cfg(not(windows))]
         let commandes: Vec<Commande> = Vec::new();
         for c in commandes {
-            self.commande(&ctx, c);
-        }
-        // Fenêtre de test : E ouvre l'Écloserie, P met en pause.
-        if ctx.input(|i| i.key_pressed(egui::Key::E)) {
-            self.commande(&ctx, Commande::Ouvrir);
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::P)) {
-            self.commande(&ctx, Commande::Pause);
-        }
-        if self.captures.is_some() {
-            self.ecloserie.ui(ui, &mut self.partie);
-            self.captures_auto(ui);
-            ctx.request_repaint();
-            return;
+            self.commande(c);
         }
         let maintenant = Instant::now();
         let dt = maintenant.duration_since(self.tick).as_secs_f64();
@@ -755,7 +763,6 @@ impl eframe::App for Appli {
             }
             self.mesure = (0, Instant::now(), Duration::ZERO);
         }
-        self.mesure.0 += 1;
         self.tick = maintenant;
         // L'argent continue même en pause.
         self.partie.avancer(dt);
@@ -789,53 +796,198 @@ impl eframe::App for Appli {
                 self.fond_tex = None;
             }
         }
-        let fige = self.pause || self.plein_ecran;
+        // v0.12 : écrans recouverts (fenêtres, session verrouillée, écran éteint), relus toutes
+        // les 250 ms : rien n'est envoyé à un écran caché ; tous cachés = rien n'est dessiné.
+        #[cfg(windows)]
+        if let Some(s) = &mut self.systeme {
+            if self.verif_occlusion.elapsed() >= Duration::from_millis(250) {
+                self.verif_occlusion = Instant::now();
+                self.occulte = s.occlusion();
+            }
+        }
+        let fige = self.pause || self.plein_ecran || self.occulte;
         #[cfg(windows)]
         if let Some(s) = &self.systeme {
             s.signaler_abysses(self.partie.reglages.abysses);
             s.signaler_pause(self.pause);
         }
-        let (lp, hp) = self.preparer(ui);
+        let (lp, hp) = self.preparer(taille);
         let e = self.echelle;
-        self.souris(&ctx, dt as f32, fige);
+        self.souris(ctx, dt as f32, fige);
+        // Windows : le calque GDI montre l'aquarium, pas de texture egui.
+        #[cfg(windows)]
+        let calque = self.systeme.is_some();
+        #[cfg(not(windows))]
+        let calque = false;
         if let Some(aq) = &mut self.aquarium {
             aq.synchroniser(&self.partie);
-            if !fige || self.toile_tex.is_none() {
+            if !fige || self.image_due {
+                self.image_due = false;
+                self.mesure.0 += 1;
+                self.images_total += 1;
                 let t0 = Instant::now();
                 aq.avancer(dt as f32);
                 aq.dessiner(&self.partie);
                 self.mesure.2 += t0.elapsed();
-                let img = crate::ecloserie::image_couleur(&aq.toile);
-                match &mut self.toile_tex {
-                    Some(t) => t.set(img, TextureOptions::NEAREST),
-                    None => {
-                        self.toile_tex =
-                            Some(ctx.load_texture("toile", img, TextureOptions::NEAREST))
+                if let (Some(ctx), false) = (ctx, calque) {
+                    let img = crate::ecloserie::image_couleur(&aq.toile);
+                    match &mut self.toile_tex {
+                        Some(t) => t.set(img, TextureOptions::NEAREST),
+                        None => {
+                            self.toile_tex =
+                                Some(ctx.load_texture("toile", img, TextureOptions::NEAREST))
+                        }
                     }
                 }
                 #[cfg(windows)]
                 if let Some(s) = &self.systeme {
                     s.presenter(&aq.toile, e);
                 }
-                if !self.premiere_image {
-                    self.premiere_image = true;
+                if self.premiere_image.is_none() {
+                    self.premiere_image = Some(Instant::now());
                     crate::journal::ecrire(&format!(
-                        "première image : fenêtre {lp}x{hp} px, toile {}x{} x{e}, {} pixels par \
-                         point, {} poissons",
+                        "première image : fenêtre {lp}x{hp} px, toile {}x{} x{e}, {} poissons",
                         aq.toile.l,
                         aq.toile.h,
-                        ctx.pixels_per_point(),
                         aq.nageurs.len()
                     ));
                 }
             }
         }
-        // Windows : le calque GDI montre l'aquarium, la fenêtre eframe (cachée) ne dessine rien.
+        // Grandes éclosions : annoncées sur le fond d'écran, près du compteur (v0.11).
+        if let Some(aq) = &mut self.aquarium {
+            aq.annonces.append(&mut self.ecloserie.annonces);
+        }
+        // Lancement au démarrage : appliqué quand le réglage change.
+        if self.demarrage_applique != Some(self.partie.reglages.demarrage_windows) {
+            #[cfg(windows)]
+            if !self.fenetre {
+                if let Err(e) = crate::windows::demarrage(self.partie.reglages.demarrage_windows) {
+                    self.ecloserie.bandeau = Some(e);
+                }
+            }
+            self.demarrage_applique = Some(self.partie.reglages.demarrage_windows);
+        }
+        if self.sauve_le.elapsed() > Duration::from_secs(30) {
+            self.sauver();
+        }
+        self.mises_a_jour();
         #[cfg(windows)]
-        let calque = self.systeme.is_some();
-        #[cfg(not(windows))]
-        let calque = false;
-        if self.fond_tex.is_none() && !calque {
+        self.performance();
+        if fige {
+            // En pause : un tour toutes les 250 ms (argent, écrans découverts, commandes).
+            Duration::from_millis(250)
+        } else {
+            Duration::from_secs_f32(1.0 / ips_de(self.partie.reglages.ips) as f32)
+        }
+    }
+
+    /// Fermeture : sauvegarde, fond d'écran remis, relance après une mise à jour.
+    pub fn fermer(&mut self) {
+        self.sauver();
+        #[cfg(windows)]
+        if let Some(s) = self.systeme.take() {
+            s.arreter();
+        }
+        // Mise à jour installée : la nouvelle version démarre une fois le fond d'écran remis.
+        if let Some(exe) = self.ecloserie.relancer.take() {
+            crate::maj::relancer(&exe);
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Appli {
+    /// v0.12 : toutes les 60 s, ligne « Performance » du journal : processeur du processus en %
+    /// de la machine (comme le Gestionnaire des tâches), mémoire, images dessinées.
+    fn performance(&mut self) {
+        if self
+            .perf
+            .is_some_and(|(t, _, _)| t.elapsed() < Duration::from_secs(60))
+        {
+            return;
+        }
+        let Some((cpu, ws, prive)) = crate::windows::processus() else {
+            return;
+        };
+        let images = self.images_total;
+        let Some((t, cpu0, images0)) = self.perf else {
+            self.perf = Some((Instant::now(), cpu, images));
+            return;
+        };
+        let duree = t.elapsed();
+        let coeurs = std::thread::available_parallelism().map_or(1, |n| n.get()) as f64;
+        let ms = duree.as_secs_f64() * 1000.0;
+        crate::journal::ecrire(&format!(
+            "Performance : processeur {:.2} % ({} cœurs logiques), mémoire de travail {:.1} Mo, \
+             privée {:.1} Mo, {:.1} images/s{}{}",
+            (cpu - cpu0) as f64 / (ms * coeurs) * 100.0,
+            coeurs,
+            ws as f64 / 1048576.0,
+            prive as f64 / 1048576.0,
+            (images - images0) as f64 * 1000.0 / ms,
+            if self.occulte {
+                ", écrans recouverts"
+            } else {
+                ""
+            },
+            if self.ecloserie_ouverte {
+                ", Écloserie ouverte"
+            } else {
+                ""
+            },
+        ));
+        self.perf = Some((Instant::now(), cpu, images));
+    }
+}
+
+/// Images par seconde du fond : 15, 24, 30 ou 60 (v0.12 ; autre valeur = 24).
+pub fn ips_de(v: u32) -> u32 {
+    if matches!(v, 15 | 24 | 30 | 60) {
+        v
+    } else {
+        24
+    }
+}
+
+impl eframe::App for Appli {
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        // Fenêtre de test : E ouvre l'Écloserie, P met en pause.
+        if ctx.input(|i| i.key_pressed(egui::Key::E)) {
+            self.commande(Commande::Ouvrir);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::P)) {
+            self.commande(Commande::Pause);
+        }
+        if self.captures.is_some() {
+            crate::i18n::regler(
+                self.partie
+                    .reglages
+                    .langue
+                    .unwrap_or_else(crate::i18n::langue_systeme),
+            );
+            self.ecloserie.ui(ui, &mut self.partie);
+            self.captures_auto(ui);
+            ctx.request_repaint();
+            return;
+        }
+        let ppp = ctx.pixels_per_point();
+        let t = ctx.content_rect().size() * ppp;
+        let attente = self.pas(
+            Some(&ctx),
+            (t.x.round().max(64.0) as u32, t.y.round().max(64.0) as u32),
+        );
+        if self.focus_ecloserie {
+            self.focus_ecloserie = false;
+            ctx.send_viewport_cmd_to(ecloserie_id(), egui::ViewportCommand::Focus);
+        }
+        if self.quitter {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        let (lp, hp) = (t.x.round().max(64.0), t.y.round().max(64.0));
+        let e = self.echelle;
+        if self.fond_tex.is_none() {
             if let Some(img) = &self.fond_img {
                 let ci = egui::ColorImage::from_rgba_unmultiplied(
                     [img.width() as usize, img.height() as usize],
@@ -845,10 +997,9 @@ impl eframe::App for Appli {
             }
         }
         // Fond puis toile, en pixels physiques entiers (échelle entière).
-        let ppp = ctx.pixels_per_point();
         let p = ui.painter();
         let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-        if let (Some(t), false) = (&self.fond_tex, calque) {
+        if let Some(t) = &self.fond_tex {
             p.image(
                 t.id(),
                 egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(lp, hp) / ppp),
@@ -856,7 +1007,7 @@ impl eframe::App for Appli {
                 Color32::WHITE,
             );
         }
-        if let (Some(t), Some(aq), false) = (&self.toile_tex, &self.aquarium, calque) {
+        if let (Some(t), Some(aq)) = (&self.toile_tex, &self.aquarium) {
             let taille = Vec2::new((aq.toile.l * e) as f32, (aq.toile.h * e) as f32) / ppp;
             p.image(
                 t.id(),
@@ -885,41 +1036,10 @@ impl eframe::App for Appli {
                 self.sauver();
             }
         }
-        // Grandes éclosions : annoncées sur le fond d'écran, près du compteur (v0.11).
-        if let Some(aq) = &mut self.aquarium {
-            aq.annonces.append(&mut self.ecloserie.annonces);
-        }
-        // Lancement au démarrage : appliqué quand le réglage change.
-        if self.demarrage_applique != Some(self.partie.reglages.demarrage_windows) {
-            #[cfg(windows)]
-            if !self.fenetre {
-                if let Err(e) = crate::windows::demarrage(self.partie.reglages.demarrage_windows) {
-                    self.ecloserie.bandeau = Some(e);
-                }
-            }
-            self.demarrage_applique = Some(self.partie.reglages.demarrage_windows);
-        }
-        if self.sauve_le.elapsed() > Duration::from_secs(30) {
-            self.sauver();
-        }
-        self.mises_a_jour(&ctx);
-        let ips = self.partie.reglages.ips.clamp(15, 60) as f32;
-        if fige {
-            ctx.request_repaint_after(Duration::from_millis(500));
-        } else {
-            ctx.request_repaint_after(Duration::from_secs_f32(1.0 / ips));
-        }
+        ctx.request_repaint_after(attente);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.sauver();
-        #[cfg(windows)]
-        if let Some(s) = self.systeme.take() {
-            s.arreter();
-        }
-        // Mise à jour installée : la nouvelle version démarre une fois le fond d'écran remis.
-        if let Some(exe) = self.ecloserie.relancer.take() {
-            crate::maj::relancer(&exe);
-        }
+        self.fermer();
     }
 }

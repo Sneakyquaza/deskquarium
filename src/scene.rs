@@ -4,7 +4,9 @@
 use crate::especes::{Mouvement, Taille};
 use crate::jeu::{court, Alea, Forme, Modif, Partie, Poisson, Pose, Rarete};
 use crate::poisson::{self, Sprite, CONTOUR, CORPS, LUMIERE, MARGE, NAGEOIRE, OEIL, VIDE};
-use crate::toile::{bayer, hsv, largeur_texte, melange, rgb_hsv, Rgb, Toile, FIN};
+use crate::toile::{
+    bayer, crans, hsv, largeur_texte, melange, melange_crans, rgb_hsv, Rgb, Toile, FIN,
+};
 use std::collections::{HashMap, VecDeque};
 use std::f32::consts::TAU;
 use std::sync::Arc;
@@ -231,7 +233,9 @@ pub struct Aquarium {
     pub toile: Toile,
     /// Eau teintée + sable + rochers, refait quand la teinte change.
     fond: Toile,
-    rochers: Toile,
+    /// Rochers et coraux du décor : pixels posés seulement (index dans la toile, couleur),
+    /// v0.12 : plus de toile entière presque vide en mémoire.
+    rochers: Vec<(u32, [u8; 4])>,
     teinte_fond: f32,
     bassin: Bassin,
     plantes: Vec<Plante>,
@@ -382,7 +386,7 @@ impl Aquarium {
         let mut aq = Aquarium {
             toile: Toile::new(l, h),
             fond: Toile::new(l, h),
-            rochers: Toile::new(l, h),
+            rochers: Vec::new(),
             teinte_fond: -1.0,
             bassin: Bassin {
                 ciel,
@@ -662,7 +666,13 @@ impl Aquarium {
                     .any(|r| r.2 > r.0 && (r.0 - 6..r.2 + 6).contains(&pl.x))
         });
         plantes.sort_by_key(|p| p.devant);
-        self.rochers = rochers;
+        self.rochers = rochers
+            .px
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p[3] != 0)
+            .map(|(i, &p)| (i as u32, p))
+            .collect();
         self.plantes = plantes;
         self.sources = sources;
         self.lueurs = lueurs;
@@ -886,25 +896,41 @@ impl Aquarium {
             // Ombre douce sous la ligne du sable.
             f.poser_fin(xf, decal + dessus[sx as usize] - 1, [0x0c, 0x2c, 0x3c], 50);
         }
-        if ab {
-            // Rochers et coraux fondus dans le noir ; quelques pixels clairs des coraux luisent
-            // en bleu (bioluminescence).
-            let mut r = self.rochers.clone();
-            for (i, p) in r.px.iter_mut().enumerate() {
-                if p[3] == 255 {
-                    let lum = p[0] as u32 + p[1] as u32 + p[2] as u32;
-                    let c = if lum > 560 && i % 7 == 0 {
-                        [0x50, 0xe0, 0xf0]
-                    } else {
-                        melange([p[0], p[1], p[2]], eau, 0.62)
-                    };
-                    *p = [c[0], c[1], c[2], 255];
-                }
+        for &(i, mut p) in &self.rochers {
+            if ab && p[3] == 255 {
+                // Rochers et coraux fondus dans le noir ; quelques pixels clairs des coraux
+                // luisent en bleu (bioluminescence).
+                let lum = p[0] as u32 + p[1] as u32 + p[2] as u32;
+                let c = if lum > 560 && i % 7 == 0 {
+                    [0x50, 0xe0, 0xf0]
+                } else {
+                    melange([p[0], p[1], p[2]], eau, 0.62)
+                };
+                p = [c[0], c[1], c[2], 255];
             }
-            f.superposer(&r);
-        } else {
-            f.superposer(&self.rochers);
+            // Par-dessus, comme `Toile::superposer`.
+            let d = &mut f.px[i as usize];
+            let inv = 255 - p[3] as u16;
+            for k in 0..4 {
+                d[k] = (p[k] as u16 + (d[k] as u16 * inv + 127) / 255).min(255) as u8;
+            }
         }
+    }
+
+    /// Mémoire des images cuites des sprites (octets) et nombre de sprites (bench).
+    pub fn octets_sprites(&self) -> (usize, usize) {
+        let o = self
+            .sprites
+            .values()
+            .flat_map(|s| &s.images)
+            .map(|im| {
+                im.idx.len()
+                    + im.classes.as_ref().map_or(0, |c| c.len())
+                    + (im.halo1.len() + im.halo2.len()) * 4
+                    + im.rangs.len() * 4
+            })
+            .sum();
+        (o, self.sprites.len())
     }
 
     /// Met les nageurs en accord avec les poissons de l'aquarium (les plus rentables d'abord,
@@ -1039,6 +1065,9 @@ impl Aquarium {
                 _ => None,
             };
         }
+        // v0.12 : seules les images des créatures à l'écran restent en mémoire (une créature
+        // qui revient est recuite, à l'identique).
+        self.sprites.retain(|_, s| Arc::strong_count(s) > 1);
         // Le fond d'abord, puis les gros, les petits par-dessus.
         self.nageurs.sort_by_key(|n| {
             std::cmp::Reverse((n.sprite.taille.profondeur() > 0.0, n.sprite.l * n.sprite.h))
@@ -1795,7 +1824,7 @@ impl Nageur {
         let (x0, y0) = self.origine_fine();
         let a = (170.0 + 70.0 * (t * 6.0).sin()) as u8;
         // Deux pixels fins d'épaisseur, blanc bleuté (lisible sur un fond clair comme sombre).
-        for &(x, y) in im.halo1.iter().chain(&im.halo2) {
+        for (x, y) in im.halo1().chain(im.halo2()) {
             let xx = if self.gauche { s.l - 1 - x } else { x };
             toile.poser_fin(x0 + xx, y0 + y, [0x9c, 0xf0, 0xff], a);
         }
@@ -2287,15 +2316,15 @@ impl Nageur {
         let im = &s.images[0];
         let point_halo = |a: &mut Alea| {
             let h = &im.halo1;
-            h[a.n(h.len() as u32) as usize]
+            let (x, y) = h[a.n(h.len() as u32) as usize];
+            (x as i32, y as i32)
         };
         match self.rarete {
             Rarete::Rare => {
                 if a.f() < dt * 4.0 {
-                    let corps: Vec<usize> = (0..im.classe.len())
-                        .filter(|&i| im.classe[i] == CORPS)
-                        .collect();
-                    if let Some(&i) = corps.get(a.n(corps.len().max(1) as u32) as usize) {
+                    // Un pixel du corps au hasard (le k-ième, sans liste).
+                    let k = a.n(im.nb_corps.max(1)) as usize;
+                    if let Some(i) = im.kieme(CORPS, k) {
                         let (x, y) = self.monde(((i as i32) % s.l, (i as i32) / s.l));
                         parts.push(Particule {
                             x,
@@ -2445,7 +2474,8 @@ impl Nageur {
             if h.is_empty() {
                 return;
             }
-            let (x, y) = self.monde(h[a.n(h.len() as u32) as usize]);
+            let (x, y) = h[a.n(h.len() as u32) as usize];
+            let (x, y) = self.monde((x as i32, y as i32));
             parts.push(Particule {
                 x,
                 y,
@@ -2563,11 +2593,11 @@ impl Nageur {
         // Les dessins sombres (baudroie, clown des grands fonds…) ont un contre-jour plus fort.
         if self.contre_jour {
             let a = 70.0 + 120.0 * s.sombre;
-            for &(x, y) in &im.halo1 {
+            for (x, y) in im.halo1() {
                 toile.eclairer_fin(tx(x), ty(x, y), [0x58, 0xa8, 0xc8], a as u8);
             }
             if s.sombre > 0.25 {
-                for &(x, y) in im.halo2.iter().filter(|p| (p.0 + p.1).rem_euclid(2) == 0) {
+                for (x, y) in im.halo2().filter(|p| (p.0 + p.1).rem_euclid(2) == 0) {
                     toile.eclairer_fin(tx(x), ty(x, y), [0x40, 0x88, 0xb0], (a * 0.4) as u8);
                 }
             }
@@ -2588,7 +2618,7 @@ impl Nageur {
                 Rarete::Mythique => (80.0, 30.0),
                 _ => (120.0, 55.0),
             };
-            for &(x, y) in &im.halo1 {
+            for (x, y) in im.halo1() {
                 let c = if r == Rarete::Celeste && bayer(x, y) < 0.5 {
                     c2
                 } else {
@@ -2596,7 +2626,7 @@ impl Nageur {
                 };
                 toile.eclairer_fin(tx(x), ty(x, y), c, (a1 * pouls) as u8);
             }
-            for &(x, y) in &im.halo2 {
+            for (x, y) in im.halo2() {
                 // Second anneau tramé une case sur deux : lueur « pixel » sans flou.
                 if (x + y).rem_euclid(2) == 0 {
                     toile.eclairer_fin(tx(x), ty(x, y), c2, (a2 * pouls) as u8);
@@ -2644,7 +2674,7 @@ impl Nageur {
             for (dx, c) in [(-2, [255, 40, 200]), (2, [40, 230, 255])] {
                 for y in 0..s.h {
                     for x in 0..s.l {
-                        if im.classe[(y * s.l + x) as usize] != VIDE {
+                        if im.classe((y * s.l + x) as usize) != VIDE {
                             toile.eclairer_fin(tx(x) + dx, ty(x, y), c, 90);
                         }
                     }
@@ -2653,20 +2683,34 @@ impl Nageur {
         }
 
         // Corps.
-        let irise: Vec<(Rgb, Rgb, f32)> = if r == Rarete::Irreel {
+        // (couleurs de la colonne, chatoiement en crans de `melange`).
+        let irise: Vec<(Rgb, Rgb, u32)> = if r == Rarete::Irreel {
             (0..s.l)
                 .map(|x| {
                     let h = x as f32 / s.l as f32 * 0.9 - t * 0.45;
                     (
                         hsv(h, 0.6, 0.75),
                         hsv(h + 0.5, 0.9, 1.0),
-                        0.45 + 0.1 * (t * 2.0 - x as f32 * 0.05).sin(),
+                        crans(0.45 + 0.1 * (t * 2.0 - x as f32 * 0.05).sin()),
                     )
                 })
                 .collect()
         } else {
             Vec::new()
         };
+        // Irréel : part de blanc du reflet de chaque couleur de la palette (sa luminosité).
+        let blanc_irise: Vec<u32> = if r == Rarete::Irreel {
+            im.pal
+                .iter()
+                .map(|p| {
+                    let lum = (p[0] as u32 * 77 + p[1] as u32 * 140 + p[2] as u32 * 38) >> 8;
+                    crans((lum as f32 / 255.0 - 0.5).max(0.0))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let prof_crans = crans(prof);
         let reflet = (t * 0.7 + self.phase).rem_euclid(3.2) / 1.6 * (s.l + s.h) as f32 - s.h as f32;
         let modif = self.forme.modif;
         // Arc-en-ciel : la palette (une quarantaine de couleurs) tourne, pas chaque pixel.
@@ -2701,9 +2745,10 @@ impl Nageur {
             } else {
                 0
             };
-            for &(x, dest) in &paires {
+            let (debut, fin) = im.rangs[y as usize];
+            for &(x, dest) in &paires[debut as usize..fin as usize] {
                 let i = (y * s.l + x) as usize;
-                let cl = im.classe[i];
+                let cl = im.classe(i);
                 if cl == VIDE {
                     continue;
                 }
@@ -2712,7 +2757,8 @@ impl Nageur {
                 if cligne && cl == OEIL {
                     // Paupière fermée : la peau autour (texture du dessin gardée), trait sombre en
                     // bas de l'œil.
-                    let bas = im.classe.get(i + s.l as usize).is_none_or(|&b| b != OEIL);
+                    let j = i + s.l as usize;
+                    let bas = j >= im.idx.len() || im.classe(j) != OEIL;
                     c = if bas {
                         melange(s.paupiere, [0x08, 0x06, 0x0c], 0.55)
                     } else {
@@ -2731,16 +2777,11 @@ impl Nageur {
                         // qui chatoie (couleurs par colonne, calculées une fois par image).
                         let (corps, bord, chatoie) = &irise[x as usize];
                         if cl == CORPS || cl == NAGEOIRE {
-                            let lum =
-                                (p[0] as u32 * 77 + p[1] as u32 * 140 + p[2] as u32 * 38) >> 8;
-                            let arc = melange(
-                                *corps,
-                                [255, 255, 255],
-                                (lum as f32 / 255.0 - 0.5).max(0.0),
-                            );
+                            let blanc = blanc_irise[im.idx[i] as usize];
+                            let arc = melange_crans(*corps, [255, 255, 255], blanc);
                             c = melange(c, arc, 0.24);
                         } else if cl == CONTOUR {
-                            c = melange(c, *bord, *chatoie);
+                            c = melange_crans(c, *bord, *chatoie);
                         }
                     }
                     Rarete::Prehistorique => {
@@ -2782,7 +2823,7 @@ impl Nageur {
                 }
                 // L'eau du lointain n'efface ni le contour ni les yeux et lumières (qui luisent).
                 if prof > 0.0 && cl != OEIL && cl != LUMIERE && cl != CONTOUR {
-                    c = melange(c, EAU_LOIN, prof);
+                    c = melange_crans(c, EAU_LOIN, prof_crans);
                 }
                 // Cristal : corps translucide (le contour et les yeux restent pleins).
                 let a = if modif == Some(Modif::Cristal) && corps {
@@ -2874,7 +2915,7 @@ impl Nageur {
         let l = self.sprite.l as f32;
         match m {
             Modif::Dore => {
-                for &(x, y) in &im.halo1 {
+                for (x, y) in im.halo1() {
                     // Anneau doré, éclats qui courent le long du bord.
                     let eclat = (x + y - (t * 24.0) as i32).rem_euclid(29) == 0;
                     let (c, a) = if eclat {
@@ -2892,7 +2933,7 @@ impl Nageur {
                 } else {
                     ([0xc8, 0xa8, 0xff], 100.0, 11)
                 };
-                for &(x, y) in &im.halo1 {
+                for (x, y) in im.halo1() {
                     // Cristal : prisme, violet et cyan en alternance.
                     let c = if m == Modif::Cristal && bayer(x, y) > 0.5 {
                         [0x80, 0xf0, 0xff]
@@ -2913,7 +2954,7 @@ impl Nageur {
             Modif::Electrique => {
                 // Anneau qui grésille, et deux ou trois arcs brefs qui partent du bord.
                 let gresille = 0.6 + 0.4 * (t * 37.0).sin() * (t * 23.0 + 1.0).sin();
-                for &(x, y) in &im.halo1 {
+                for (x, y) in im.halo1() {
                     let a = 150.0 * gresille * (0.6 + 0.4 * bayer(x + pas, y));
                     toile.eclairer_fin(tx(x), ty(x, y), [0x60, 0xe8, 0xff], a as u8);
                 }
@@ -2949,27 +2990,27 @@ impl Nageur {
                 }
             }
             Modif::ArcEnCiel => {
-                for &(x, y) in &im.halo1 {
+                for (x, y) in im.halo1() {
                     let c = hsv(x as f32 / l * 0.8 + t * 0.4, 0.8, 1.0);
                     toile.eclairer_fin(tx(x), ty(x, y), c, (130.0 * pouls) as u8);
                 }
-                for &(x, y) in im.halo2.iter().filter(|p| (p.0 + p.1).rem_euclid(2) == 0) {
+                for (x, y) in im.halo2().filter(|p| (p.0 + p.1).rem_euclid(2) == 0) {
                     let c = hsv(x as f32 / l * 0.8 + t * 0.4 + 0.3, 0.8, 1.0);
                     toile.eclairer_fin(tx(x), ty(x, y), c, (40.0 * pouls) as u8);
                 }
             }
             Modif::Ombre => {
                 // Aura sombre posée (pas une lueur), bord violet à peine visible.
-                for &(x, y) in &im.halo1 {
+                for (x, y) in im.halo1() {
                     toile.poser_fin(tx(x), ty(x, y), [0x16, 0x06, 0x22], (170.0 * pouls) as u8);
                 }
-                for &(x, y) in im.halo2.iter().filter(|p| (p.0 + p.1).rem_euclid(2) == 0) {
+                for (x, y) in im.halo2().filter(|p| (p.0 + p.1).rem_euclid(2) == 0) {
                     toile.poser_fin(tx(x), ty(x, y), [0x22, 0x0c, 0x34], (70.0 * pouls) as u8);
                     toile.eclairer_fin(tx(x), ty(x, y), [0x70, 0x30, 0xa0], 25);
                 }
             }
             Modif::Galaxie => {
-                for &(x, y) in &im.halo1 {
+                for (x, y) in im.halo1() {
                     let c = if bayer(x, y) < 0.5 {
                         [0x70, 0x58, 0xff]
                     } else {
@@ -2978,7 +3019,7 @@ impl Nageur {
                     toile.eclairer_fin(tx(x), ty(x, y), c, (120.0 * pouls) as u8);
                 }
                 // Petites étoiles qui clignent dans l'anneau extérieur.
-                for &(x, y) in &im.halo2 {
+                for (x, y) in im.halo2() {
                     let h = hache(x, y, 0);
                     if h.is_multiple_of(9) && (t * 2.0 + (h % 97) as f32).sin() > 0.3 {
                         toile.eclairer_fin(tx(x), ty(x, y), [255, 255, 255], 220);
@@ -2997,9 +3038,11 @@ impl Nageur {
         let im = &s.images[(self.anim as usize) % s.images.len()];
         let (x0, y0) = self.origine_fine();
         for y in 0..s.h {
-            for x in 0..s.l {
+            let (debut, fin) = im.rangs[y as usize];
+            for x in debut as i32..fin as i32 {
                 let i = (y * s.l + x) as usize;
-                if im.classe[i] == OEIL || im.classe[i] == LUMIERE {
+                let c = im.classe(i);
+                if c == OEIL || c == LUMIERE {
                     let xx = if self.gauche { s.l - 1 - x } else { x };
                     let p = im.px(i);
                     let yy = y0 + y;
@@ -3014,7 +3057,7 @@ impl Nageur {
         let s = &self.sprite;
         let im = &s.images[0];
         let mut z: Option<(i32, i32, i32, i32)> = None;
-        for (i, &c) in im.classe.iter().enumerate() {
+        for (i, c) in im.classes().enumerate() {
             if c == OEIL {
                 let (x, y) = (i as i32 % s.l, i as i32 / s.l);
                 z = Some(match z {
@@ -3031,7 +3074,7 @@ impl Nageur {
 
 /// Second anneau d'aura (`halo2`), tramé une case sur deux : l'aura se lit à 1080p.
 fn anneau2(toile: &mut Toile, im: &poisson::Image, (tx, ty): Projection, c: Rgb, a: f32) {
-    for &(x, y) in im.halo2.iter().filter(|p| (p.0 + p.1).rem_euclid(2) == 0) {
+    for (x, y) in im.halo2().filter(|p| (p.0 + p.1).rem_euclid(2) == 0) {
         toile.eclairer_fin(tx(x), ty(x, y), c, a as u8);
     }
 }

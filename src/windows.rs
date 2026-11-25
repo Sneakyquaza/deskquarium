@@ -7,7 +7,6 @@
 
 use crate::appli::Commande;
 use crate::ecrans::{Disposition, Ecran};
-use eframe::egui;
 use std::ffi::c_void;
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
@@ -53,7 +52,10 @@ pub fn alerte(m: &str) {
 }
 
 static CANAL: OnceLock<Mutex<mpsc::Sender<Commande>>> = OnceLock::new();
-static CTX: OnceLock<egui::Context> = OnceLock::new();
+/// Réveille la boucle de l'appli (`moteur.rs`) quand une commande arrive.
+static REVEIL: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+/// v0.12 : écran éteint (notification d'alimentation GUID_CONSOLE_DISPLAY_STATE).
+static ECRAN_ETEINT: AtomicBool = AtomicBool::new(false);
 static EN_PAUSE: AtomicBool = AtomicBool::new(false);
 static FENETRE_SYS: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
@@ -69,34 +71,35 @@ pub struct Systeme {
     /// Parent actuel du calque (Progman ou WorkerW) ; nul en mode fenêtre.
     parent: HWND,
     methode: u8,
+    /// v0.12 : écrans recouverts à la dernière vérification (journal des changements).
+    recouverts: Vec<bool>,
+    /// Raison de l'occultation totale (verrouillage, écran éteint) à la dernière vérification.
+    cache_tout: Option<&'static str>,
 }
+
+// Sûr : les HWND sont des poignées valables depuis n'importe quel fil (SetParent, SetWindowPos,
+// InvalidateRect, GetDC… sont permis hors du fil propriétaire) ; v0.12 : l'appli (et son
+// Systeme) passe derrière un Mutex partagé avec le fil de l'Écloserie.
+unsafe impl Send for Systeme {}
 
 static MODE_FENETRE: AtomicBool = AtomicBool::new(false);
 static ABYSSES: AtomicBool = AtomicBool::new(false);
 
 impl Systeme {
-    /// Cache la fenêtre eframe (elle ne sert plus qu'à faire tourner l'appli et l'Écloserie),
-    /// crée le calque du fond, lance le fil de l'icône de notification, puis incruste le calque
+    /// Crée le calque du fond, lance le fil de l'icône de notification, puis incruste le calque
     /// derrière les icônes (ou le met en fenêtre au fond si `mode_fenetre` ou si ça échoue).
+    /// v0.12 : plus de fenêtre eframe cachée ; `reveil` réveille la boucle de l'appli à chaque
+    /// commande (icône, menu, raccourci).
     pub fn demarrer(
-        frame: &eframe::Frame,
-        ctx: &egui::Context,
         mode_fenetre: bool,
         methode: u8,
+        reveil: impl Fn() + Send + Sync + 'static,
     ) -> Result<Systeme, String> {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        let h = frame
-            .window_handle()
-            .map_err(|e| format!("fenêtre : {e}"))?;
-        let RawWindowHandle::Win32(w) = h.as_raw() else {
-            return Err("fenêtre : pas une fenêtre Win32".into());
-        };
         journal_version();
-        unsafe { cacher_racine(w.hwnd.get() as HWND) };
         let calque = crate::calque::Calque::creer()?;
         let (tx, rx) = mpsc::channel();
         let _ = CANAL.set(Mutex::new(tx));
-        let _ = CTX.set(ctx.clone());
+        let _ = REVEIL.set(Box::new(reveil));
         let fil = std::thread::spawn(fil_systeme);
         let mut s = Systeme {
             recu: rx,
@@ -104,6 +107,8 @@ impl Systeme {
             calque,
             parent: null_mut(),
             methode,
+            recouverts: Vec::new(),
+            cache_tout: None,
         };
         s.appliquer(mode_fenetre, methode);
         Ok(s)
@@ -222,6 +227,69 @@ impl Systeme {
         ABYSSES.store(a, Ordering::Relaxed);
     }
 
+    /// v0.12 : écrans recouverts par des fenêtres (visibles, non réduites, non masquées par
+    /// DWM ; ni fenêtres d'outils, ni calques transparents, ni les nôtres), session verrouillée
+    /// ou écran éteint. Le calque ne copie plus rien sur un écran recouvert ; renvoie vrai si
+    /// tous le sont (rien à dessiner). Changements écrits au journal.
+    pub fn occlusion(&mut self) -> bool {
+        let Some(d) = self.disposition() else {
+            return false;
+        };
+        let (bx, by, _, _) = d.boite();
+        let tout = if ECRAN_ETEINT.load(Ordering::Relaxed) {
+            Some("écran éteint")
+        } else if session_verrouillee() {
+            Some("session verrouillée")
+        } else {
+            None
+        };
+        if tout != self.cache_tout {
+            crate::journal::ecrire(&match tout {
+                Some(r) => format!("pause : {r}"),
+                None => format!("fin de la pause ({})", self.cache_tout.unwrap_or("")),
+            });
+            self.cache_tout = tout;
+        }
+        let recouverts: Vec<bool> = if tout.is_some() {
+            vec![true; d.ecrans.len()]
+        } else {
+            let f = fenetres_visibles(&[self.calque.hwnd, FENETRE_SYS.load(Ordering::Acquire)]);
+            d.ecrans
+                .iter()
+                .map(|e| crate::occlusion::recouvert((e.x, e.y, e.x + e.l, e.y + e.h), &f))
+                .collect()
+        };
+        if recouverts != self.recouverts {
+            let etat: Vec<String> = recouverts
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| {
+                    format!(
+                        "écran {} {}",
+                        i + 1,
+                        if c { "recouvert" } else { "visible" }
+                    )
+                })
+                .collect();
+            crate::journal::ecrire(&format!("occlusion : {}", etat.join(", ")));
+            self.recouverts = recouverts.clone();
+        }
+        let caches = d
+            .ecrans
+            .iter()
+            .zip(&recouverts)
+            .filter(|(_, &c)| c)
+            .map(|(e, _)| crate::compo::Rect {
+                x: e.x - bx,
+                y: e.y - by,
+                l: e.l,
+                h: e.h,
+            })
+            .collect();
+        self.calque.cacher(caches);
+        recouverts.iter().all(|&c| c)
+    }
+
     /// Retire l'icône et le calque, attend le fil, puis redessine le fond d'écran.
     pub fn arreter(mut self) {
         self.calque.detruire();
@@ -235,33 +303,6 @@ impl Systeme {
             let _ = f.join();
         }
         rafraichir_fond();
-    }
-}
-
-/// La fenêtre eframe ne montre plus rien : 1 pixel, transparente, sans clic, tout au fond.
-unsafe fn cacher_racine(h: HWND) {
-    unsafe {
-        let ex = GetWindowLongPtrW(h, GWL_EXSTYLE) as u32;
-        SetWindowLongPtrW(
-            h,
-            GWL_EXSTYLE,
-            (ex | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT) as isize,
-        );
-        SetLayeredWindowAttributes(h, 0, 0, LWA_ALPHA);
-        SetWindowPos(
-            h,
-            HWND_BOTTOM,
-            0,
-            0,
-            1,
-            1,
-            SWP_NOACTIVATE | SWP_FRAMECHANGED,
-        );
-        crate::journal::ecrire(&format!(
-            "fenêtre eframe cachée : {h:?} rect {} exstyle {:#x}",
-            rect_de(h),
-            GetWindowLongPtrW(h, GWL_EXSTYLE) as u32
-        ));
     }
 }
 
@@ -891,6 +932,117 @@ pub fn plein_ecran() -> Option<String> {
     }
 }
 
+/// v0.12 : boîtes des fenêtres de premier niveau qui peuvent cacher le bureau : visibles, non
+/// réduites, non masquées par DWM (autre bureau virtuel, appli suspendue), ni fenêtre d'outils,
+/// ni calque (souvent transparent : superpositions de jeux, effets), ni le bureau lui-même, ni
+/// `exclues`. Bords visibles (DWMWA_EXTENDED_FRAME_BOUNDS), sinon GetWindowRect.
+fn fenetres_visibles(exclues: &[HWND]) -> Vec<crate::occlusion::Boite> {
+    struct Liste<'a> {
+        exclues: &'a [HWND],
+        boites: Vec<crate::occlusion::Boite>,
+    }
+    unsafe extern "system" fn une(h: HWND, l: LPARAM) -> i32 {
+        use windows_sys::Win32::Graphics::Dwm::{
+            DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+        };
+        unsafe {
+            let liste = &mut *(l as *mut Liste);
+            if liste.exclues.contains(&h) || IsWindowVisible(h) == 0 || IsIconic(h) != 0 {
+                return 1;
+            }
+            // La barre des tâches (fenêtre d'outils) cache le bas de l'écran : comptée.
+            let classe = classe_de(h);
+            let barre = matches!(classe.as_str(), "Shell_TrayWnd" | "Shell_SecondaryTrayWnd");
+            let ex = GetWindowLongPtrW(h, GWL_EXSTYLE) as u32;
+            if !barre
+                && ex & (WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE)
+                    != 0
+            {
+                return 1;
+            }
+            let mut masquee = 0u32;
+            if DwmGetWindowAttribute(
+                h,
+                DWMWA_CLOAKED as u32,
+                &mut masquee as *mut u32 as *mut c_void,
+                4,
+            ) == S_OK
+                && masquee != 0
+            {
+                return 1;
+            }
+            if matches!(classe.as_str(), "Progman" | "WorkerW") {
+                return 1;
+            }
+            let mut r: RECT = std::mem::zeroed();
+            let ok = DwmGetWindowAttribute(
+                h,
+                DWMWA_EXTENDED_FRAME_BOUNDS as u32,
+                &mut r as *mut RECT as *mut c_void,
+                size_of::<RECT>() as u32,
+            ) == S_OK
+                || GetWindowRect(h, &mut r) != 0;
+            if ok && r.right > r.left && r.bottom > r.top {
+                liste.boites.push((r.left, r.top, r.right, r.bottom));
+            }
+        }
+        1
+    }
+    let mut liste = Liste {
+        exclues,
+        boites: Vec::new(),
+    };
+    unsafe { EnumWindows(Some(une), &mut liste as *mut Liste as LPARAM) };
+    liste.boites
+}
+
+/// Session verrouillée (ou écran de connexion) : le bureau de saisie n'est plus le nôtre.
+fn session_verrouillee() -> bool {
+    use windows_sys::Win32::System::StationsAndDesktops::{
+        CloseDesktop, OpenInputDesktop, DESKTOP_SWITCHDESKTOP,
+    };
+    unsafe {
+        let d = OpenInputDesktop(0, 0, DESKTOP_SWITCHDESKTOP);
+        if d.is_null() {
+            return true;
+        }
+        CloseDesktop(d);
+        false
+    }
+}
+
+/// v0.12 : temps processeur total du processus (ms), mémoire de travail et mémoire privée
+/// (octets) : ligne « Performance » du journal.
+pub fn processus() -> Option<(u64, usize, usize)> {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::ProcessStatus::{
+        K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+    unsafe {
+        let p = GetCurrentProcess();
+        let z = FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        };
+        let (mut c, mut e, mut k, mut u) = (z, z, z, z);
+        if GetProcessTimes(p, &mut c, &mut e, &mut k, &mut u) == 0 {
+            return None;
+        }
+        let cent_ns = |f: FILETIME| (f.dwHighDateTime as u64) << 32 | f.dwLowDateTime as u64;
+        let mut m: PROCESS_MEMORY_COUNTERS_EX = std::mem::zeroed();
+        m.cb = size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
+        if K32GetProcessMemoryInfo(p, &mut m as *mut _ as *mut PROCESS_MEMORY_COUNTERS, m.cb) == 0 {
+            return None;
+        }
+        Some((
+            (cent_ns(k) + cent_ns(u)) / 10_000,
+            m.WorkingSetSize,
+            m.PrivateUsage,
+        ))
+    }
+}
+
 /// Lancement au démarrage de la session : valeur « Aquarium » de HKCU\…\Run.
 pub fn demarrage(actif: bool) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -950,8 +1102,8 @@ fn envoyer(c: Commande) {
             let _ = tx.send(c);
         }
     }
-    if let Some(ctx) = CTX.get() {
-        ctx.request_repaint();
+    if let Some(r) = REVEIL.get() {
+        r();
     }
 }
 
@@ -1132,6 +1284,15 @@ unsafe extern "system" fn proc_sys(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> L
                 envoyer(Commande::Ouvrir);
                 0
             }
+            // v0.12 : écran éteint ou rallumé (rien à dessiner pendant qu'il est éteint).
+            WM_POWERBROADCAST if w as u32 == PBT_POWERSETTINGCHANGE && l != 0 => {
+                use windows_sys::Win32::System::Power::POWERBROADCAST_SETTING;
+                let r = &*(l as *const POWERBROADCAST_SETTING);
+                if r.DataLength >= 1 {
+                    ECRAN_ETEINT.store(r.Data[0] == 0, Ordering::Relaxed);
+                }
+                1
+            }
             WM_CLOSE => {
                 Shell_NotifyIconW(NIM_DELETE, &donnees_icone(h));
                 DestroyWindow(h);
@@ -1191,6 +1352,12 @@ fn fil_systeme() {
         ajouter_icone(h);
         // Raccourci facultatif : s'il est déjà pris, l'icône reste le moyen d'ouvrir.
         RegisterHotKey(h, 1, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'A' as u32);
+        // v0.12 : écran éteint / rallumé (WM_POWERBROADCAST).
+        windows_sys::Win32::System::Power::RegisterPowerSettingNotification(
+            h,
+            &windows_sys::Win32::System::SystemServices::GUID_CONSOLE_DISPLAY_STATE,
+            DEVICE_NOTIFY_WINDOW_HANDLE,
+        );
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
             TranslateMessage(&msg);

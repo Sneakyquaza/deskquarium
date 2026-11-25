@@ -7,7 +7,7 @@
 use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 /// Fréquence d'échantillonnage du mixeur et de la sortie.
 const FE: u32 = 22050;
@@ -125,10 +125,13 @@ struct Echantillons {
     fe: u32,
 }
 
-/// Tous les sons, décodés au premier usage. Un fichier illisible donne un son vide.
+/// Sons décodés au premier usage (v0.12 : seulement pendant que l'Écloserie est ouverte,
+/// `liberer` à sa fermeture). Un fichier illisible donne un son vide.
+static SONS: std::sync::Mutex<Option<Vec<Arc<Echantillons>>>> = std::sync::Mutex::new(None);
+
 fn echantillons(s: Son) -> Arc<Echantillons> {
-    static SONS: OnceLock<Vec<Arc<Echantillons>>> = OnceLock::new();
-    SONS.get_or_init(|| {
+    let mut g = SONS.lock().unwrap_or_else(|e| e.into_inner());
+    g.get_or_insert_with(|| {
         FICHIERS
             .iter()
             .map(|o| {
@@ -140,6 +143,12 @@ fn echantillons(s: Son) -> Arc<Echantillons> {
             .collect()
     })[indice(s)]
     .clone()
+}
+
+/// Oublie les sons décodés (Écloserie fermée) ; ceux en cours de lecture finissent.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn liberer() {
+    *SONS.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 fn u16_le(o: &[u8], i: usize) -> Option<u16> {

@@ -462,7 +462,7 @@ pub struct Reglages {
     pub teinte: f32,
     /// Nombre max de poissons dessinés (tous ceux de l'aquarium rapportent quand même).
     pub max_affiches: usize,
-    /// Images par seconde du fond : 30 ou 60.
+    /// Images par seconde du fond : 15, 24, 30 ou 60 (v0.12 : 24 par défaut).
     pub ips: u32,
     pub demarrage_windows: bool,
     pub pause_plein_ecran: bool,
@@ -497,7 +497,7 @@ impl Default for Reglages {
         Reglages {
             teinte: 0.25,
             max_affiches: CAPACITE,
-            ips: 30,
+            ips: 24,
             demarrage_windows: false,
             pause_plein_ecran: true,
             mode_fenetre: false,
@@ -574,7 +574,7 @@ pub struct Pose {
 
 /// Version du format de sauvegarde (2 = espèces, 3 = rareté Préhistorique et œuf d'ambre,
 /// 4 = shiny, modificateurs et index, 5 = décor à thème et objets de décor, 6 = pitié).
-pub const VERSION: u32 = 6;
+pub const VERSION: u32 = 7;
 /// Exemplaires au plus d'un même objet de décor.
 pub const MAX_EXEMPLAIRES: u32 = 8;
 
@@ -772,6 +772,10 @@ impl Partie {
             .reglages
             .theme
             .min(crate::decor::THEMES.len() as u8 - 1);
+        // Version 7 (v0.12) : 24 images/s par défaut ; l'ancien défaut 30 passe à 24.
+        if self.version < 7 && self.reglages.ips == 30 {
+            self.reglages.ips = 24;
+        }
         self.version = self.version.max(VERSION);
     }
 

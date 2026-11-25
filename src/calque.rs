@@ -1,7 +1,9 @@
 //! Windows : le calque du fond d'écran est une fenêtre Win32 à nous (pas la fenêtre eframe),
 //! dessinée en GDI sur le processeur : fond d'écran (image de chaque écran) puis toile de
-//! l'aquarium agrandie au plus proche (AlphaBlend, prémultiplié). Son propre fil et sa propre
-//! boucle de messages ; l'appli lui envoie chaque image (`presenter`).
+//! l'aquarium agrandie au plus proche. Son propre fil et sa propre boucle de messages
+//! (WM_PAINT : tout ce qui est demandé est recomposé) ; l'appli lui envoie chaque image
+//! (`presenter`) : v0.12, seules les cases changées sont recomposées (`compo.rs`) et copiées,
+//! et rien n'est copié sur un écran recouvert (elles attendent qu'il se découvre).
 //! Raison (v0.4, Windows 11 25H2) : la fenêtre OpenGL d'eframe incrustée dans Progman ne se
 //! voyait jamais et winit gardait sa taille d'avant (640x360).
 
@@ -15,17 +17,18 @@ use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
-/// Image à montrer : toile (BGRA prémultiplié, pixels fins) et son agrandissement entier.
+/// Image à montrer : toile (cases envoyées et à envoyer) et fond d'écran.
 #[derive(Default)]
 struct Image {
-    toile: Vec<u8>,
-    tl: i32,
-    th: i32,
-    k: i32,
+    compo: crate::compo::Compo,
     /// Fond d'écran (BGRA, taille du calque) ; remplacé quand les écrans changent.
-    fond: Vec<u8>,
+    fond: Vec<u32>,
     fl: i32,
     fh: i32,
+    /// Écrans recouverts (coordonnées du calque) : rien n'y est copié.
+    caches: Vec<crate::compo::Rect>,
+    /// Morceau composé en cours de copie.
+    tampon: Vec<u32>,
 }
 
 #[derive(Default)]
@@ -100,19 +103,45 @@ impl Calque {
         Ok(Calque { hwnd: h })
     }
 
-    /// Nouvelle image de l'aquarium (toile RGBA prémultiplié agrandie `k` fois à l'écran).
+    /// Nouvelle image de l'aquarium (toile RGBA prémultiplié agrandie `k` fois à l'écran) :
+    /// les cases changées sont composées et copiées tout de suite sur la fenêtre (GetDC, depuis
+    /// le fil de l'appli), sauf sur les écrans recouverts et pendant la mire.
     pub fn presenter(&self, toile: &crate::toile::Toile, k: usize) {
-        if let Some(p) = PARTAGE.get() {
-            if let Ok(mut im) = p.image.lock() {
-                im.tl = toile.lf() as i32;
-                im.th = toile.hf() as i32;
-                im.k = k as i32;
-                im.toile.clear();
-                im.toile
-                    .extend(toile.px.iter().flat_map(|c| [c[2], c[1], c[0], c[3]]));
-            }
+        let Some(p) = PARTAGE.get() else {
+            return;
+        };
+        let test = p
+            .test
+            .lock()
+            .ok()
+            .and_then(|t| t.clone())
+            .is_some_and(|(fin, _)| Instant::now() < fin);
+        let Ok(mut im) = p.image.lock() else {
+            return;
+        };
+        im.compo.recevoir(toile, (k / crate::toile::FIN).max(1));
+        if test {
+            return;
         }
-        unsafe { InvalidateRect(self.hwnd, null(), 0) };
+        unsafe {
+            let mut r: RECT = std::mem::zeroed();
+            GetClientRect(self.hwnd, &mut r);
+            let caches = im.caches.clone();
+            let rects = im
+                .compo
+                .rectangles(r.right - r.left, r.bottom - r.top, &caches);
+            if rects.is_empty() {
+                return;
+            }
+            let dc = GetDC(self.hwnd);
+            if dc.is_null() {
+                return;
+            }
+            for rc in rects {
+                copier(&mut im, dc, rc);
+            }
+            ReleaseDC(self.hwnd, dc);
+        }
     }
 
     /// Fond d'écran sous l'aquarium (taille du calque).
@@ -121,10 +150,24 @@ impl Calque {
             if let Ok(mut im) = p.image.lock() {
                 im.fl = img.width() as i32;
                 im.fh = img.height() as i32;
-                im.fond = img.pixels().flat_map(|c| [c[2], c[1], c[0], 255]).collect();
+                im.fond = img
+                    .pixels()
+                    .map(|c| 0xff00_0000 | (c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32)
+                    .collect();
+                im.compo.tout_salir();
             }
         }
         unsafe { InvalidateRect(self.hwnd, null(), 0) };
+    }
+
+    /// Écrans recouverts (coordonnées du calque) : on n'y copie plus rien ; découverts, leurs
+    /// cases en retard partent à l'image suivante.
+    pub fn cacher(&self, caches: Vec<crate::compo::Rect>) {
+        if let Some(p) = PARTAGE.get() {
+            if let Ok(mut im) = p.image.lock() {
+                im.caches = caches;
+            }
+        }
     }
 
     /// Bandes de couleur vives et nom de la méthode pendant 5 s : se voit-il ?
@@ -155,7 +198,39 @@ fn bmi(l: i32, h: i32) -> BITMAPINFO {
     b
 }
 
-/// Dessine tout dans un tampon (pas de scintillement) puis le copie sur la fenêtre.
+/// Compose le rectangle `rc` (coordonnées du calque) et le copie sur `dc`.
+unsafe fn copier(im: &mut Image, dc: HDC, rc: crate::compo::Rect) {
+    unsafe {
+        let Image {
+            compo,
+            fond,
+            fl,
+            fh,
+            tampon,
+            ..
+        } = im;
+        compo.composer(fond, *fl as usize, *fh as usize, rc, tampon);
+        let b = bmi(rc.l, rc.h);
+        StretchDIBits(
+            dc,
+            rc.x,
+            rc.y,
+            rc.l,
+            rc.h,
+            0,
+            0,
+            rc.l,
+            rc.h,
+            tampon.as_ptr() as *const c_void,
+            &b,
+            DIB_RGB_COLORS,
+            SRCCOPY,
+        );
+    }
+}
+
+/// WM_PAINT : la zone demandée est recomposée (fenêtre découverte, fond changé, fin de la
+/// mire) ; la mire se dessine dans un tampon (pas de scintillement).
 unsafe fn peindre(h: HWND) {
     unsafe {
         let mut ps: PAINTSTRUCT = std::mem::zeroed();
@@ -163,88 +238,44 @@ unsafe fn peindre(h: HWND) {
         let mut r: RECT = std::mem::zeroed();
         GetClientRect(h, &mut r);
         let (l, ht) = (r.right - r.left, r.bottom - r.top);
+        let test = PARTAGE
+            .get()
+            .and_then(|p| p.test.lock().ok().and_then(|t| t.clone()))
+            .filter(|(fin, _)| Instant::now() < *fin);
         if l > 0 && ht > 0 {
-            let tampon = CreateCompatibleDC(dc);
-            let bmp = CreateCompatibleBitmap(dc, l, ht);
-            let ancien = SelectObject(tampon, bmp);
-            SetStretchBltMode(tampon, COLORONCOLOR);
-            let test = PARTAGE
-                .get()
-                .and_then(|p| p.test.lock().ok().and_then(|t| t.clone()))
-                .filter(|(fin, _)| Instant::now() < *fin);
             if let Some((_, nom)) = test {
+                let tampon = CreateCompatibleDC(dc);
+                let bmp = CreateCompatibleBitmap(dc, l, ht);
+                let ancien = SelectObject(tampon, bmp);
                 bandes(tampon, l, ht, &nom);
+                BitBlt(dc, 0, 0, l, ht, tampon, 0, 0, SRCCOPY);
+                SelectObject(tampon, ancien);
+                DeleteObject(bmp);
+                DeleteDC(tampon);
                 // Se redessine jusqu'à la fin du test, même sans nouvelle image.
                 InvalidateRect(h, null(), 0);
             } else if let Some(p) = PARTAGE.get() {
-                if let Ok(im) = p.image.lock() {
-                    if im.fond.len() == (im.fl * im.fh * 4) as usize && im.fl > 0 {
-                        let b = bmi(im.fl, im.fh);
-                        StretchDIBits(
-                            tampon,
-                            0,
-                            0,
-                            im.fl,
-                            im.fh,
-                            0,
-                            0,
-                            im.fl,
-                            im.fh,
-                            im.fond.as_ptr() as *const c_void,
-                            &b,
-                            DIB_RGB_COLORS,
-                            SRCCOPY,
-                        );
-                    } else {
-                        let noir = CreateSolidBrush(0);
-                        FillRect(tampon, &r, noir);
-                        DeleteObject(noir);
-                    }
-                    if im.toile.len() == (im.tl * im.th * 4) as usize && im.tl > 0 {
-                        // Toile dans une section DIB (AlphaBlend demande un DC source).
-                        let b = bmi(im.tl, im.th);
-                        let mut bits: *mut c_void = null_mut();
-                        let dib =
-                            CreateDIBSection(tampon, &b, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
-                        if !dib.is_null() && !bits.is_null() {
-                            std::ptr::copy_nonoverlapping(
-                                im.toile.as_ptr(),
-                                bits as *mut u8,
-                                im.toile.len(),
-                            );
-                            let src = CreateCompatibleDC(tampon);
-                            let a = SelectObject(src, dib);
-                            let f = BLENDFUNCTION {
-                                BlendOp: AC_SRC_OVER as u8,
-                                BlendFlags: 0,
-                                SourceConstantAlpha: 255,
-                                AlphaFormat: AC_SRC_ALPHA as u8,
+                if let Ok(mut im) = p.image.lock() {
+                    let z = ps.rcPaint;
+                    let (x0, y0) = (z.left.max(0), z.top.max(0));
+                    let (x1, y1) = (z.right.min(l), z.bottom.min(ht));
+                    if x1 > x0 && y1 > y0 {
+                        // Par bandes de 64 lignes : le tampon reste petit.
+                        let mut y = y0;
+                        while y < y1 {
+                            let hh = (y1 - y).min(64);
+                            let rc = crate::compo::Rect {
+                                x: x0,
+                                y,
+                                l: x1 - x0,
+                                h: hh,
                             };
-                            let k = (im.k / crate::toile::FIN as i32).max(1);
-                            AlphaBlend(
-                                tampon,
-                                0,
-                                0,
-                                im.tl * k,
-                                im.th * k,
-                                src,
-                                0,
-                                0,
-                                im.tl,
-                                im.th,
-                                f,
-                            );
-                            SelectObject(src, a);
-                            DeleteDC(src);
-                            DeleteObject(dib);
+                            copier(&mut im, dc, rc);
+                            y += hh;
                         }
                     }
                 }
             }
-            BitBlt(dc, 0, 0, l, ht, tampon, 0, 0, SRCCOPY);
-            SelectObject(tampon, ancien);
-            DeleteObject(bmp);
-            DeleteDC(tampon);
         }
         EndPaint(h, &ps);
     }
