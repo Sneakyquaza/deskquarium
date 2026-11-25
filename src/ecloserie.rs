@@ -1595,7 +1595,15 @@ impl Ecloserie {
                 tr("Mode Abysses"),
                 tr("Aquarium des grands fonds : eau sombre, neige marine, poissons qui luisent."),
                 &mut |ui| {
-                    ui.checkbox(&mut r.abysses_auto, tr("Automatique la nuit (21 h – 7 h)"));
+                    let avant = r.abysses_actif();
+                    if ui
+                        .checkbox(&mut r.abysses_auto, tr("Automatique la nuit (21 h – 7 h)"))
+                        .changed()
+                        && !r.abysses_auto
+                    {
+                        // Sortie de l'automatique : garde l'état affiché, pas de saut.
+                        r.abysses = avant;
+                    }
                     // Automatique : la coche manuelle montre l'état du moment, sans effet.
                     let mut actif = r.abysses_actif();
                     let c = if r.abysses_auto { &mut actif } else { &mut r.abysses };
