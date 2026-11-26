@@ -58,8 +58,8 @@ pub struct Appli {
     pause: bool,
     plein_ecran: bool,
     verif_plein_ecran: Instant,
-    /// Écrans de Windows (relus toutes les 3 s : branchés, débranchés, déplacés).
-    #[cfg_attr(not(windows), allow(dead_code))]
+    /// Écrans de Windows (relus toutes les 3 s : branchés, débranchés, déplacés) ; `--demarrage` :
+    /// écrans simulés.
     disposition: Option<Disposition>,
     #[cfg_attr(not(windows), allow(dead_code))]
     verif_ecrans: Instant,
@@ -127,12 +127,104 @@ struct CapturesAuto {
 }
 
 pub fn lancer(o: Options) -> Result<(), String> {
+    let fenetre = o.fenetre;
+    let appli = nouvelle(o);
+    // v0.12 : sous Windows, le fond d'écran tourne sans eframe (boucle à nous) ; l'Écloserie
+    // s'ouvre dans sa propre fenêtre quand on la demande (`moteur.rs`) ; v0.18 :
+    // l'icône d'eframe (un sprite cuit) n'est plus faite pour rien avant.
+    #[cfg(windows)]
+    if !fenetre {
+        return crate::moteur::lancer(appli);
+    }
+    let icone = std::sync::Arc::new(icone());
+    let viewport = if fenetre {
+        ViewportBuilder::default()
+            .with_title("Deskquarium")
+            .with_app_id("deskquarium")
+            .with_inner_size(if appli.captures.is_some() {
+                [960.0, 720.0]
+            } else {
+                [1280.0, 720.0]
+            })
+            .with_icon(icone)
+    } else {
+        // Fenêtre sans bord, hors barre des tâches : elle est ensuite incrustée dans WorkerW.
+        ViewportBuilder::default()
+            .with_title("Deskquarium (fond)")
+            .with_decorations(false)
+            .with_taskbar(false)
+            // Ne montre rien : le calque GDI (calque.rs) dessine l'aquarium.
+            .with_inner_size([1.0, 1.0])
+            .with_position([0.0, 0.0])
+            .with_icon(icone)
+    };
+    let options = eframe::NativeOptions {
+        viewport,
+        renderer: eframe::Renderer::Glow,
+        ..Default::default()
+    };
+    eframe::run_native(
+        "deskquarium",
+        options,
+        Box::new(move |cc| {
+            installer_style(&cc.egui_ctx);
+            let mut appli = appli;
+            let ctx = cc.egui_ctx.clone();
+            appli.ecloserie.maj = Some(crate::maj::Maj::new(move || ctx.request_repaint()));
+            Ok(Box::new(appli))
+        }),
+    )
+    .map_err(|e| {
+        // OpenGL indisponible, fenêtre impossible… : le journal le garde.
+        crate::journal::ecrire(&format!("fenêtre / OpenGL : {e}"));
+        format!("fenêtre : {e}")
+    })
+}
+
+/// v0.18 : `--demarrage` : le chemin du lancement sans écran (sauvegarde ou démo, aquarium,
+/// fond, première image) sur 3840x1080, jalons en console ; mémoire ensuite.
+pub fn demarrage(demo: bool, fond: Option<String>) -> Result<(), String> {
+    crate::journal::CONSOLE.store(true, std::sync::atomic::Ordering::Relaxed);
+    let mut a = nouvelle(Options {
+        fenetre: true,
+        demo,
+        fond,
+        captures: None,
+    });
+    a.ecloserie_ouverte = false;
+    // Deux écrans 1920x1080 côte à côte, barre des tâches de 48 px (comme `--bench`).
+    a.disposition = Some(Disposition::depuis_texte(
+        "1920x1080+0+0/48,1920x1080+1920+0/48",
+    )?);
+    if demo {
+        // 40 poissons à l'écran (aquarium plein, comme `--bench`).
+        a.partie.argent = 1e30;
+        while a.partie.nb_actifs() < crate::jeu::CAPACITE {
+            if a.partie.acheter_oeuf(1).is_err() {
+                break;
+            }
+        }
+    }
+    a.pas(None, (3840, 1080));
+    crate::journal::jalon("démarrage : première image envoyée");
+    if let Some((pointe, rss)) = crate::bench::memoire() {
+        println!("mémoire : pointe {pointe:.1} Mo, après la première image {rss:.1} Mo");
+    }
+    let t = Instant::now();
+    a.fermer();
+    println!("fermeture : {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
+    Ok(())
+}
+
+/// L'appli prête à tourner : sauvegarde chargée (ou démo), langue, gains hors ligne.
+fn nouvelle(o: Options) -> Appli {
     let dossier = sauve::dossier();
     let (mut partie, mut message) = if o.demo {
         (crate::capture::partie_demo(), None)
     } else {
         sauve::charger(&dossier)
     };
+    crate::journal::jalon("démarrage : sauvegarde chargée");
     // Langue : DESKQUARIUM_LANGUE / AQUARIUM_LANGUE (captures) l'impose, sinon celle choisie,
     // sinon celle de Windows.
     if std::env::var_os("DESKQUARIUM_LANGUE").is_some()
@@ -157,33 +249,6 @@ pub fn lancer(o: Options) -> Result<(), String> {
             None => m,
         });
     }
-    let icone = std::sync::Arc::new(icone());
-    let viewport = if o.fenetre {
-        ViewportBuilder::default()
-            .with_title("Deskquarium")
-            .with_app_id("deskquarium")
-            .with_inner_size(if o.captures.is_some() {
-                [960.0, 720.0]
-            } else {
-                [1280.0, 720.0]
-            })
-            .with_icon(icone)
-    } else {
-        // Fenêtre sans bord, hors barre des tâches : elle est ensuite incrustée dans WorkerW.
-        ViewportBuilder::default()
-            .with_title("Deskquarium (fond)")
-            .with_decorations(false)
-            .with_taskbar(false)
-            // Ne montre rien : le calque GDI (calque.rs) dessine l'aquarium.
-            .with_inner_size([1.0, 1.0])
-            .with_position([0.0, 0.0])
-            .with_icon(icone)
-    };
-    let options = eframe::NativeOptions {
-        viewport,
-        renderer: eframe::Renderer::Glow,
-        ..Default::default()
-    };
     let mut ecloserie = Ecloserie::new(dossier.display().to_string());
     ecloserie.bandeau = message.clone();
     let appli = Appli {
@@ -239,31 +304,9 @@ pub fn lancer(o: Options) -> Result<(), String> {
     };
     // Ancienne version laissée par une mise à jour : supprimée.
     crate::maj::nettoyer();
-    // v0.12 : sous Windows, le fond d'écran tourne sans eframe (boucle à nous) ; l'Écloserie
-    // s'ouvre dans sa propre fenêtre quand on la demande (`moteur.rs`).
-    #[cfg(windows)]
-    if !o.fenetre {
-        return crate::moteur::lancer(appli);
-    }
-    eframe::run_native(
-        "deskquarium",
-        options,
-        Box::new(move |cc| {
-            installer_style(&cc.egui_ctx);
-            let mut appli = appli;
-            let ctx = cc.egui_ctx.clone();
-            appli.ecloserie.maj = Some(crate::maj::Maj::new(move || ctx.request_repaint()));
-            Ok(Box::new(appli))
-        }),
-    )
-    .map_err(|e| {
-        // OpenGL indisponible, fenêtre impossible… : le journal le garde.
-        crate::journal::ecrire(&format!("fenêtre / OpenGL : {e}"));
-        format!("fenêtre : {e}")
-    })
+    appli
 }
 
-/// Icône 32x32 (fenêtres) : un poisson commun dessiné par le jeu.
 pub fn icone_rgba() -> Vec<u8> {
     let e = crate::especes::par_cle("clown").expect("poisson-clown au catalogue");
     // Réduit pour tenir dans 32x32 (marges du sprite comprises).
@@ -398,6 +441,11 @@ impl Appli {
                 return d.clone();
             }
         }
+        // `--demarrage` : écrans simulés.
+        #[cfg(not(windows))]
+        if let Some(d) = &self.disposition {
+            return d.clone();
+        }
         Disposition::simple(lp, hp)
     }
 
@@ -422,18 +470,44 @@ impl Appli {
             .as_ref()
             .is_none_or(|a| a.toile.l != l || a.toile.h != h || self.echelle != e);
         if refaire {
-            let mut aq =
-                Aquarium::avec_zones(l, h, 1, &disp.zones(e as u32), &disp.travail(e as u32));
-            if let Some(m) = &self.message_depart {
-                aq.message = Some((m.clone(), 15.0));
-            }
-            aq.synchroniser(&self.partie);
+            let premier = self.premiere_image.is_none();
+            // v0.18 : le fond d'écran est lu (image décodée, mise à l'échelle) dans un autre fil
+            // pendant que l'aquarium se construit.
+            let (fenetre, chemin) = (self.fenetre, self.fond_chemin.clone());
+            let lire = self.fond_img.is_none();
+            let (aq, img) = std::thread::scope(|sc| {
+                let fond = lire.then(|| {
+                    let d = &disp;
+                    sc.spawn(move || {
+                        let img = charger_fond(fenetre, chemin.as_deref(), d, lp, hp);
+                        if premier {
+                            crate::journal::jalon("démarrage : fond d'écran lu");
+                        }
+                        img
+                    })
+                });
+                let mut aq =
+                    Aquarium::avec_zones(l, h, 1, &disp.zones(e as u32), &disp.travail(e as u32));
+                if premier {
+                    crate::journal::jalon("démarrage : décor prêt");
+                }
+                if let Some(m) = &self.message_depart {
+                    aq.message = Some((m.clone(), 15.0));
+                }
+                aq.synchroniser(&self.partie);
+                if premier {
+                    crate::journal::jalon(&format!(
+                        "démarrage : poissons prêts ({} sprites)",
+                        aq.octets_sprites().1
+                    ));
+                }
+                (aq, fond.map(|f| f.join().expect("lecture du fond d'écran")))
+            });
             self.aquarium = Some(aq);
             self.image_due = true;
             self.echelle = e;
             self.fond_tex = None;
-            if self.fond_img.is_none() {
-                let img = self.charger_fond(&disp, lp, hp);
+            if let Some(img) = img {
                 #[cfg(windows)]
                 if let Some(s) = &self.systeme {
                     // v0.12 : le calque garde sa copie ; ici une image vide (mémoire), qui
@@ -583,22 +657,6 @@ impl Appli {
         }
         if !fige {
             aq.curseur(pos, dt);
-        }
-    }
-
-    fn charger_fond(&self, d: &Disposition, l: u32, h: u32) -> image::RgbaImage {
-        #[cfg(windows)]
-        if !self.fenetre {
-            if let Some(img) = crate::windows::fond_bureau(d) {
-                return img;
-            }
-        }
-        let _ = d;
-        match &self.fond_chemin {
-            Some(f) => image::open(f)
-                .map(|i| fond::couvrir(&i.to_rgba8(), l, h))
-                .unwrap_or_else(|_| fond::factice(l, h)),
-            None => fond::factice(l, h),
         }
     }
 
@@ -914,6 +972,9 @@ impl Appli {
                 aq.avancer(dt as f32);
                 aq.dessiner(&self.partie);
                 self.mesure.2 += t0.elapsed();
+                if self.premiere_image.is_none() {
+                    crate::journal::jalon("démarrage : première image dessinée");
+                }
                 if let (Some(ctx), false) = (ctx, calque) {
                     let img = crate::ecloserie::image_couleur(&aq.toile);
                     match &mut self.toile_tex {
@@ -967,12 +1028,21 @@ impl Appli {
         }
     }
 
-    /// Fermeture : sauvegarde, fond d'écran remis, relance après une mise à jour.
+    /// Fermeture : calque caché (le vrai fond d'écran revient tout de suite), sauvegarde,
+    /// icône et calque retirés, fond d'écran redessiné, relance après une mise à jour.
     pub fn fermer(&mut self) {
+        crate::journal::jalon("fermeture : demandée");
+        #[cfg(windows)]
+        if let Some(s) = &self.systeme {
+            s.masquer();
+            crate::journal::jalon("fermeture : calque caché");
+        }
         self.sauver();
+        crate::journal::jalon("fermeture : partie sauvée");
         #[cfg(windows)]
         if let Some(s) = self.systeme.take() {
             s.arreter();
+            crate::journal::jalon("fermeture : fond d'écran redessiné");
         }
         // Mise à jour installée : la nouvelle version démarre une fois le fond d'écran remis.
         if let Some(exe) = self.ecloserie.relancer.take() {
@@ -1041,6 +1111,29 @@ fn heure_locale() -> u32 {
     #[cfg(not(windows))]
     {
         (sauve::maintenant() / 3600 % 24) as u32
+    }
+}
+
+/// Fond d'écran sous l'aquarium : celui de Windows (incrusté), sinon `--fond` ou le factice.
+fn charger_fond(
+    fenetre: bool,
+    chemin: Option<&str>,
+    d: &Disposition,
+    l: u32,
+    h: u32,
+) -> image::RgbaImage {
+    #[cfg(windows)]
+    if !fenetre {
+        if let Some(img) = crate::windows::fond_bureau(d) {
+            return img;
+        }
+    }
+    let _ = (fenetre, d);
+    match chemin {
+        Some(f) => image::open(f)
+            .map(|i| fond::couvrir(&i.to_rgba8(), l, h))
+            .unwrap_or_else(|_| fond::factice(l, h)),
+        None => fond::factice(l, h),
     }
 }
 

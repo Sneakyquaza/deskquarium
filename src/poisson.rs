@@ -613,6 +613,41 @@ pub fn images_par_cycle(t: Taille) -> usize {
 /// Sprite d'une espèce pixel art : variante de couleur (teinte décalée selon la saturation,
 /// les rampes d'ombre restent), réduction éventuelle (vignettes), puis N images déformées
 /// à partir de l'unique dessin. Alpha du PNG : 255 corps, 254 œil, 253 lumière.
+/// v0.18 : `f(0)..f(n-1)` sur tous les cœurs (chaque fil prend la suivante), résultats dans
+/// l'ordre : même résultat qu'en série.
+fn en_parallele<T: Send>(n: usize, f: impl Fn(usize) -> T + Sync) -> Vec<T> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let fils = std::thread::available_parallelism()
+        .map_or(1, |c| c.get())
+        .min(n);
+    if fils <= 1 {
+        return (0..n).map(f).collect();
+    }
+    let suivant = AtomicUsize::new(0);
+    let mut faits: Vec<(usize, T)> = std::thread::scope(|sc| {
+        let parts: Vec<_> = (0..fils)
+            .map(|_| {
+                sc.spawn(|| {
+                    let mut v = Vec::new();
+                    loop {
+                        let i = suivant.fetch_add(1, Ordering::Relaxed);
+                        if i >= n {
+                            break v;
+                        }
+                        v.push((i, f(i)));
+                    }
+                })
+            })
+            .collect();
+        parts
+            .into_iter()
+            .flat_map(|p| p.join().expect("image d'un sprite"))
+            .collect()
+    });
+    faits.sort_by_key(|x| x.0);
+    faits.into_iter().map(|x| x.1).collect()
+}
+
 fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8], forme: Forme) -> Sprite {
     let img = image::load_from_memory(png)
         .expect("sprite d'espèce embarqué lisible")
@@ -695,16 +730,19 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8], forme: Form
         images_par_cycle(e.taille)
     };
     // Marge : le plus grand déplacement du cycle (mesuré), plus la marge des halos.
-    let mut dmax = 0.0f32;
-    for f in 0..n {
+    let dmax = en_parallele(n, |f| {
         let ph = f as f32 / n as f32 * std::f32::consts::TAU;
+        let mut dmax = 0.0f32;
         for y in 0..h {
             for x in 0..w {
                 let (dx, dy) = deplacement(anim, (w as f32, h as f32), x as f32, y as f32, ph);
                 dmax = dmax.max(dx.abs()).max(dy.abs());
             }
         }
-    }
+        dmax
+    })
+    .into_iter()
+    .fold(0.0f32, f32::max);
     let bord = MARGE + dmax.ceil() as i32 + 2;
     let (l, ht) = (w + 2 * bord, h + 2 * bord);
     // Palette du sprite (le dessin a une quarantaine de couleurs ; variante et réduction n'en
@@ -743,8 +781,8 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8], forme: Form
             }
         })
         .collect();
-    let mut images: Vec<Brute> = Vec::with_capacity(n);
-    for f in 0..n {
+    // v0.18 : images du cycle faites en parallèle (le kraken : 1,3 s sur un cœur).
+    let images: Vec<Brute> = en_parallele(n, |f| {
         let ph = if n == 1 {
             0.0
         } else {
@@ -917,13 +955,13 @@ fn sprite_png(e: &Espece, variante: usize, echelle: f32, png: &[u8], forme: Form
             }
         }
         let (halo1, halo2) = halos(&cl, l, ht);
-        images.push(Brute {
+        Brute {
             idx: px,
             classe: cl,
             halo1,
             halo2,
-        });
-    }
+        }
+    });
     // Paupière : couleur moyenne du corps qui touche les yeux, un peu assombrie.
     let im0 = &images[0];
     let (mut somme, mut nb) = ([0u32; 3], 0u32);
@@ -1080,6 +1118,15 @@ pub fn halos(cl: &[u8], w: i32, h: i32) -> (Points, Points) {
 mod tests {
     use super::*;
     use crate::especes::catalogue;
+
+    /// v0.18 : les images faites en parallèle arrivent dans l'ordre, comme en série.
+    #[test]
+    fn en_parallele_dans_l_ordre() {
+        for n in [0, 1, 2, 7, 24, 100] {
+            let f = |i: usize| i * i + 3;
+            assert_eq!(en_parallele(n, f), (0..n).map(f).collect::<Vec<_>>());
+        }
+    }
 
     #[test]
     fn sprites_deterministes_et_bornes() {

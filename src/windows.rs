@@ -111,6 +111,7 @@ impl Systeme {
             cache_tout: None,
         };
         s.appliquer(mode_fenetre, methode);
+        crate::journal::jalon("démarrage : calque placé (caché jusqu'à la première image)");
         Ok(s)
     }
 
@@ -120,6 +121,8 @@ impl Systeme {
     pub fn appliquer(&mut self, mode_fenetre: bool, methode: u8) -> Option<String> {
         let mut erreur = None;
         let h = self.calque.hwnd;
+        // v0.18 : caché pendant le changement ; remontré avec la prochaine image complète.
+        self.calque.masquer();
         self.methode = methode;
         if !mode_fenetre {
             match incruster(h, methode) {
@@ -163,6 +166,8 @@ impl Systeme {
     /// Les écrans ont changé (branché, débranché, déplacé) : le calque recouvre le nouveau
     /// bureau virtuel.
     pub fn recaler(&self) {
+        // v0.18 : le vrai fond d'écran en attendant le nouveau (jamais de noir).
+        self.calque.masquer();
         unsafe {
             if self.parent.is_null() {
                 en_fenetre(self.calque.hwnd);
@@ -175,6 +180,11 @@ impl Systeme {
     /// Fenêtre du calque (le curseur au-dessus d'elle est sur le bureau).
     pub fn calque_hwnd(&self) -> HWND {
         self.calque.hwnd
+    }
+
+    /// v0.18 : cache le calque tout de suite (fermeture : le fond d'écran revient d'abord).
+    pub fn masquer(&self) {
+        self.calque.masquer();
     }
 
     pub fn presenter(&self, toile: &crate::toile::Toile, e: usize) {
@@ -403,8 +413,9 @@ fn incruster(hwnd: HWND, methode: u8) -> Result<HWND, String> {
             return Err("Calque du fond d'écran introuvable (WorkerW).".into());
         }
         let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
-        let style =
-            (style & !(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU)) | WS_CHILD | WS_VISIBLE;
+        // v0.18 : jamais WS_VISIBLE ici : le calque se montre lui-même avec sa première image
+        // complète (`calque.rs`).
+        let style = (style & !(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU)) | WS_CHILD;
         use windows_sys::Win32::Foundation::{GetLastError, SetLastError};
         SetLastError(0);
         SetWindowLongPtrW(hwnd, GWL_STYLE, style as isize);
@@ -494,7 +505,7 @@ unsafe fn en_fenetre(hwnd: HWND) {
         SetWindowLongPtrW(
             hwnd,
             GWL_STYLE,
-            ((style & !(WS_CHILD | WS_CAPTION | WS_THICKFRAME)) | WS_POPUP | WS_VISIBLE) as isize,
+            ((style & !(WS_CHILD | WS_CAPTION | WS_THICKFRAME)) | WS_POPUP) as isize,
         );
         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
         SetWindowLongPtrW(
@@ -516,7 +527,7 @@ unsafe fn en_fenetre(hwnd: HWND) {
             t.top,
             t.right - t.left,
             t.bottom - t.top,
-            SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED,
+            SWP_NOACTIVATE | SWP_FRAMECHANGED,
         );
         crate::journal::ecrire(&format!("mode fenêtre : rect {}", rect_de(hwnd)));
     }
@@ -547,7 +558,7 @@ unsafe fn placer(hwnd: HWND, parent: HWND, apres: Option<HWND>) {
             pt.y,
             l,
             h,
-            ordre | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED,
+            ordre | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         );
     }
 }
@@ -831,11 +842,18 @@ pub fn fond_bureau(d: &Disposition) -> Option<image::RgbaImage> {
         _ => (Vec::new(), mode_registre()),
     };
     let commun = String::from_utf16_lossy(&chemin_fond());
-    let ouvrir = |c: &str| {
-        (!c.is_empty())
+    // v0.18 : chaque image décodée une seule fois (souvent la même sur tous les écrans).
+    let mut decodees: Vec<(String, Option<std::rc::Rc<image::RgbaImage>>)> = Vec::new();
+    let mut ouvrir = |c: &str| {
+        if let Some((_, i)) = decodees.iter().find(|(k, _)| k == c) {
+            return i.clone();
+        }
+        let i = (!c.is_empty())
             .then(|| image::open(c).ok())
             .flatten()
-            .map(|i| i.to_rgba8())
+            .map(|i| std::rc::Rc::new(i.to_rgba8()));
+        decodees.push((c.to_string(), i.clone()));
+        i
     };
     // Étendre : une seule image sur toute la boîte.
     let etendu = if mode == 5 {

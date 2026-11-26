@@ -29,7 +29,13 @@ struct Image {
     caches: Vec<crate::compo::Rect>,
     /// Morceau composé en cours de copie.
     tampon: Vec<u32>,
+    /// v0.18 : calque visible. Il est créé caché et ne se montre qu'avec une image complète
+    /// (fond d'écran + aquarium) : jamais de noir, en attendant on voit le vrai fond d'écran.
+    montre: bool,
 }
+
+/// v0.18 : message au fil du calque : se montrer (première image complète prête).
+const WM_MONTRER: u32 = WM_APP + 1;
 
 #[derive(Default)]
 struct Partage {
@@ -100,6 +106,7 @@ impl Calque {
             ));
         }
         crate::journal::ecrire(&format!("calque GDI créé : {h:?}"));
+        crate::journal::jalon("démarrage : calque créé (caché)");
         Ok(Calque { hwnd: h })
     }
 
@@ -126,6 +133,18 @@ impl Calque {
         unsafe {
             let mut r: RECT = std::mem::zeroed();
             GetClientRect(self.hwnd, &mut r);
+            if !im.montre {
+                // Caché : se montre dès que le fond d'écran est là. WM_PAINT (dans le fil du
+                // calque) compose alors tout l'écran : les cases en attente sont oubliées.
+                if im.fond.is_empty() {
+                    return;
+                }
+                im.montre = true;
+                let _ = im.compo.rectangles(r.right - r.left, r.bottom - r.top, &[]);
+                drop(im);
+                PostMessageW(self.hwnd, WM_MONTRER, 0, 0);
+                return;
+            }
             let caches = im.caches.clone();
             let rects = im
                 .compo
@@ -179,6 +198,22 @@ impl Calque {
         }
         crate::journal::ecrire(&format!("test d'incrustation (couleurs) : {nom}"));
         unsafe { InvalidateRect(self.hwnd, null(), 0) };
+    }
+
+    /// v0.18 : cache le calque tout de suite (le vrai fond d'écran réapparaît) : écrans ou
+    /// incrustation qui changent, fermeture. Il se remontre à la prochaine image complète (son
+    /// fond d'écran est oublié : le nouveau doit arriver d'abord).
+    pub fn masquer(&self) {
+        if let Some(p) = PARTAGE.get() {
+            if let Ok(mut im) = p.image.lock() {
+                im.montre = false;
+                im.fond = Vec::new();
+                im.fl = 0;
+                im.fh = 0;
+            }
+        }
+        // Hors du verrou : ShowWindow attend le fil du calque, qui peut peindre.
+        unsafe { ShowWindow(self.hwnd, SW_HIDE) };
     }
 
     pub fn detruire(&self) {
@@ -338,6 +373,28 @@ unsafe fn bandes(dc: HDC, l: i32, h: i32, nom: &str) {
     }
 }
 
+/// v0.18 : montre le calque déjà peint. Calque WS_EX_LAYERED (Windows 11 24H2+) : montré
+/// transparent, peint tout de suite (UpdateWindow : fond d'écran + aquarium), puis opaque ;
+/// sinon montré puis peint aussitôt (WM_ERASEBKGND ne peint rien : jamais de noir).
+unsafe fn montrer(h: HWND) {
+    unsafe {
+        let calque = GetWindowLongPtrW(h, GWL_EXSTYLE) as u32 & WS_EX_LAYERED != 0;
+        if calque {
+            SetLayeredWindowAttributes(h, 0, 0, LWA_ALPHA);
+        }
+        ShowWindow(h, SW_SHOWNA);
+        UpdateWindow(h);
+        GdiFlush();
+        if calque {
+            SetLayeredWindowAttributes(h, 0, 255, LWA_ALPHA);
+        }
+        crate::journal::jalon(&format!(
+            "calque montré (image complète{})",
+            if calque { ", WS_EX_LAYERED" } else { "" }
+        ));
+    }
+}
+
 unsafe extern "system" fn proc_calque(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     unsafe {
         match msg {
@@ -346,6 +403,10 @@ unsafe extern "system" fn proc_calque(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -
                 0
             }
             WM_ERASEBKGND => 1,
+            WM_MONTRER => {
+                montrer(h);
+                0
+            }
             // Jamais de clic ni de focus : le bureau et ses icônes restent au-dessus.
             WM_NCHITTEST => HTTRANSPARENT as LRESULT,
             WM_MOUSEACTIVATE => MA_NOACTIVATE as LRESULT,

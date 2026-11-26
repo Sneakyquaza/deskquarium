@@ -53,13 +53,16 @@ pub fn factice(l: u32, h: u32) -> RgbaImage {
 
 /// Redimensionne un fond pour couvrir `l`x`h` (mode « Remplir » de Windows : recadré au centre).
 pub fn couvrir(img: &RgbaImage, l: u32, h: u32) -> RgbaImage {
-    let e = (l as f32 / img.width() as f32).max(h as f32 / img.height() as f32);
-    let (nl, nh) = (
-        ((img.width() as f32 * e).ceil() as u32).max(l),
-        ((img.height() as f32 * e).ceil() as u32).max(h),
+    let (w0, h0) = img.dimensions();
+    let e = (l as f32 / w0 as f32).max(h as f32 / h0 as f32);
+    // v0.18 : la partie visible est recadrée AVANT la mise à l'échelle (avant : toute l'image
+    // agrandie puis recadrée, jusqu'à 4x plus de calcul et de mémoire au lancement).
+    let (cl, ch) = (
+        ((l as f32 / e).round() as u32).clamp(1, w0.max(1)),
+        ((h as f32 / e).round() as u32).clamp(1, h0.max(1)),
     );
-    let grand = image::imageops::resize(img, nl, nh, image::imageops::FilterType::Triangle);
-    image::imageops::crop_imm(&grand, (nl - l) / 2, (nh - h) / 2, l, h).to_image()
+    let vue = image::imageops::crop_imm(img, (w0 - cl) / 2, (h0 - ch) / 2, cl, ch);
+    image::imageops::resize(&*vue, l, h, image::imageops::FilterType::Triangle)
 }
 
 /// Compose le fond (pleine résolution) et la toile agrandie `e` fois au plus proche.
@@ -90,4 +93,31 @@ pub fn composer(fond: &RgbaImage, toile: &crate::toile::Toile, e: usize) -> Rgba
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// v0.18 : recadrer avant de mettre à l'échelle garde le mode « Remplir » : bonne taille,
+    /// centre gardé, bords coupés.
+    #[test]
+    fn couvrir_recadre_au_centre() {
+        // Image haute en trois bandes : seule celle du milieu reste sur un écran large.
+        let img = RgbaImage::from_fn(400, 900, |_, y| match y {
+            0..300 => image::Rgba([255, 0, 0, 255]),
+            300..600 => image::Rgba([0, 255, 0, 255]),
+            _ => image::Rgba([0, 0, 255, 255]),
+        });
+        let f = couvrir(&img, 1920, 1080);
+        assert_eq!(f.dimensions(), (1920, 1080));
+        for y in [0, 540, 1079] {
+            assert_eq!(f.get_pixel(960, y).0, [0, 255, 0, 255]);
+        }
+        // Même proportion : rien de coupé.
+        let f = couvrir(&img, 200, 450);
+        assert_eq!(f.dimensions(), (200, 450));
+        assert_eq!(f.get_pixel(100, 0).0, [255, 0, 0, 255]);
+        assert_eq!(f.get_pixel(100, 449).0, [0, 0, 255, 255]);
+    }
 }

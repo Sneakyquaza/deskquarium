@@ -4,9 +4,35 @@
 
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 static VERROU: Mutex<()> = Mutex::new(());
+/// v0.18 : instant du lancement du processus (jalons du démarrage).
+static DEPART: OnceLock<Instant> = OnceLock::new();
+/// `--demarrage` : jalons aussi affichés en console (mesure sous Linux).
+pub static CONSOLE: AtomicBool = AtomicBool::new(false);
+
+/// Note l'instant du lancement (tout début de `main`).
+pub fn depart() {
+    DEPART.get_or_init(Instant::now);
+}
+
+/// Millisecondes depuis le lancement.
+pub fn ms() -> f64 {
+    DEPART.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.0
+}
+
+/// v0.18 : jalon du démarrage ou de la fermeture (« démarrage : <étape> à N ms » : temps
+/// depuis le lancement du processus).
+pub fn jalon(etape: &str) {
+    let m = format!("{etape} à {:.0} ms", ms());
+    if CONSOLE.load(Ordering::Relaxed) {
+        println!("{m}");
+    }
+    ecrire(&m);
+}
 
 pub fn chemin() -> PathBuf {
     crate::sauve::dossier().join("journal.log")

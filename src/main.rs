@@ -70,9 +70,11 @@ Options (tests) :
   --captures-ecloserie DOSSIER    (avec --fenetre) captures de chaque onglet puis quitte
   --audit DOSSIER [cle,cle]       planches d'audit des sprites (formes, nage, demi-tour)
   --bench [--secondes 60] [--ips 24] [--ancien]  coût du fond d'écran (3840x1080, 40 poissons)
+  --demarrage [--sauvegarde] [--fond X]  jalons du lancement sans écran (3840x1080, démo pleine)
   --simulation                    jalons de l'équilibrage (docs/equilibrage.md)";
 
 fn main() {
+    journal::depart();
     if let Err(e) = lancer() {
         eprintln!("deskquarium : {e}");
         #[cfg(windows)]
@@ -152,6 +154,11 @@ fn lancer() -> Result<(), String> {
             })
             .unwrap_or_default(),
     };
+    if a("--demarrage") {
+        // --demarrage [--sauvegarde] [--fond X] : jalons du lancement (démo pleine, ou la
+        // vraie partie).
+        return appli::demarrage(!a("--sauvegarde"), o.fond);
+    }
     if a("--bench") {
         // --bench [--secondes 60] [--ips 24] [--ancien]
         let ips = valeur("--ips").and_then(|v| v.parse().ok()).unwrap_or(24);

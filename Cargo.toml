@@ -1,6 +1,6 @@
 [package]
 name = "deskquarium"
-version = "0.17.0"
+version = "0.18.0"
 edition = "2021"
 license = "MIT"
 description = "Deskquarium : fond d'écran aquarium pixel art + idle game (Windows)"
